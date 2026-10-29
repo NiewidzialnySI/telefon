@@ -1,6 +1,6 @@
 {
-  "versionCode": 2,
-  "versionName": "1.1-test",
-  "apkUrl": "https://github.com/NiewidzialnySI/telefon/releases/download/v1.1-test/telefon-v1.1-test.apk",
-  "changelog": "Test autoaktualizacji z GitHub (debug APK)."
+  "versionCode": 3,
+  "versionName": "1.2-test",
+  "apkUrl": "https://github.com/NiewidzialnySI/telefon/releases/download/v1.2-test/telefon-v1.2-test.apk",
+  "changelog": "Kafelek aktualizacji + chooser instalacji."
 }
