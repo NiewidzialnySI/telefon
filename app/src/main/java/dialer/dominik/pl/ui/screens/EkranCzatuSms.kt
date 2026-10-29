@@ -360,11 +360,58 @@ internal fun EkranCzatuSzczegoly(
     Column(
         Modifier.fillMaxSize().padding(vertical = 4.dp).windowInsetsPadding(WindowInsets.ime)
     ) {
-        // Nagłówek (tylko w czacie-w-dymku / BubbleChatActivity).
+        // Nagłówek (tylko w czacie-w-dymku / BubbleChatActivity):
+        // pseudonim (albo imię), pod nim numer; w prawo przycisk dzwonienia z logo.
         if (pokazNaglowek) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(watek.contactName ?: adres, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                Text(pobierzKanal(context, adres).name, color = ZielonyNeon, fontSize = 12.sp)
+            val tytulNaglowka = watek.pseudonim?.takeIf { it.isNotBlank() }
+                ?: watek.contactName
+                ?: adres
+            val pokazNumerPod = !watek.pseudonim.isNullOrBlank() || !watek.contactName.isNullOrBlank()
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = tytulNaglowka,
+                        color = Color.White,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (pokazNumerPod) {
+                        Text(
+                            text = adres,
+                            color = Color.White.copy(alpha = 0.45f),
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.radialGradient(
+                                listOf(
+                                    ZielonyMorski.copy(alpha = 0.55f),
+                                    ZielonyMorski.copy(alpha = 0.18f)
+                                )
+                            )
+                        )
+                        .clickable { zadzwonDoKontaktu(context, adres) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    LogoAnimowane(
+                        modifier = Modifier.size(26.dp),
+                        pokazPierscien = false
+                    )
+                }
             }
         }
 

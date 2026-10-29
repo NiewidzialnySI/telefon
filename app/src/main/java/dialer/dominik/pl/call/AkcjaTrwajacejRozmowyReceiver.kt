@@ -9,9 +9,8 @@ class AkcjaTrwajacejRozmowyReceiver : BroadcastReceiver() {
         when (intent.action) {
             "AKCJA_WYCISZ" -> {
                 TelefonInCallService.instancja?.przelaczWyciszenie()
-                // Odśwież powiadomienie z nowym stanem wyciszenia
                 val stan = StanPolaczenia
-                PowiadomieniaTrwajacejRozmowy.pokazPowiadomienie(context, stan.rozmowca, !stan.wyciszony)
+                PowiadomieniaTrwajacejRozmowy.pokazPowiadomienie(context, stan.rozmowca, stan.wyciszony)
             }
             "AKCJA_ROZLACZ" -> {
                 StanPolaczenia.polaczenie?.disconnect()

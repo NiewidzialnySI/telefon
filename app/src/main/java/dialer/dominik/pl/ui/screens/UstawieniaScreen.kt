@@ -8,6 +8,7 @@ import dialer.dominik.pl.call.EkranRozmowy
 import dialer.dominik.pl.call.PowiadomieniaPolaczen
 import dialer.dominik.pl.call.StanPolaczenia
 import dialer.dominik.pl.call.PowiadomieniaTrwajacejRozmowy
+import dialer.dominik.pl.call.WyborSim
 import dialer.dominik.pl.call.ZarzadcaDzwonka
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -92,6 +93,26 @@ fun UstawieniaScreen(context: Context, onBack: () -> Unit = {}) {
                     akcja = "Ustaw",
                     onKlik = {
                         ustawJakoDomyslnyDialer(context)
+                    }
+                )
+            }
+            item {
+                val etykietaSim = remember(odswiez) { WyborSim.etykietaWyboru(context) }
+                val ileSim = remember(odswiez) { WyborSim.dostepneKonta(context).size }
+                UstawienieKarta(
+                    tytul = "Karta SIM / PhoneAccount",
+                    opis = if (ileSim <= 1) {
+                        "Aktywna: $etykietaSim"
+                    } else {
+                        "Aktywna: $etykietaSim — kliknij, by przełączyć ($ileSim dostępne)"
+                    },
+                    ikona = IkonyAplikacji.TelefonLogo,
+                    akcja = if (ileSim > 1) "Zmień" else null,
+                    onKlik = {
+                        if (ileSim > 1) {
+                            WyborSim.przelaczNastepny(context)
+                            odswiez++
+                        }
                     }
                 )
             }

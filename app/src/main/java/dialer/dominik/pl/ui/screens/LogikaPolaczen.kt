@@ -14,8 +14,6 @@ import android.telecom.TelecomManager
 import dialer.dominik.pl.call.EkranRozmowy
 import dialer.dominik.pl.call.OczekiwanieNaPolaczenie
 import dialer.dominik.pl.call.StanPolaczenia
-import dialer.dominik.pl.call.NagrywanieRozmowService
-
 /** Sugestia kontaktu dla dialera: nazwa, numer(y), zdjęcie. */
 @Immutable
 data class ContactSuggestion(
@@ -185,21 +183,14 @@ internal fun wykonajPolaczenie(context: Context, numer: String) {
     StanPolaczenia.stan = StanPolaczenia.Stan.Dzwoni
     StanPolaczenia.czasStartu = 0L
     // Reset stanu UI z poprzedniej rozmowy, żeby nowe połączenie nie dziedziczyło
-    // np. otwartej klawiatury DTMF ani włączonego głośnika/wyciszenia/nagrywania.
+    // np. otwartej klawiatury DTMF ani włączonego głośnika/wyciszenia.
     StanPolaczenia.klawiatura = false
+    StanPolaczenia.buforDtmf = ""
     StanPolaczenia.wyciszony = false
     StanPolaczenia.glosnik = false
     StanPolaczenia.bluetoothAktywny = false
-    StanPolaczenia.nagrywanie = false
     StanPolaczenia.zadanaTrasa = null
     EkranRozmowy.pokaz(context)
-
-    if (maUprawnienie(context, Manifest.permission.RECORD_AUDIO)) {
-            val katalog = java.io.File(context.filesDir, "recordings")
-            if (NagrywanieRozmowService.start(context, katalog)) {
-                StanPolaczenia.nagrywanie = true
-            }
-        }
 
     // Odraczamy faktyczne nawiązanie, żeby użytkownik mógł w tym czasie
     // anulować połączenie z ekranu rozmowy (zanim zacznie dzwonić).
@@ -221,7 +212,7 @@ internal fun wykonajFaktycznePolaczenie(context: Context, numer: String) {
             val telecom = context.getSystemService(TelecomManager::class.java)
             val uri = Uri.fromParts("tel", numer, null)
             if (telecom != null) {
-                telecom.placeCall(uri, Bundle())
+                telecom.placeCall(uri, dialer.dominik.pl.call.WyborSim.extrasDoPlaceCall(context))
                 return
             }
         } catch (e: Exception) {

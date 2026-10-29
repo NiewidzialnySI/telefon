@@ -65,7 +65,6 @@ import dialer.dominik.pl.ui.components.IkonyAplikacji
 import dialer.dominik.pl.ui.components.TloAmoled
 import dialer.dominik.pl.ui.screens.KontaktyScreen
 import dialer.dominik.pl.ui.screens.MainDialerScreen
-import dialer.dominik.pl.ui.screens.NagraniaScreen
 import dialer.dominik.pl.ui.screens.UstawieniaScreen
 import dialer.dominik.pl.ui.screens.PermissionsScreen
 import dialer.dominik.pl.ui.screens.SmsScreen
@@ -81,6 +80,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // Treść rysowana pod paskami systemowymi (edge-to-edge)
         enableEdgeToEdge()
+        // Pending NotificationInd (MMS) — dociągnij także bez otwierania skrzynki,
+        // żeby MmsPobranyIZapisanyReceiver mógł pokazać dymek po pobraniu.
+        if (android.provider.Telephony.Sms.getDefaultSmsPackage(this) == packageName) {
+            dialer.dominik.pl.sms.dociagnijOczekujaceMms(this)
+        }
         setContent {
             // dynamicColor = false — pełna paleta zielono-czarna, bez nadpisywania tła tapetą
             TelefonTheme(dynamicColor = false) {
@@ -91,7 +95,7 @@ class MainActivity : ComponentActivity() {
 }
 
 /** Zakładki dolnego paska. */
-enum class Zakladka { Glowny, Kontakty, Wiadomosci, Nagrania, Ustawienia }
+enum class Zakladka { Glowny, Kontakty, Wiadomosci, Ustawienia }
 
 // Klucze w SharedPreferences — zapamiętują, że powitanie już się odbyło
 private const val PREFS = "telefon_prefs"
@@ -279,10 +283,6 @@ private fun EkranZZakladkami(context: Context) {
                                 onCzatOtworzony = { otwarty -> czatSmsOtwarty = otwarty }
                             )
                         }
-                        Zakladka.Nagrania -> NagraniaScreen(
-                            context = context,
-                            onBack = { zakladka = Zakladka.Glowny }
-                        )
                         Zakladka.Ustawienia -> UstawieniaScreen(
                             context = context,
                             onBack = { zakladka = Zakladka.Glowny }
@@ -354,13 +354,6 @@ private fun DolnyPasekZakladek(
                 ikona = IkonyAplikacji.Wiadomosc,
                 modifier = Modifier.weight(1f),
                 onClick = { onWybierz(Zakladka.Wiadomosci) }
-            )
-            ElementZakladki(
-                tytul = "Nagrania",
-                zaznaczona = wybrana == Zakladka.Nagrania,
-                ikona = IkonyAplikacji.Nagrania,
-                modifier = Modifier.weight(1f),
-                onClick = { onWybierz(Zakladka.Nagrania) }
             )
             ElementZakladki(
                 tytul = "Ustawienia",

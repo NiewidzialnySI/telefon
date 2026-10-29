@@ -143,6 +143,9 @@ class MmsPobranyIZapisanyReceiver : BroadcastReceiver() {
                     stan = StanWysylki.WYSŁANO
                 )
             )
+            // Jak SMS: heads-up + dymek zaraz po zapisie — także gdy apka jest w tle / zamknięta
+            // (proces budzi WAP_PUSH → DownloadManager → ten receiver).
+            powiadomOPrzychodzacymMms(context, messageUri)
             Log.i(TAG, "MMS zapisany: $messageUri")
         } else {
             Log.w(TAG, "DownloadRequest.persist zwrócił null (location=$location)")
@@ -151,6 +154,26 @@ class MmsPobranyIZapisanyReceiver : BroadcastReceiver() {
                 oznaczProbeJakoMartwa(context, location)
             }
         }
+    }
+}
+
+/** Powiadomienie + dymek jak przy SMS, po udanym persist MMS. */
+private fun powiadomOPrzychodzacymMms(context: Context, messageUri: Uri) {
+    try {
+        val msgId = messageUri.lastPathSegment?.toLongOrNull() ?: return
+        val nadawca = dialer.dominik.pl.ui.screens.pobierzAdresMms(
+            context,
+            msgId,
+            Telephony.Mms.MESSAGE_BOX_INBOX
+        )?.takeIf { it.isNotBlank() } ?: "Nieznany"
+        val tekst = dialer.dominik.pl.ui.screens.pobierzTekstMms(context, msgId)
+        val tresc = if (tekst.isNotBlank()) tekst else "📷 [MMS]"
+        // DATE w Telephony.Mms jest w sekundach — na powiadomienie bierzemy teraz
+        // (świeży heads-up); treść i tak pochodzi z PDU.
+        OdbiorcaSms.powiadomOPrzychodzacej(context, nadawca, tresc, System.currentTimeMillis())
+        Log.i("OdbiorcaMms", "Powiadomienie MMS od $nadawca")
+    } catch (e: Exception) {
+        Log.e("OdbiorcaMms", "Nie udało się pokazać powiadomienia MMS", e)
     }
 }
 

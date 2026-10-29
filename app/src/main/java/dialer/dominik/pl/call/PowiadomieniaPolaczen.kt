@@ -7,10 +7,10 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.core.app.Person
 
 /**
- * Zarządza powiadomieniami typu Heads-up (baner) dla połączeń przychodzących,
- * gdy telefon jest odblokowany przez użytkownika.
+ * Powiadomienia przychodzące — CallStyle (Android 12+) jak natywny dialer.
  */
 object PowiadomieniaPolaczen {
     private const val CHANNEL_ID = "polaczenia_przychodzace_ch"
@@ -26,12 +26,11 @@ object PowiadomieniaPolaczen {
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
                 description = "Powiadomienia banerowe o przychodzących połączeniach"
-                setSound(null, null) // Dzwonek odtwarza dedykowany ZarzadcaDzwonka
+                setSound(null, null)
             }
             manager?.createNotificationChannel(channel)
         }
 
-        // Kliknięcie w baner otwiera pełny ekran rozmowy
         val fullScreenIntent = Intent(context, EkranRozmowyActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
@@ -40,41 +39,42 @@ object PowiadomieniaPolaczen {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Akcja Odbierz z banera
-        val odbierzIntent = Intent(context, AkcjaPolaczeniaReceiver::class.java).apply {
-            action = "AKCJA_ODBIERZ"
-        }
         val odbierzPendingIntent = PendingIntent.getBroadcast(
-            context, 1, odbierzIntent,
+            context, 1,
+            Intent(context, AkcjaPolaczeniaReceiver::class.java).apply { action = "AKCJA_ODBIERZ" },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
-        // Akcja Odrzuć z banera
-        val odrzucIntent = Intent(context, AkcjaPolaczeniaReceiver::class.java).apply {
-            action = "AKCJA_ODRZUC"
-        }
         val odrzucPendingIntent = PendingIntent.getBroadcast(
-            context, 2, odrzucIntent,
+            context, 2,
+            Intent(context, AkcjaPolaczeniaReceiver::class.java).apply { action = "AKCJA_ODRZUC" },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-                    .setSmallIcon(dialer.dominik.pl.R.drawable.ic_logo_telefon)
-                    .setContentTitle("📞 Połączenie przychodzące")
-                    .setContentText(rozmowca)
-                    .setColor(0xFF69F0AE.toInt())
-                    .setPriority(NotificationCompat.PRIORITY_MAX)
-                    .setCategory(NotificationCompat.CATEGORY_CALL)
-                    .setContentIntent(fullScreenPendingIntent)
-                    .setFullScreenIntent(fullScreenPendingIntent, true)
-                    .setColorized(true)
-                    .addAction(android.R.drawable.ic_menu_call, "Odbierz", odbierzPendingIntent)
-                    .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Odrzuć", odrzucPendingIntent)
-                    .setAutoCancel(true)
-                    .setOngoing(true)
-                    .build()
+        val person = Person.Builder()
+            .setName(rozmowca.ifBlank { "Nieznany numer" })
+            .setImportant(true)
+            .build()
 
-        manager?.notify(NOTIFICATION_ID, notification)
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(dialer.dominik.pl.R.drawable.ic_logo_telefon)
+            .setContentTitle("Połączenie przychodzące")
+            .setContentText(rozmowca)
+            .setColor(0xFF69F0AE.toInt())
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setContentIntent(fullScreenPendingIntent)
+            .setFullScreenIntent(fullScreenPendingIntent, true)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setStyle(
+                NotificationCompat.CallStyle.forIncomingCall(
+                    person,
+                    odrzucPendingIntent,
+                    odbierzPendingIntent
+                )
+            )
+
+        manager?.notify(NOTIFICATION_ID, builder.build())
     }
 
     fun anuluj(context: Context) {
@@ -82,21 +82,16 @@ object PowiadomieniaPolaczen {
         manager?.cancel(NOTIFICATION_ID)
     }
 
-    /**
-     * Pokazuje trwającą rozmowę jako przemieszczalny dymek (Bubble, jak Messenger).
-     */
     fun pokazBubble(context: Context, rozmowca: String) {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
 
         val intent = Intent(context, EkranRozmowyActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
-        // BubbleMetadata wymaga MUTABLE PendingIntent (immutable rzuca
-                // IllegalArgumentException:"PendingIntents attached to bubbles must be mutable").
-                val tapPendingIntent = PendingIntent.getActivity(
-                    context, 3, intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-                )
+        val tapPendingIntent = PendingIntent.getActivity(
+            context, 3, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        )
         val powrotPendingIntent = PendingIntent.getActivity(
             context, 4, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -108,34 +103,36 @@ object PowiadomieniaPolaczen {
         )
 
         val ikona = androidx.core.graphics.drawable.IconCompat.createWithResource(
-                    context, dialer.dominik.pl.R.drawable.ic_logo_telefon
-                )
+            context, dialer.dominik.pl.R.drawable.ic_logo_telefon
+        )
+        val bubbleMeta = NotificationCompat.BubbleMetadata.Builder(tapPendingIntent, ikona)
+            .setDesiredHeight(1200)
+            .setAutoExpandBubble(true)
+            .build()
 
-        val bubbleMeta = androidx.core.app.NotificationCompat.BubbleMetadata.Builder(tapPendingIntent, ikona)
-                    .setDesiredHeight(1200)
-                    .setAutoExpandBubble(true)
-                    .build()
+        val person = Person.Builder()
+            .setName(rozmowca.ifBlank { "Nieznany numer" })
+            .setImportant(true)
+            .build()
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(dialer.dominik.pl.R.drawable.ic_logo_telefon)
-            .setContentTitle("📞 Rozmowa trwa")
+            .setContentTitle("Rozmowa trwa")
             .setContentText(rozmowca)
             .setColor(0xFF69F0AE.toInt())
-            .setColorized(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setContentIntent(powrotPendingIntent)
             .setBubbleMetadata(bubbleMeta)
-            .addAction(android.R.drawable.ic_menu_call, "Pokaż rozmowę", powrotPendingIntent)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Rozłącz", rozlaczPendingIntent)
-            .setAutoCancel(false)
             .setOngoing(true)
+            .setStyle(
+                NotificationCompat.CallStyle.forOngoingCall(person, rozlaczPendingIntent)
+            )
             .build()
 
         manager?.notify(NOTIFICATION_ID, notification)
     }
 
-    /** Odświeża numer/tytuł istniejącego bubble (bez zamykania powiadomienia). */
     fun aktualizujBubble(context: Context, rozmowca: String) {
         pokazBubble(context, rozmowca)
     }

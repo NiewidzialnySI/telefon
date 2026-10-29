@@ -181,10 +181,16 @@ internal fun pobierzWątkiSms(context: Context, odswiez: Boolean = false): List<
             val readIdx = cursor.getColumnIndex("read")
             val recipientIdsIdx = cursor.getColumnIndex("recipient_ids")
 
+            val idIdx = cursor.getColumnIndex("_id")
             while (cursor.moveToNext()) {
                 var date = if (dateIdx != -1) cursor.getLong(dateIdx) else 0L
                 if (date < 10000000000L) date *= 1000L
-                val snippet = if (snippetIdx != -1) cursor.getString(snippetIdx) ?: "" else ""
+                val snippetRaw = if (snippetIdx != -1) cursor.getString(snippetIdx)?.trim().orEmpty() else ""
+                val threadId = if (idIdx != -1) cursor.getLong(idIdx) else -1L
+                // Samo zdjęcie MMS → systemowy snippet bywa pusty; na kafelku pokaż „MMS”.
+                val snippet = snippetRaw.ifEmpty {
+                    if (threadId >= 0L && czyOstatniaWWatkuToMms(context, threadId)) "MMS" else ""
+                }
                 val read = if (readIdx != -1) cursor.getInt(readIdx) == 1 else true
                 val recipientIds = if (recipientIdsIdx != -1) cursor.getString(recipientIdsIdx) ?: "" else ""
 
@@ -237,10 +243,15 @@ internal fun pobierzWątkiSmsFallback(context: Context): List<SmsWatek> {
         val nazwa = kontaktInfo?.name
         val foto = kontaktInfo?.photoUri
         val nieprzeczytane = listaWpisow.count { it.type == Telephony.Sms.MESSAGE_TYPE_INBOX && !it.read }
+        val body = ostatnia?.body?.trim().orEmpty()
         SmsWatek(
             address = address,
             contactName = nazwa,
-            lastMessage = ostatnia?.body ?: "",
+            lastMessage = when {
+                body.isNotBlank() && body != "📷 [MMS]" -> body
+                body == "📷 [MMS]" || body == "MMS" -> "MMS"
+                else -> body
+            },
             lastDate = ostatnia?.date ?: 0L,
             messages = emptyList(),
             isKontakt = nazwa != null,
@@ -249,6 +260,43 @@ internal fun pobierzWątkiSmsFallback(context: Context): List<SmsWatek> {
             fotoUri = foto
         )
     }.sortedByDescending { it.lastDate }
+}
+
+/**
+ * Czy najnowsza wiadomość w wątku to MMS (nie NotificationInd).
+ * Używane gdy systemowy `snippet` jest pusty (typowe dla samego zdjęcia).
+ */
+private fun czyOstatniaWWatkuToMms(context: Context, threadId: Long): Boolean {
+    return try {
+        var mmsMs = 0L
+        context.contentResolver.query(
+            Telephony.Mms.CONTENT_URI,
+            arrayOf(Telephony.Mms.DATE),
+            "${Telephony.Mms.THREAD_ID}=? AND ${Telephony.Mms.MESSAGE_TYPE}!=?",
+            arrayOf(threadId.toString(), "130"),
+            "${Telephony.Mms.DATE} DESC"
+        )?.use { c ->
+            if (c.moveToFirst()) {
+                // DATE MMS jest w sekundach
+                mmsMs = c.getLong(0) * 1000L
+            }
+        }
+        if (mmsMs <= 0L) return false
+
+        var smsMs = 0L
+        context.contentResolver.query(
+            Telephony.Sms.CONTENT_URI,
+            arrayOf(Telephony.Sms.DATE),
+            "${Telephony.Sms.THREAD_ID}=?",
+            arrayOf(threadId.toString()),
+            "${Telephony.Sms.DATE} DESC"
+        )?.use { c ->
+            if (c.moveToFirst()) smsMs = c.getLong(0)
+        }
+        mmsMs >= smsMs
+    } catch (_: Exception) {
+        false
+    }
 }
 
 /** URI zdjęcia kontaktu z książki (PhoneLookup) albo null, gdy nie ma. */

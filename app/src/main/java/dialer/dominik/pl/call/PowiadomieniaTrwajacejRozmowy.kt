@@ -7,10 +7,10 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.core.app.Person
 
 /**
- * Zarządza powiadomieniem trwającej rozmowy (Ongoing Notification) na pasku statusu,
- * pozwalając użytkownikowi wyciszyć mikrofon, rozłączyć się lub wrócić do ekranu rozmowy.
+ * Ongoing CallStyle — trwająca rozmowa na pasku statusu.
  */
 object PowiadomieniaTrwajacejRozmowy {
     private const val CHANNEL_ID = "trwajaca_rozmowa_ch"
@@ -23,55 +23,62 @@ object PowiadomieniaTrwajacejRozmowy {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Trwające połączenie",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
                 description = "Powiadomienie o aktywnej rozmowie w toku"
+                setSound(null, null)
             }
             manager?.createNotificationChannel(channel)
         }
 
-        // Kliknięcie w powiadomienie otwiera pełny ekran rozmowy
-        val intent = Intent(context, EkranRozmowyActivity::class.java).apply {
+        val ekranIntent = Intent(context, EkranRozmowyActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val pendingIntent = PendingIntent.getActivity(
-            context, 0, intent,
+            context, 0, ekranIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        // CallStyle wymaga FGS albo fullScreenIntent — bez tego Android rzuca IllegalArgumentException.
+        val fullScreenPending = PendingIntent.getActivity(
+            context, 20, ekranIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Akcja Wycisz / Włącz mikrofon
-        val wyciszIntent = Intent(context, AkcjaTrwajacejRozmowyReceiver::class.java).apply {
-            action = "AKCJA_WYCISZ"
-        }
         val wyciszPending = PendingIntent.getBroadcast(
-            context, 10, wyciszIntent,
+            context, 10,
+            Intent(context, AkcjaTrwajacejRozmowyReceiver::class.java).apply { action = "AKCJA_WYCISZ" },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
-        // Akcja Rozłącz
-        val rozlaczIntent = Intent(context, AkcjaTrwajacejRozmowyReceiver::class.java).apply {
-            action = "AKCJA_ROZLACZ"
-        }
         val rozlaczPending = PendingIntent.getBroadcast(
-            context, 11, rozlaczIntent,
+            context, 11,
+            Intent(context, AkcjaTrwajacejRozmowyReceiver::class.java).apply { action = "AKCJA_ROZLACZ" },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val akcjaWyciszTekst = if (wyciszony) "Włącz mikrofon" else "Wycisz"
+        val person = Person.Builder()
+            .setName(rozmowca.ifBlank { "Nieznany numer" })
+            .setImportant(true)
+            .build()
+
+        val style = NotificationCompat.CallStyle.forOngoingCall(person, rozlaczPending)
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-                    .setSmallIcon(dialer.dominik.pl.R.drawable.ic_logo_telefon)
-                    .setContentTitle("Rozmowa w toku")
-                    .setContentText(rozmowca)
-                    .setColor(0xFF69F0AE.toInt())
-                    .setColorized(true)
-                    .setPriority(NotificationCompat.PRIORITY_LOW)
-                    .setCategory(NotificationCompat.CATEGORY_CALL)
-                    .setContentIntent(pendingIntent)
-                    .setOngoing(true)
-                    .addAction(android.R.drawable.ic_lock_silent_mode_off, akcjaWyciszTekst, wyciszPending)
-                    .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Rozłącz", rozlaczPending)
-                    .build()
+            .setSmallIcon(dialer.dominik.pl.R.drawable.ic_logo_telefon)
+            .setContentTitle("Rozmowa w toku")
+            .setContentText(rozmowca)
+            .setColor(0xFF69F0AE.toInt())
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setContentIntent(pendingIntent)
+            .setFullScreenIntent(fullScreenPending, false)
+            .setOngoing(true)
+            .setStyle(style)
+            .addAction(
+                android.R.drawable.ic_lock_silent_mode_off,
+                if (wyciszony) "Włącz mikrofon" else "Wycisz",
+                wyciszPending
+            )
+            .build()
 
         manager?.notify(NOTIFICATION_ID, notification)
     }

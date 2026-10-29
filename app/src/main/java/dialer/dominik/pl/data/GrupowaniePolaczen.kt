@@ -83,17 +83,11 @@ fun nastepnyZakres(obecny: Long, najstarsza: Long): Long {
  * „+49 30 123456" ma po skróceniu 10 cyfr, więc nie jest ruszane.
  */
 fun normalizujNumer(numer: String): String {
-    // Same cyfry i ewentualny wiodący plus
+    val klucz = kluczNumeru(numer)
+    if (klucz.length == 9) return klucz
+    // Zagraniczne / nietypowe — zachowaj cyfry (+ opcjonalny plus jak wcześniej)
     val oczyszczony = numer.filter { it.isDigit() || it == '+' }
-
-    val bezPrefiksu = when {
-        oczyszczony.startsWith("+48") -> oczyszczony.removePrefix("+48")
-        oczyszczony.startsWith("0048") -> oczyszczony.removePrefix("0048")
-        else -> null
-    }
-
-    // Skracamy tylko, gdy wynik to poprawny 9-cyfrowy numer polski
-    return if (bezPrefiksu != null && bezPrefiksu.length == 9) bezPrefiksu else oczyszczony
+    return oczyszczony.ifBlank { klucz }
 }
 
 /**

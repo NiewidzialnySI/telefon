@@ -9,6 +9,7 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -25,51 +26,85 @@ import dialer.dominik.pl.ui.theme.TelefonTheme
 class EkranRozmowyActivity : ComponentActivity() {
 
     // === Czujnik zbliżeniowy ===
-    // Gdy trwa rozmowa i telefon jest przy uchu, wyłączamy dotyk na ekranie,
-    // żeby przypadkowo nie kliknąć "Rozłącz"/"Głośnik" policzkiem albo uchem.
+    // Przy uchu: blokada dotyku + PROXIMITY_SCREEN_OFF_WAKE_LOCK (ekran gaśnie).
     private var czujnikZblizenia: Sensor? = null
     private var menedzerCzujnikow: SensorManager? = null
     private var zblizenieAktywne = false
+    private var proximityWakeLock: PowerManager.WakeLock? = null
 
     private val sluchaczZblizenia = object : SensorEventListener {
         override fun onSensorChanged(zdarzenie: SensorEvent?) {
-            // Czujnik działa tylko podczas TRWAJĄCEJ rozmowy (nie przy dzwonieniu,
-            // wybieraniu numeru itd.) — przy uchu ma blokować dotyk przycisków.
             if (StanPolaczenia.stan != StanPolaczenia.Stan.Rozmowa) {
                 if (zblizenieAktywne) {
                     zblizenieAktywne = false
-                    ustawDotykZgodnieZZblizeniem()
+                    ustawZblizenie(false)
                 }
                 return
             }
-            // TYPE_PROXIMITY zwraca wartość bliską 0 gdy coś jest blisko sensora
-            // (np. ucho/twarz), a wartość zbliżoną do maxRange gdy jest daleko.
+            // Przy głośniku nie gasimy ekranu (rozmowa głośnomówiąca).
+            if (StanPolaczenia.glosnik) {
+                if (zblizenieAktywne) {
+                    zblizenieAktywne = false
+                    ustawZblizenie(false)
+                }
+                return
+            }
             val wartosc = zdarzenie?.values?.firstOrNull() ?: return
             val blisko = wartosc < (czujnikZblizenia?.maximumRange ?: 0f) / 2f
-            // Zmiana tylko w jedną stronę — unikamy ciągłego przeliczania przy szumie sensora.
             if (blisko != zblizenieAktywne) {
                 zblizenieAktywne = blisko
-                ustawDotykZgodnieZZblizeniem()
+                ustawZblizenie(blisko)
             }
         }
 
         override fun onAccuracyChanged(sensor: Sensor?, dokladnosc: Int) {}
     }
 
-    /** Wg. czujnika: blisko = bez dotyku na ekranie; daleko = dotyk dostępny. */
-    private fun ustawDotykZgodnieZZblizeniem() {
-        if (zblizenieAktywne) {
+    private fun ustawZblizenie(blisko: Boolean) {
+        if (blisko) {
             window.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
+            nabyjProximityWakeLock()
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
+            zwolnijProximityWakeLock()
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun nabyjProximityWakeLock() {
+        if (proximityWakeLock?.isHeld == true) return
+        try {
+            val pm = getSystemService(PowerManager::class.java) ?: return
+            if (!pm.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) return
+            proximityWakeLock = pm.newWakeLock(
+                PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
+                "telefon:proximity"
+            ).also {
+                it.setReferenceCounted(false)
+                it.acquire(30 * 60 * 1000L)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun zwolnijProximityWakeLock() {
+        try {
+            if (proximityWakeLock?.isHeld == true) {
+                proximityWakeLock?.release()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        proximityWakeLock = null
     }
 
     override fun onNewIntent(intencja: Intent) {
         super.onNewIntent(intencja)
-        // Przyszła prośba o zamknięcie ekranu — połączenie się skończyło
         if (intencja.action == EkranRozmowy.AKCJA_ZAMKNIJ) {
             finish()
+            @Suppress("DEPRECATION")
+            overridePendingTransition(0, 0)
         }
     }
 
@@ -77,11 +112,17 @@ class EkranRozmowyActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         if (intent?.action == EkranRozmowy.AKCJA_ZAMKNIJ) {
             finish()
+            @Suppress("DEPRECATION")
+            overridePendingTransition(0, 0)
             return
+        }
+        // Powrót z dymka: zero systemowej animacji Activity — inaczej „miga / skacze”.
+        if (StanPolaczenia.wracaZDymka) {
+            @Suppress("DEPRECATION")
+            overridePendingTransition(0, 0)
         }
         enableEdgeToEdge()
 
-        // Ekran rozmowy musi być widoczny nad blokadą i nie może zgasnąć
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
@@ -94,10 +135,8 @@ class EkranRozmowyActivity : ComponentActivity() {
         }
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+        @Suppress("UNUSED_VARIABLE")
         val menedzerBlokady = getSystemService(KeyguardManager::class.java)
-        if (menedzerBlokady?.isKeyguardLocked == true) {
-            // Odblokowanie nie jest wymagane — ekran rozmowy ma działać nad blokadą
-        }
 
         setContent {
             TelefonTheme(dynamicColor = false) {
@@ -111,16 +150,19 @@ class EkranRozmowyActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Zarejestruj czujnik zbliżeniowy. Handler w onSensorChanged decyduje,
-        // czy aktywować blokadę dotyku (tylko podczas trwającej rozmowy).
         zarejestrujCzujnikZblizenia()
     }
 
     override fun onPause() {
         super.onPause()
-        // Zawsze wyrejestruj i włącz dotyk z powrotem, gdy aktywność traci fokus.
         wyrejestrujCzujnikZblizenia()
         window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
+        zwolnijProximityWakeLock()
+    }
+
+    override fun onDestroy() {
+        zwolnijProximityWakeLock()
+        super.onDestroy()
     }
 
     private fun zarejestrujCzujnikZblizenia() {

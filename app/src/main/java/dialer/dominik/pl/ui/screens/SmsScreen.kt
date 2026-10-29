@@ -81,6 +81,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import dialer.dominik.pl.sms.OdbiorcaSms
 import dialer.dominik.pl.ui.components.IkonyAplikacji
+import dialer.dominik.pl.ui.components.LogoAnimowane
 import dialer.dominik.pl.ui.theme.CzerwonyPolaczenia
 import dialer.dominik.pl.ui.theme.ZielonyMorski
 import dialer.dominik.pl.ui.theme.ZielonyNeon
@@ -321,17 +322,44 @@ fun SmsScreen(
                                 }
                             )
                         }
-                    } else {
-                        val tytulPaska = when (val stan = stanEkranu) {
-                            is SmsEkranStan.Czat -> {
-                                val czatAdres = stan.address
-                                watki.find { it.address == czatAdres }?.contactName?.takeIf { it.isNotBlank() }
-                                    ?: resolveContactName(context, czatAdres) ?: czatAdres
-                            }
-                            else -> "NOWA WIADOMOŚĆ"
-                        }
+                    } else if (stanEkranu is SmsEkranStan.Czat) {
+                        val czatAdres = (stanEkranu as SmsEkranStan.Czat).address
+                        val watekNaglowka = watki.find { it.address == czatAdres }
+                        val nazwaKontaktu = watekNaglowka?.contactName?.takeIf { it.isNotBlank() }
+                            ?: resolveContactName(context, czatAdres)
+                        val tytulCzatu = watekNaglowka?.pseudonim?.takeIf { it.isNotBlank() }
+                            ?: nazwaKontaktu
+                            ?: czatAdres
+                        val pokazNumer = !nazwaKontaktu.isNullOrBlank() ||
+                            !watekNaglowka?.pseudonim.isNullOrBlank()
                         Crossfade(
-                            targetState = tytulPaska,
+                            targetState = tytulCzatu to czatAdres,
+                            animationSpec = tween(220, easing = FastOutSlowInEasing),
+                            label = "tytulCzatSms"
+                        ) { (tytul, numer) ->
+                            Column {
+                                Text(
+                                    text = tytul,
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (pokazNumer) {
+                                    Text(
+                                        text = numer,
+                                        color = Color.White.copy(alpha = 0.45f),
+                                        fontSize = 11.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        Crossfade(
+                            targetState = "NOWA WIADOMOŚĆ",
                             animationSpec = tween(220, easing = FastOutSlowInEasing),
                             label = "tytulSms"
                         ) { tekst ->
@@ -440,16 +468,15 @@ fun SmsScreen(
                                     }
                                 },
                                                                                                         actions = {
-                                                                                                        // Przycisk Zadzwoń — skrajna prawa, tylko gdy jesteśmy w czacie.
+                                                                                                        // Przycisk Zadzwoń — logo aplikacji, tylko w czacie.
                                                                                                         if (stanEkranu is SmsEkranStan.Czat) {
                                                                                                         val czatAdres = (stanEkranu as SmsEkranStan.Czat).address
                                                                                                         IconButton(
                                                                                                         onClick = { wykonajPolaczenie(context, czatAdres) }
                                                                                                         ) {
-                                                                                                        Icon(
-                                                                                                        imageVector = IkonyAplikacji.TelefonLogo,
-                                                                                                        contentDescription = "Zadzwoń",
-                                                                                                        tint = ZielonyNeon
+                                                                                                        LogoAnimowane(
+                                                                                                            modifier = Modifier.size(28.dp),
+                                                                                                            pokazPierscien = false
                                                                                                         )
                                                                                                         }
                                                                                                         }
@@ -743,14 +770,23 @@ fun SmsScreen(
                 }
 
                 is SmsEkranStan.Czat -> {
-                                    val watekCzat = watki.find { it.address == stan.address }
-                                        ?: SmsWatek(
+                                    val watekCzat = run {
+                                        val znaleziony = watki.find { it.address == stan.address }
+                                        val nazwa = znaleziony?.contactName
+                                            ?: resolveContactName(context, stan.address)
+                                        val pseudo = znaleziony?.pseudonim
+                                            ?: nazwa?.let { pobierzPseudonim(context, it) }
+                                        (znaleziony ?: SmsWatek(
                                             address = stan.address,
-                                            contactName = resolveContactName(context, stan.address),
+                                            contactName = nazwa,
                                             lastMessage = "",
                                             lastDate = 0L,
                                             messages = emptyList()
+                                        )).copy(
+                                            contactName = nazwa,
+                                            pseudonim = pseudo
                                         )
+                                    }
                                     EkranCzatuSzczegoly(
                                         context = context,
                                         watek = watekCzat,
@@ -1059,7 +1095,11 @@ private fun usunKonwersacje(context: Context, numer: String) {
                 )
             }
             Text(
-                                        text = watek.lastMessage,
+                                        text = when {
+                                            watek.lastMessage.isBlank() -> if (roboczy) "" else "MMS"
+                                            watek.lastMessage == "📷 [MMS]" -> "MMS"
+                                            else -> watek.lastMessage
+                                        },
                                         color = if (roboczy) ZielonyNeon
                                                 else if (nieprzeczytana) Color.White.copy(alpha = 0.85f)
                                                 else Color.White.copy(alpha = 0.7f),

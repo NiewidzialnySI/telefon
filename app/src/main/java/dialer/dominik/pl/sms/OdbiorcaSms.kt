@@ -176,93 +176,46 @@ class OdbiorcaSms : BroadcastReceiver() {
                 android.graphics.Rect(0, 0, rozmiar, rozmiar), farba)
             return zuzyta
         }
-    }
 
-    override fun onReceive(context: Context, intent: Intent) {
-        // Obsługujemy SMS_DELIVER (przychodzący SMS do domyślnej apki SMS).
-        // Tylko ta akcja — SMS_RECEIVED nie jest używany, żeby nie duplikować
-        // zapisu i powiadomienia (system wysyła oba przy tym samym SMS-ie).
-        if (intent.action != Telephony.Sms.Intents.SMS_DELIVER_ACTION) return
-
-        // goAsync: zapis SMS-a może trwać dłużej niż okno broadcastu.
-        // Dzwonimy finish() dopiero po zakończeniu zapisu i powiadomienia.
-        val pendingResult = goAsync()
-
-        Thread {
-            try {
-                val wiadomosci = Telephony.Sms.Intents.getMessagesFromIntent(intent) ?: return@Thread
-                if (wiadomosci.isEmpty()) return@Thread
-
-                val nadawca = wiadomosci.firstOrNull()?.displayOriginatingAddress ?: "Nieznany"
-                val tresc = wiadomosci.joinToString(separator = "") { it.messageBody ?: "" }
-                val czas = wiadomosci.firstOrNull()?.timestampMillis ?: System.currentTimeMillis()
-
-                ostatniaWiadomosc = WiadomoscSms(
-                    nadawca = nadawca,
-                    tresc = tresc,
-                    czas = czas
-                )
-
-                // Obowiązkowy zapis przychodzącego SMS-a do systemowej skrzynki odbiorczej (Inbox)
-                try {
-                    val values = ContentValues().apply {
-                        put(Telephony.Sms.Inbox.ADDRESS, nadawca)
-                        put(Telephony.Sms.Inbox.BODY, tresc)
-                        put(Telephony.Sms.Inbox.DATE, czas)
-                        put(Telephony.Sms.Inbox.READ, 0)
-                        put(Telephony.Sms.Inbox.SEEN, 0)
-                    }
-                    context.contentResolver.insert(Telephony.Sms.Inbox.CONTENT_URI, values)
-                    // Bez unieważnienia cache skrzynka w UI pokazuje stare wątki do ręcznego odświeżenia.
-                    dialer.dominik.pl.ui.screens.uniewaznijCacheSkrzynki()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Błąd zapisu przychodzącego SMS do Inbox", e)
-                }
-
-                // Automatyczne kopiowanie kodu weryfikacyjnego do schowka,
-                // jeśli w treści jest OTP (stałe zachowanie, bez przełącznika).
-                val otp = wykryjOtp(tresc)
-                if (!otp.isNullOrBlank()) {
-                    kopiujDoSchowka(context, otp)
-                }
-
-                // Bez shortcut-a konwersacji system nie pozwoli na dymek (bubble)
-                // — publikuj go przed pokazaniem powiadomienia (wzorzec Signal).
-                // Bez Thread.sleep (blokował goAsync); krótkie yield + ponowna próba w notify.
-                ensureShortcutForRecipient(context, nadawca)
-                try { Thread.yield() } catch (_: Exception) {}
-
-                pokazPowiadomienie(context, nadawca, tresc, czas, otp)
-                // Nowa wiadomość od nadawcy, który jest w ARCHIWUM (ukrytych) — zdejmij go
-                // z ukrytych, żeby wątek wrócił na główną skrzynkę (nowy SMS = aktywny).
-                try {
-                    val prefsUkryte = context.getSharedPreferences("sms_ukryte", Context.MODE_PRIVATE)
-                    val zestaw = (prefsUkryte.getStringSet("ukryte", emptySet()) ?: emptySet()).toMutableSet()
-                    if (nadawca in zestaw) {
-                        zestaw.remove(nadawca)
-                        prefsUkryte.edit().putStringSet("ukryte", zestaw).apply()
-                        Log.i(TAG, "Nowy SMS od archiwizowanego nadawcy $nadawca — cofnięto do skrzynki")
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Błąd zdejmowania z archiwum", e)
-                }
-                Log.i(TAG, "Odebrano i zapisano w skrzynce SMS od $nadawca")
-            } catch (e: Exception) {
-                Log.e(TAG, "Błąd odbioru SMS: ${e.javaClass.simpleName}", e)
-            } finally {
-                pendingResult.finish()
+        /**
+         * Wspólna ścieżka powiadomienia + dymka dla SMS i MMS (po zapisie do skrzynki).
+         * Wywoływać z wątku IO — publikuje shortcut, OTP, heads-up / bubble.
+         */
+        fun powiadomOPrzychodzacej(
+            context: Context,
+            nadawca: String,
+            tresc: String,
+            czas: Long = System.currentTimeMillis()
+        ) {
+            ostatniaWiadomosc = WiadomoscSms(nadawca = nadawca, tresc = tresc, czas = czas)
+            val otp = wykryjOtp(tresc)
+            if (!otp.isNullOrBlank()) {
+                kopiujDoSchowka(context, otp)
             }
-        }.apply { priority = Thread.MAX_PRIORITY }.start()
-    }
+            ensureShortcutForRecipient(context, nadawca)
+            try { Thread.yield() } catch (_: Exception) {}
+            pokazPowiadomienie(context, nadawca, tresc, czas, otp)
+            try {
+                val prefsUkryte = context.getSharedPreferences("sms_ukryte", Context.MODE_PRIVATE)
+                val zestaw = (prefsUkryte.getStringSet("ukryte", emptySet()) ?: emptySet()).toMutableSet()
+                if (nadawca in zestaw) {
+                    zestaw.remove(nadawca)
+                    prefsUkryte.edit().putStringSet("ukryte", zestaw).apply()
+                    Log.i(TAG, "Nowa wiadomość od archiwizowanego nadawcy $nadawca — cofnięto do skrzynki")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Błąd zdejmowania z archiwum", e)
+            }
+        }
 
-    /** Pokazuje powiadomienie o nowej wiadomości (z odpowiedzią, kopiowaniem OTP i dymkiem). */
-    private fun pokazPowiadomienie(
-        context: Context,
-        nadawca: String,
-        tresc: String,
-        czas: Long,
-        otp: String?
-    ) {
+        /** Pokazuje powiadomienie o nowej wiadomości (z odpowiedzią, kopiowaniem OTP i dymkiem). */
+        private fun pokazPowiadomienie(
+            context: Context,
+            nadawca: String,
+            tresc: String,
+            czas: Long,
+            otp: String?
+        ) {
         val menedzer = context.getSystemService(NotificationManager::class.java) ?: return
 
         // Czy nadawca jest zapisany w kontaktach? Od tego zależy: kontakt → wybudź
@@ -437,11 +390,57 @@ class OdbiorcaSms : BroadcastReceiver() {
 
         val powiadomienie = builder.build()
 
-        try {
-            menedzer.notify(notificationId, powiadomienie)
-        } catch (e: Exception) {
-            Log.e(TAG, "Błąd wyświetlania powiadomienia", e)
+            try {
+                menedzer.notify(notificationId, powiadomienie)
+            } catch (e: Exception) {
+                Log.e(TAG, "Błąd wyświetlania powiadomienia", e)
+            }
         }
+    }
+
+    override fun onReceive(context: Context, intent: Intent) {
+        // Obsługujemy SMS_DELIVER (przychodzący SMS do domyślnej apki SMS).
+        // Tylko ta akcja — SMS_RECEIVED nie jest używany, żeby nie duplikować
+        // zapisu i powiadomienia (system wysyła oba przy tym samym SMS-ie).
+        if (intent.action != Telephony.Sms.Intents.SMS_DELIVER_ACTION) return
+
+        // goAsync: zapis SMS-a może trwać dłużej niż okno broadcastu.
+        // Dzwonimy finish() dopiero po zakończeniu zapisu i powiadomienia.
+        val pendingResult = goAsync()
+
+        Thread {
+            try {
+                val wiadomosci = Telephony.Sms.Intents.getMessagesFromIntent(intent) ?: return@Thread
+                if (wiadomosci.isEmpty()) return@Thread
+
+                val nadawca = wiadomosci.firstOrNull()?.displayOriginatingAddress ?: "Nieznany"
+                val tresc = wiadomosci.joinToString(separator = "") { it.messageBody ?: "" }
+                val czas = wiadomosci.firstOrNull()?.timestampMillis ?: System.currentTimeMillis()
+
+                // Obowiązkowy zapis przychodzącego SMS-a do systemowej skrzynki odbiorczej (Inbox)
+                try {
+                    val values = ContentValues().apply {
+                        put(Telephony.Sms.Inbox.ADDRESS, nadawca)
+                        put(Telephony.Sms.Inbox.BODY, tresc)
+                        put(Telephony.Sms.Inbox.DATE, czas)
+                        put(Telephony.Sms.Inbox.READ, 0)
+                        put(Telephony.Sms.Inbox.SEEN, 0)
+                    }
+                    context.contentResolver.insert(Telephony.Sms.Inbox.CONTENT_URI, values)
+                    // Bez unieważnienia cache skrzynka w UI pokazuje stare wątki do ręcznego odświeżenia.
+                    dialer.dominik.pl.ui.screens.uniewaznijCacheSkrzynki()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Błąd zapisu przychodzącego SMS do Inbox", e)
+                }
+
+                powiadomOPrzychodzacej(context, nadawca, tresc, czas)
+                Log.i(TAG, "Odebrano i zapisano w skrzynce SMS od $nadawca")
+            } catch (e: Exception) {
+                Log.e(TAG, "Błąd odbioru SMS: ${e.javaClass.simpleName}", e)
+            } finally {
+                pendingResult.finish()
+            }
+        }.apply { priority = Thread.MAX_PRIORITY }.start()
     }
 }
 

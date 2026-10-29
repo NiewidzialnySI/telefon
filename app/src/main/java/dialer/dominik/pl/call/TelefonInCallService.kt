@@ -1,7 +1,11 @@
 package dialer.dominik.pl.call
 
+import android.os.Build
+import android.os.OutcomeReceiver
 import android.telecom.Call
 import android.telecom.CallAudioState
+import android.telecom.CallEndpoint
+import android.telecom.CallEndpointException
 import android.telecom.InCallService
 import android.content.Context
 import dialer.dominik.pl.ui.screens.wykonajFaktycznePolaczenie
@@ -9,7 +13,13 @@ import dialer.dominik.pl.ui.screens.pobierzPseudonim
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.util.concurrent.Executor
 
 /**
  * Stan aktualnego połączenia — jeden wspólny obiekt dla InCallService i UI.
@@ -53,11 +63,11 @@ object StanPolaczenia {
     /** Dostępne urządzenia audio (słuchawka, głośnik, Bluetooth). */
     var urzadzenia: List<CallAudioState> by mutableStateOf(emptyList())
 
-    /** Czy trwa nagrywanie. */
-    var nagrywanie: Boolean by mutableStateOf(false)
-
     /** Czy klawiatura DTMF jest otwarta w UI. */
     var klawiatura: Boolean by mutableStateOf(false)
+
+    /** Cyfry DTMF wpisane w tej rozmowie (podgląd nad klawiaturą). */
+    var buforDtmf: String by mutableStateOf("")
 
     /**
      * Trasa audio ZADANA przez użytkownika PRZED połączeniem (głośnik/BT podczas
@@ -83,26 +93,34 @@ object StanPolaczenia {
 }
 
 /**
- * Wykonuje akcję, gdy usługa [TelefonInCallService] jest dostępna ORAZ trwa połączenie
- * (stan `Rozmowa`).
- *
- * Platforma (Telecom/InCallService) IGNORUJE `setAudioRoute` / `setMuted`, dopóki
- * połączenie nie ma aktywnego audio — tzn. podczas `STATE_DIALING` / `STATE_CONNECTING`
- * (gdy dzwoni) przyciski Głośnik/Wycisz/BT cicho nic nie robią, choć Call już istnieje.
- * Dopiero przy `STATE_ACTIVE` (rozmowa) trasa i wyciszenie faktycznie działają.
- *
- * Ta funkcja: (1) czeka aż `TelefonInCallService.instancja` != null (Telecom binduje
- * asynchronicznie po pokazaniu ekranu), (2) czeka aż `StanPolaczenia.stan` == `Rozmowa`,
- * potem wykonuje akcję w try-catch. Max ~15 s (połączenie zwykle łączy się w kilka sekund);
- * jeśli po tym czasie nie ma rozmowy — akcja się nie wykonuje.
+ * Jedna kolejka akcji audio/mute na połączenie dialing → active.
+ * Nowe żądanie anuluje poprzednie oczekiwanie (ostatni wybór usera wygrywa).
+ */
+private val scopeGdyGotowa = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+private var jobGdyGotowa: Job? = null
+
+/** Anuluje poprzedni Job i czeka na ACTIVE, potem wykonuje [akcja] (max ~15 s). */
+internal fun kolejkujGdyGotowa(akcja: TelefonInCallService.() -> Unit) {
+    jobGdyGotowa?.cancel()
+    jobGdyGotowa = scopeGdyGotowa.launch {
+        zAkcjamiGdyGotowa(akcja)
+    }
+}
+
+/**
+ * Wykonuje akcję, gdy usługa jest dostępna ORAZ trwa `Rozmowa`.
+ * Preferuj [kolejkujGdyGotowa] z UI — gwarantuje jeden Job.
  */
 internal suspend fun zAkcjamiGdyGotowa(akcja: TelefonInCallService.() -> Unit) {
     var proba = 0
-    while (proba < 150) { // 150 × 100 ms = 15 s max
+    while (proba < 150) {
         val usluga = TelefonInCallService.instancja
         val wRozmowie = StanPolaczenia.stan == StanPolaczenia.Stan.Rozmowa
         if (usluga != null && wRozmowie) {
-            try { usluga.akcja() } catch (e: Exception) { /* ignoruj przejściowe */ }
+            try {
+                usluga.akcja()
+            } catch (_: Exception) {
+            }
             return
         }
         delay(100)
@@ -185,6 +203,9 @@ object OczekiwanieNaPolaczenie {
 @Suppress("DEPRECATION")
 class TelefonInCallService : InCallService() {
 
+    /** API 34+: lista endpointów z [onAvailableCallEndpointsChanged]. */
+    private var dostepneEndpointy: List<CallEndpoint> = emptyList()
+
     private val sluchaczPolaczen = object : Call.Callback() {
         override fun onStateChanged(call: Call, stan: Int) {
             aktualizujStan(call, stan)
@@ -205,8 +226,46 @@ class TelefonInCallService : InCallService() {
     }
 
     override fun onDestroy() {
+        jobGdyGotowa?.cancel()
+        jobGdyGotowa = null
         instancja = null
         super.onDestroy()
+    }
+
+    override fun onAvailableCallEndpointsChanged(availableEndpoints: MutableList<CallEndpoint>) {
+        super.onAvailableCallEndpointsChanged(availableEndpoints)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            dostepneEndpointy = availableEndpoints.toList()
+        }
+    }
+
+    override fun onCallEndpointChanged(callEndpoint: CallEndpoint) {
+        super.onCallEndpointChanged(callEndpoint)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
+        // Podczas dzwonienia UI = wybór usera; system jeszcze raportuje EARPIECE.
+        if (StanPolaczenia.stan == StanPolaczenia.Stan.Dzwoni) return
+        val typ = callEndpoint.endpointType
+        val zadana = StanPolaczenia.zadanaTrasa
+        val pasujeDoZadanej = when (zadana) {
+            CallAudioState.ROUTE_SPEAKER -> typ == CallEndpoint.TYPE_SPEAKER
+            CallAudioState.ROUTE_BLUETOOTH -> typ == CallEndpoint.TYPE_BLUETOOTH
+            CallAudioState.ROUTE_WIRED_OR_EARPIECE ->
+                typ == CallEndpoint.TYPE_EARPIECE || typ == CallEndpoint.TYPE_WIRED_HEADSET
+            null -> true
+            else -> false
+        }
+        if (zadana != null && !pasujeDoZadanej) return
+        if (pasujeDoZadanej && zadana != null) StanPolaczenia.zadanaTrasa = null
+        StanPolaczenia.glosnik = typ == CallEndpoint.TYPE_SPEAKER
+        StanPolaczenia.bluetoothAktywny = typ == CallEndpoint.TYPE_BLUETOOTH
+    }
+
+    override fun onMuteStateChanged(isMuted: Boolean) {
+        super.onMuteStateChanged(isMuted)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
+        // Nie gas mute wybrane w countdown — system zgłasza false aż do ACTIVE.
+        if (StanPolaczenia.stan == StanPolaczenia.Stan.Dzwoni) return
+        StanPolaczenia.wyciszony = isMuted
     }
 
     override fun onCallAdded(call: Call) {
@@ -216,16 +275,18 @@ class TelefonInCallService : InCallService() {
         StanPolaczenia.polaczenie = call
         val numer = call.details.handle?.schemeSpecificPart ?: ""
         StanPolaczenia.numerRozmowy = numer
-        // Reset stanu UI z poprzedniej rozmowy (klawiatura DTMF, głośnik, wyciszenie) —
-        // żeby nowe połączenie (też przychodzące) nie dziedziczyło stanu.
+        // Zachowaj mute/głośnik/BT wybrane podczas countdown (zadanaTrasa / wyciszony).
+        // Reset tylko gdy to zupełnie nowe połączenie bez wcześniejszego wyboru na ekranie.
+        val zachowajTrase = StanPolaczenia.zadanaTrasa != null
+        val zachowajMute = StanPolaczenia.wyciszony
         StanPolaczenia.klawiatura = false
-        StanPolaczenia.wyciszony = false
-        StanPolaczenia.glosnik = false
-        // Wczytaj istniejącą notatkę dla tego numeru (jeśli była wcześniej).
+        StanPolaczenia.buforDtmf = ""
+        if (!zachowajMute) StanPolaczenia.wyciszony = false
+        if (!zachowajTrase) {
+            StanPolaczenia.glosnik = false
+            StanPolaczenia.bluetoothAktywny = false
+        }
         StanPolaczenia.notatkaRozmowy = NotatkiRozmow.pobierzNotatke(this, numer) ?: ""
-        // Priorytet: pseudonim > nazwa kontaktu > surowy numer.
-        // PhoneLookup łączy numery jednego kontaktu po CONTACT_ID,
-        // więc zadziała nawet gdy kontakt ma 2 numery w książce.
         val nazwa = WeryfikacjaNumeru.pobierzNazweKontaktu(this, numer)
         val pseudonim = nazwa?.let { pobierzPseudonim(this, it) }
         StanPolaczenia.rozmowca = pseudonim
@@ -235,18 +296,17 @@ class TelefonInCallService : InCallService() {
         @Suppress("DEPRECATION")
         aktualizujStan(call, call.state)
 
-        // Zresetuj trasę audio do słuchawki na starcie KAŻDEGO nowego połączenia.
-        // System (TelecomManager) pamięta ostatnią trasę między połączeniami —
-        // bez tego resetu następna rozmowa dziedziczy "Głośnik"/BT z poprzedniej,
-        // co user odbiera jako "samo się ustawia na głośnomówiący". Domyślnie każda
-        // rozmowa startuje na słuchawce; głośnik/BT user włącza sam, gdy chce.
-        try {
-            setAudioRoute(CallAudioState.ROUTE_WIRED_OR_EARPIECE)
-        } catch (e: Exception) {
-            e.printStackTrace()
+        // Nie resetuj do EARPIECE, gdy user już wybrał głośnik/BT podczas dzwonienia.
+        if (!zachowajTrase) {
+            try {
+                ustawTrase(CallAudioState.ROUTE_WIRED_OR_EARPIECE)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
+        // Nie kasuj kolejki dialing — kolejkujGdyGotowa ma wykonać mute/trasę po ACTIVE.
+        // (Jeśli nie było kolejki, przy ACTIVE zastosujemy zadanaTrasa poniżej.)
 
-        // Zawsze pokazuj nasz dedykowany pełnoekranowy interfejs rozmowy i anuluj ewentualne powiadomienia w tle
         PowiadomieniaPolaczen.anuluj(this)
         pokazPowiadomienieLubEkran(this, call)
     }
@@ -258,6 +318,12 @@ class TelefonInCallService : InCallService() {
         val ekranZablokowany = keyguard?.isKeyguardLocked == true
 
         val rozmowca = StanPolaczenia.rozmowca
+
+        // IN_CALL_SERVICE_RINGING=true → system nie dzwoni; zawsze startujemy ZarzadcaDzwonka
+        // (także przy samym banerze, gdy pełny ekran nie jest zamontowany).
+        if (tylkoDzwoni) {
+            ZarzadcaDzwonka.uruchom(context, czySpam = false)
+        }
 
         if (ekranZablokowany || !tylkoDzwoni) {
             // Pełnoekranowy ekran dzwonienia/rozmowy (nad blokadą).
@@ -271,10 +337,9 @@ class TelefonInCallService : InCallService() {
     override fun onCallRemoved(call: Call) {
         super.onCallRemoved(call)
         call.unregisterCallback(sluchaczPolaczen)
+        ZarzadcaDzwonka.zatrzymaj()
         PowiadomieniaPolaczen.anuluj(this)
         PowiadomieniaTrwajacejRozmowy.anuluj(this)
-        NagrywanieRozmowService.stop(this)
-        StanPolaczenia.nagrywanie = false
         // Rozmowa się skończyła — zamknij własny dymek (nakładka), jeśli jest.
         DymekRozmowyService.stop(this)
         // Zapisz notatkę do logu tego numeru (trwale w SharedPreferences).
@@ -296,50 +361,139 @@ class TelefonInCallService : InCallService() {
     override fun onCallAudioStateChanged(audioState: CallAudioState?) {
         super.onCallAudioStateChanged(audioState)
         audioState ?: return
-        StanPolaczenia.wyciszony = audioState.isMuted
-        // Jeśli user zadaje trasę (głośnik/BT przy dzwonieniu), trzymaj jego wybór —
-        // nie nadpisuj go rzeczywistym audio (które przy połączeniu to jeszcze EARPIECE,
-        // więc przycisk by "zgasił" mimo woli usera). Trasę realnie wymuszamy osobno,
-        // gdy rozmowa się połączy.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            StanPolaczenia.urzadzeniaBluetooth =
+                audioState.supportedBluetoothDevices?.toList() ?: emptyList()
+        }
+        // Countdown / DIALING: przyciski mute/głośnik trzymają optymistyczny stan usera.
+        // Telecom i tak raportuje EARPIECE + unmuted → bez tego „odznacza się samo”.
+        if (StanPolaczenia.stan == StanPolaczenia.Stan.Dzwoni) return
+
         val zadana = StanPolaczenia.zadanaTrasa
         if (zadana == null) {
+            StanPolaczenia.wyciszony = audioState.isMuted
             StanPolaczenia.glosnik = audioState.route == CallAudioState.ROUTE_SPEAKER
             StanPolaczenia.bluetoothAktywny = audioState.route == CallAudioState.ROUTE_BLUETOOTH
         } else if (audioState.route == zadana) {
-            // Trasa już realnie ustawiona na zadaną — zwolnij wymuszenie, niech
-            // kolejne zmiany audio znów aktualizują UI normalnie.
             StanPolaczenia.zadanaTrasa = null
+            StanPolaczenia.wyciszony = audioState.isMuted
             StanPolaczenia.glosnik = audioState.route == CallAudioState.ROUTE_SPEAKER
             StanPolaczenia.bluetoothAktywny = audioState.route == CallAudioState.ROUTE_BLUETOOTH
         }
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-            StanPolaczenia.urzadzeniaBluetooth = audioState.supportedBluetoothDevices?.toList() ?: emptyList()
-        }
+        // zadana != null i route jeszcze nie pasuje → nie ruszaj UI (czekamy na wymuszenie).
     }
 
-    /** Wybiera domyślną trasę Bluetooth. */
-    @Suppress("UNUSED_PARAMETER")
+    /** Wybiera konkretne urządzenie Bluetooth (lub domyślną trasę BT). */
     fun wybierzBluetooth(device: android.bluetooth.BluetoothDevice?) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val bt = dostepneEndpointy.firstOrNull { it.endpointType == CallEndpoint.TYPE_BLUETOOTH }
+            if (bt != null) {
+                zadajEndpoint(bt)
+                return
+            }
+        }
+        if (device != null) {
+            try {
+                requestBluetoothAudio(device)
+                return
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
         setAudioRoute(CallAudioState.ROUTE_BLUETOOTH)
     }
 
-    /** Wycisza lub włącza mikrofon zgodnie z optymistycznym stanem UI (`StanPolaczenia.wyciszony`). */
+    /** Przełącza wyciszenie mikrofonu i synchronizuje `StanPolaczenia.wyciszony`. */
     fun przelaczWyciszenie() {
-        // UI przełączyło już StanPolaczenia.wyciszony (optymistycznie, żeby przycisk
-        // zareagował natychmiast). Ustawiamy mikrofon na ten zapamiętany stan, a nie
-        // czyścimy z aktualnego callAudioState (który przy połączeniu może się różnić).
+        StanPolaczenia.wyciszony = !StanPolaczenia.wyciszony
         setMuted(StanPolaczenia.wyciszony)
     }
 
-    /** Przełącza między słuchawką, głośnikiem i Bluetooth. */
+    /**
+     * Stosuje już ustawiony (np. optymistycznie w Dialing) stan `wyciszony`
+     * bez ponownego flipu — używane z `kolejkujGdyGotowa`.
+     */
+    fun zastosujWyciszenie() {
+        setMuted(StanPolaczenia.wyciszony)
+    }
+
+    /** Przełącza między słuchawką, głośnikiem i Bluetooth (CallEndpoint na API 34+). */
     fun ustawTrase(trasa: Int) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val typ = when (trasa) {
+                CallAudioState.ROUTE_SPEAKER -> CallEndpoint.TYPE_SPEAKER
+                CallAudioState.ROUTE_BLUETOOTH -> CallEndpoint.TYPE_BLUETOOTH
+                CallAudioState.ROUTE_WIRED_HEADSET -> CallEndpoint.TYPE_WIRED_HEADSET
+                else -> CallEndpoint.TYPE_EARPIECE
+            }
+            val ep = dostepneEndpointy.firstOrNull { it.endpointType == typ }
+                ?: if (typ == CallEndpoint.TYPE_EARPIECE) {
+                    dostepneEndpointy.firstOrNull {
+                        it.endpointType == CallEndpoint.TYPE_WIRED_HEADSET
+                    }
+                } else null
+            if (ep != null) {
+                zadajEndpoint(ep)
+                return
+            }
+        }
         setAudioRoute(trasa)
     }
 
-    /** Wysyła ton DTMF (klawiatura w trakcie rozmowy). */
+    private fun zadajEndpoint(endpoint: CallEndpoint) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
+        val executor: Executor = mainExecutor
+        requestCallEndpointChange(
+            endpoint,
+            executor,
+            object : OutcomeReceiver<Void?, CallEndpointException> {
+                override fun onResult(result: Void?) {}
+                override fun onError(error: CallEndpointException) {
+                    // Fallback do starego API, gdy endpoint nie przyjął zmiany.
+                    try {
+                        val trasa = when (endpoint.endpointType) {
+                            CallEndpoint.TYPE_SPEAKER -> CallAudioState.ROUTE_SPEAKER
+                            CallEndpoint.TYPE_BLUETOOTH -> CallAudioState.ROUTE_BLUETOOTH
+                            CallEndpoint.TYPE_WIRED_HEADSET -> CallAudioState.ROUTE_WIRED_HEADSET
+                            else -> CallAudioState.ROUTE_WIRED_OR_EARPIECE
+                        }
+                        setAudioRoute(trasa)
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+        )
+    }
+
+    /** Wysyła ton DTMF i dopisuje cyfrę do podglądu. */
     fun wyslijTon(cyfra: Char) {
-        StanPolaczenia.polaczenie?.playDtmfTone(cyfra)
-        StanPolaczenia.polaczenie?.stopDtmfTone()
+        val call = StanPolaczenia.polaczenie ?: return
+        StanPolaczenia.buforDtmf = (StanPolaczenia.buforDtmf + cyfra).takeLast(32)
+        call.playDtmfTone(cyfra)
+        // Natychmiastowy stop = niesłyszalny ton; Fossify trzyma ~DIALPAD_TONE_LENGTH_MS.
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            try {
+                call.stopDtmfTone()
+            } catch (_: Exception) {
+            }
+        }, 180L)
+    }
+
+    /** Mute + trasa z countdown — egzekwuj przy ACTIVE (niezależnie od kolejki Job). */
+    private fun zastosujWyboryPoOdebraniu() {
+        try {
+            setMuted(StanPolaczenia.wyciszony)
+            val trasa = StanPolaczenia.zadanaTrasa
+            if (trasa != null) {
+                ustawTrase(trasa)
+            } else if (StanPolaczenia.glosnik) {
+                ustawTrase(CallAudioState.ROUTE_SPEAKER)
+            } else if (StanPolaczenia.bluetoothAktywny) {
+                ustawTrase(CallAudioState.ROUTE_BLUETOOTH)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun aktualizujStan(call: Call, stan: Int) {
@@ -352,12 +506,12 @@ class TelefonInCallService : InCallService() {
             Call.STATE_NEW, Call.STATE_CONNECTING, Call.STATE_DIALING -> StanPolaczenia.Stan.Dzwoni
             Call.STATE_RINGING -> StanPolaczenia.Stan.Dzwoni
             Call.STATE_ACTIVE -> {
+                ZarzadcaDzwonka.zatrzymaj()
                 if (StanPolaczenia.czasStartu == 0L) {
                     StanPolaczenia.czasStartu = System.currentTimeMillis()
                 }
-                // Pokaż trwałe powiadomienie rozmowy — użytkownik może zamknąć
-                // dymek (bubble), a rozmowa i tak trwa; powiadomienie zawsze
-                // pozwala wrócić do ekranu, wyciszyć mikrofon lub rozłączyć.
+                // Zastosuj wybory z fazy dzwonienia (mute / głośnik / BT).
+                zastosujWyboryPoOdebraniu()
                 PowiadomieniaTrwajacejRozmowy.pokazPowiadomienie(
                     this@TelefonInCallService,
                     StanPolaczenia.rozmowca,

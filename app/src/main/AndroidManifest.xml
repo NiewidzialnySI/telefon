@@ -36,9 +36,8 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Planowane wysyłanie SMS (scheduled send): dokładny alarm w tle. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-<!-- ===== Pełny dialer: InCallService + nagrywanie rozmów ===== -->
+<!-- ===== Pełny dialer: InCallService ===== -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
     <uses-permission android:name="android.permission.MODIFY_PHONE_STATE" tools:ignore="ProtectedPermissions" />
@@ -164,6 +163,10 @@
             android:name=".call.AkcjaPolaczeniaReceiver"
             android:exported="false" />
 
+        <receiver
+            android:name=".call.AkcjaTrwajacejRozmowyReceiver"
+            android:exported="false" />
+
         <!-- ===== Uwaga: Własny dymek rozmowy (nakładka SYSTEM_ALERT_WINDOW) =====
              Pokazuje małe zielone kółko, gdy użytkownik zminimalizuje rozmowę.
              Nakładka żyje w osobnym service, więc przetrwa przejście do innej apki. -->
@@ -181,23 +184,14 @@
             <meta-data
                 android:name="android.telecom.IN_CALL_SERVICE_UI"
                 android:value="true" />
+            <!-- true = dzwonek wyłącznie przez ZarzadcaDzwonka (bez podwójnego systemowego). -->
             <meta-data
                 android:name="android.telecom.IN_CALL_SERVICE_RINGING"
-                android:value="false" />
+                android:value="true" />
             <intent-filter>
                 <action android:name="android.telecom.InCallService" />
             </intent-filter>
         </service>
-
-        <!-- ===== Usługa nagrywania rozmów =====
-             Typ microphone: nagrywa przez mikrofon (bez CAPTURE_AUDIO_OUTPUT
-             nie ma dostępu do strumienia rozmowy). Obie strony słychać
-             tylko przy włączonym głośniku. -->
-        <service
-            android:name=".call.NagrywanieRozmowService"
-            android:exported="false"
-            android:foregroundServiceType="microphone" />
-
 
         <!-- ===== Komponenty wymagane przez system, żeby aplikacja pojawiła się
              na liście domyślnych aplikacji SMS. Brak któregokolwiek = apka

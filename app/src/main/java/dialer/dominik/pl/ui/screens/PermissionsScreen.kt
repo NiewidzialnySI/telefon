@@ -137,6 +137,11 @@ private fun zbudujListeUprawnien(): List<Uprawnienie> = buildList {
             "domyslny_dialer", "Domyślny dialer", true, TypUprawnienia.DomyslnaApka,
             rola = android.app.role.RoleManager.ROLE_DIALER
         ))
+        // Bez tej roli UslugaIdentyfikacjiPolaczen nie dostaje połączeń do blokady spamu.
+        add(Uprawnienie(
+            "identyfikacja_spamu", "Identyfikacja rozmów i spamu", true, TypUprawnienia.DomyslnaApka,
+            rola = android.app.role.RoleManager.ROLE_CALL_SCREENING
+        ))
     }
     add(Uprawnienie("nakladka", "Wyświetlanie nad aplikacjami", false, TypUprawnienia.Nakladka))
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -353,19 +358,20 @@ fun PermissionsScreen(
                                     zapytanieOPermisje.launch(uprawnienie.doZadania.toTypedArray())
 
                                 TypUprawnienia.DomyslnaApka -> {
-                                    // Przenieś do USTAWIEŃ listy domyślnych aplikacji (SMS/dialer),
-                                    // gdzie użytkownik sam wybiera domyślny.
-                                    val ustawienia = Intent(
-                                        android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS
+                                    val zarzadcaRol = context.getSystemService(
+                                        android.app.role.RoleManager::class.java
                                     )
-                                    if (otworzUstawienia(context, ustawienia)) {
+                                    // ROLE_CALL_SCREENING i dialer: najpierw systemowy dialog roli.
+                                    val intencjaRoli = uprawnienie.rola?.let {
+                                        zarzadcaRol?.createRequestRoleIntent(it)
+                                    }
+                                    if (intencjaRoli != null && otworzUstawienia(context, intencjaRoli)) {
                                         czekamyNaUstawienia = true
                                     } else {
-                                        val zarzadcaRol = context.getSystemService(
-                                            android.app.role.RoleManager::class.java
+                                        val ustawienia = Intent(
+                                            android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS
                                         )
-                                        val intencjaRoli = uprawnienie.rola?.let { zarzadcaRol?.createRequestRoleIntent(it) }
-                                        if (intencjaRoli != null && otworzUstawienia(context, intencjaRoli)) {
+                                        if (otworzUstawienia(context, ustawienia)) {
                                             czekamyNaUstawienia = true
                                         }
                                     }

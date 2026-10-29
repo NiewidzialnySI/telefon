@@ -46,8 +46,6 @@ object BazaSpamu {
             .apply()
     }
 
-    /** Normalizacja do porównania — same cyfry (bez prefiksu i separatorów). */
-    private fun normalizuj(numer: String): String {
-        return numer.filter { it.isDigit() }
-    }
+    /** Normalizacja do porównania — cyfry + strip PL 48 (patrz [kluczNumeru]). */
+    private fun normalizuj(numer: String): String = kluczNumeru(numer)
 }

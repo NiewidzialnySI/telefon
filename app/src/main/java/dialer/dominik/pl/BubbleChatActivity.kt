@@ -49,19 +49,25 @@ class BubbleChatActivity : ComponentActivity() {
                 androidx.compose.runtime.LaunchedEffect(odswiez, OdbiorcaSms.ostatniaWiadomosc?.czas) {
                     watek = withContext(Dispatchers.IO) {
                         val wszystkie = pobierzWątkiSms(kontekst)
-                        val znaleziony = wszystkie.firstOrNull { it.address == numer }
-                        if (znaleziony != null) {
-                            znaleziony
-                        } else {
-                            val nazwa = resolveContactName(kontekst, numer)
-                            SmsWatek(
-                                address = numer,
-                                contactName = nazwa,
-                                lastMessage = "",
-                                lastDate = 0L,
-                                messages = emptyList()
-                            )
+                        val norm = dialer.dominik.pl.ui.screens.normalizujAdresSms(numer)
+                        val znaleziony = wszystkie.firstOrNull {
+                            it.address == numer ||
+                                dialer.dominik.pl.ui.screens.normalizujAdresSms(it.address) == norm
                         }
+                        val nazwa = znaleziony?.contactName
+                            ?: resolveContactName(kontekst, numer)
+                        val pseudo = znaleziony?.pseudonim
+                            ?: nazwa?.let { dialer.dominik.pl.ui.screens.pobierzPseudonim(kontekst, it) }
+                        (znaleziony ?: SmsWatek(
+                            address = numer,
+                            contactName = nazwa,
+                            lastMessage = "",
+                            lastDate = 0L,
+                            messages = emptyList()
+                        )).copy(
+                            contactName = nazwa,
+                            pseudonim = pseudo
+                        )
                     }
                 }
 
