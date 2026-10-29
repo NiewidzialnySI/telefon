@@ -3,369 +3,113 @@ import androidx.compose.runtime.Immutable
 
 import android.Manifest
 import android.app.PendingIntent
-import android.content.BroadcastReceiver
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Bundle
+import android.os.SystemClock
 import android.provider.ContactsContract
 import android.provider.Telephony
 import android.telephony.SmsManager
+import android.util.Log
 import android.widget.Toast
-import androidx.core.content.ContextCompat
 import dialer.dominik.pl.sms.KanalWiadomosci
 import dialer.dominik.pl.sms.WykrywanieOtp
 import dialer.dominik.pl.sms.wyslijPrzezKomunikator
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-@Immutable
-data class SmsWpis(
-    val id: Long,
-    val address: String,
-    val body: String,
-    val date: Long,
-    val type: Int,
-    /** Czy wiadomość została przeczytana (kolumna READ w skrzynce). */
-    val read: Boolean = true,
-    /** Opcjonalna bitmapa załącznika (MMS). */
-    val bitmap: android.graphics.Bitmap? = null,
-    /** Opcjonalne ID wiadomości MMS do leniwego ładowania zdjęcia w UI. */
-    val mmsMsgId: Long? = null
-)
+/** Ile wiadomości ładujemy przy otwarciu czatu / stronie historii (Fossify-style). */
+internal const val CZAT_PAGE_SIZE = 80
 
-/** Normalizuje adres SMS / nadawcę do celów grupowania i dopasowywania wątków. */
-internal fun normalizujAdresSms(adres: String): String {
-    if (adres.isBlank()) return ""
-    val cyfry = adres.filter { it.isDigit() }
-    if (cyfry.length >= 7) {
-        if (cyfry.startsWith("48") && cyfry.length == 11) {
-            return cyfry.substring(2)
-        }
-        if (cyfry.startsWith("0048") && cyfry.length == 13) {
-            return cyfry.substring(4)
-        }
-        if (cyfry.length > 9) {
-            return cyfry.takeLast(9)
-        }
-        return cyfry
-    } else {
-        return adres.lowercase().replace(Regex("[^a-z0-9]"), "")
+private const val TAG_CZAT_PERF = "CzatPerf"
+
+/** Cache wiadomości per znormalizowany adres — unika ponownego skanu Telephony. */
+object CzatWatekCache {
+    private val mapa = ConcurrentHashMap<String, List<SmsWpis>>()
+
+    fun get(normAdres: String): List<SmsWpis>? = mapa[normAdres]
+
+    fun put(normAdres: String, wpisy: List<SmsWpis>) {
+        mapa[normAdres] = wpisy
+    }
+
+    fun invalidate(normAdres: String? = null) {
+        if (normAdres == null) mapa.clear() else mapa.remove(normAdres)
     }
 }
 
-@Immutable
-data class SmsWatek(
-    val address: String,
-    val contactName: String?,
-    val lastMessage: String,
-    val lastDate: Long,
-    val messages: List<SmsWpis>,
-    /** Czy numer ma swój kontakt w książce (pozwala ciemniej/jaśniej tło wątku). */
-    val isKontakt: Boolean = false,
-    /** Liczba nieprzeczytanych wiadomości w wątku (0 = wszystko przeczytane). */
-    val nieprzeczytane: Int = 0,
-    /** Pseudonim ustawiony w tej aplikacji (SharedPreferences) — wyświetlany nad numerem. */
-    val pseudonim: String? = null,
-    /** URI zdjęcia kontaktu z książki (do awatara w wątku). */
-    val fotoUri: String? = null,
-    /** ID pasującej wiadomości przy wyszukiwaniu (do skoku w czacie). */
-    val searchMatchMsgId: Long? = null
-)
-
-internal fun pobierzPasujacaWiadomosc(context: Context, adres: String, zapytanie: String): SmsWpis? {
-    if (zapytanie.isBlank()) return null
-    val q = normalizujPolski(zapytanie).trim()
-    val wpisy = pobierzWiadomosciDlaAdresu(context, adres)
-    return wpisy.find { normalizujPolski(it.body).contains(q) }
+internal fun uniewaznijCacheWatku(adres: String) {
+    CzatWatekCache.invalidate(normalizujAdresSms(adres))
 }
+
+/** Warianty numeru do SQL ADDRESS=? (PL +48 / lokalny). */
+internal fun wariantyAdresuDoQuery(adres: String): List<String> {
+    val out = linkedSetOf<String>()
+    val trim = adres.trim()
+    if (trim.isNotBlank()) out += trim
+    val norm = normalizujAdresSms(adres)
+    if (norm.isNotBlank()) {
+        out += norm
+        if (norm.all { it.isDigit() } && norm.length >= 7) {
+            out += "+48$norm"
+            out += "48$norm"
+            out += "0048$norm"
+        }
+    }
+    return out.toList()
+}
+
+internal fun threadIdDlaAdresu(context: Context, adres: String): Long? {
+    return try {
+        @Suppress("DEPRECATION")
+        Telephony.Threads.getOrCreateThreadId(context, adres).takeIf { it > 0L }
+    } catch (e: Exception) {
+        try {
+            @Suppress("DEPRECATION")
+            Telephony.Threads.getOrCreateThreadId(context, setOf(adres)).takeIf { it > 0L }
+        } catch (_: Exception) {
+            Log.w(TAG_CZAT_PERF, "threadId: ${e.message}")
+            null
+        }
+    }
+}
+
+/** Wynik optymistycznej wysyłki SMS — id w providerze + lokalny klucz do UI. */
+data class WynikWysylkiSms(
+    val messageId: Long,
+    val messageUri: Uri,
+    val lokalnyKlucz: Long
+)
 
 /**
- * Efektywne wyszukiwanie „w wiadomościach”.
- * Zamiast dla KAŻDEGO wątku osobno pobierać CAŁĄ skrzynkę i filtrować w Kotlinie
- * (pobierzWiadomosciDlaAdresu → query całego Telephony.Sms dla każdego adresu — sekundy
- * przy większej skrzynce), robimy JEDEN query z LIKE na treści. Zwracamy mapę
- * znormalizowanyAdres → pasująca wiadomość (najnowsza), więc wynik podpinamy pod wątki.
+ * Wysyła SMS (wzorzec Fossify MessagingUtils + SmsSender):
+ * 1) zapis do OUTBOX ze STATUS_PENDING
+ * 2) sendMultipartTextMessage z PendingIntent SENT/DELIVERED (URI wiadomości)
+ * 3) BroadcastReceivery aktualizują TYPE/STATUS i emitują [StatusWiadomosciBus]
+ *
+ * Zwraca dane dymka albo null przy błędzie / kanale innym niż SMS.
  */
-internal fun pobierzPasujaceSmsy(context: Context, zapytanie: String): Map<String, SmsWpis> {
-    val q = zapytanie.trim()
-    if (q.length < 2) return emptyMap()
-    // LIKE z escapem znaków specjalnych % i _ (żeby user szukający np. "100%" nie podważył wzorca)
-    val esq = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    val wzorzec = "%$esq%"
-    val wynik = LinkedHashMap<String, SmsWpis>() // zachowuje kolejność, usuwa duplikaty adresów
-    try {
-        val cursor = context.contentResolver.query(
-            Telephony.Sms.CONTENT_URI,
-            arrayOf(
-                Telephony.Sms._ID,
-                Telephony.Sms.ADDRESS,
-                Telephony.Sms.BODY,
-                Telephony.Sms.DATE
-            ),
-            "${Telephony.Sms.BODY} LIKE ?",
-            arrayOf(wzorzec),
-            "${Telephony.Sms.DATE} DESC"
-        )
-        cursor?.use { c ->
-            val idIdx = c.getColumnIndex(Telephony.Sms._ID)
-            val addrIdx = c.getColumnIndex(Telephony.Sms.ADDRESS)
-            val bodyIdx = c.getColumnIndex(Telephony.Sms.BODY)
-            val dateIdx = c.getColumnIndex(Telephony.Sms.DATE)
-            while (c.moveToNext()) {
-                val id = if (idIdx != -1) c.getLong(idIdx) else 0L
-                val address = if (addrIdx != -1) c.getString(addrIdx) ?: "" else ""
-                val body = if (bodyIdx != -1) c.getString(bodyIdx) ?: "" else ""
-                val date = if (dateIdx != -1) c.getLong(dateIdx) else 0L
-                val norm = normalizujAdresSms(address)
-                // Pierwsze trafienie na adres = najnowsze (sort DESC) — pomiń resztę
-                if (!wynik.containsKey(norm)) {
-                    wynik[norm] = SmsWpis(id, address, body, date, Telephony.Sms.MESSAGE_TYPE_INBOX, true, null)
-                }
-            }
-        }
-    } catch (e: Exception) {
-        e.printStackTrace()
-    }
-    return wynik
-}
-
-data class ContactCacheInfo(
-    val name: String,
-    val photoUri: String?
-)
-
-object KontaktyCache {
-    @Volatile var mapaNumerow: Map<String, ContactCacheInfo>? = null
-
-    fun get(context: Context, numer: String): ContactCacheInfo? {
-        val mapa = mapaNumerow ?: synchronized(this) {
-            mapaNumerow ?: wczytajWszystkieKontakty(context).also { mapaNumerow = it }
-        }
-        val norm = normalizujAdresSms(numer)
-        return mapa[norm] ?: mapa[numer]
-    }
-
-    fun invalidate() {
-        mapaNumerow = null
-    }
-}
-
-internal fun wczytajWszystkieKontakty(context: Context): Map<String, ContactCacheInfo> {
-    val mapa = mutableMapOf<String, ContactCacheInfo>()
-    try {
-        val uri = ContactsContract.CommonDataKinds.Phone.CONTENT_URI
-        val projection = arrayOf(
-            ContactsContract.CommonDataKinds.Phone.NUMBER,
-            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-            ContactsContract.CommonDataKinds.Phone.PHOTO_URI
-        )
-        context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
-            val numIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
-            val nameIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
-            val photoIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.PHOTO_URI)
-            while (cursor.moveToNext()) {
-                val number = if (numIdx != -1) cursor.getString(numIdx) ?: "" else ""
-                val name = if (nameIdx != -1) cursor.getString(nameIdx) ?: "" else ""
-                val photoUri = if (photoIdx != -1) cursor.getString(photoIdx) else null
-                if (number.isNotBlank() && name.isNotBlank()) {
-                    val norm = normalizujAdresSms(number)
-                    mapa[norm] = ContactCacheInfo(name, photoUri)
-                    mapa[number] = ContactCacheInfo(name, photoUri)
-                }
-            }
-        }
-    } catch (e: Exception) {
-        e.printStackTrace()
-    }
-    return mapa
-}
-
-object WatekCache {
-    @Volatile var watki: List<SmsWatek>? = null
-}
-
-internal fun uniewaznijCacheSkrzynki() {
-    SkrzynkaCache.wpisy = null
-    WatekCache.watki = null
-    KontaktyCache.invalidate()
-}
-
-internal fun pobierzAdresDlaRecipientId(context: Context, recipientIdStr: String): String {
-    if (recipientIdStr.isBlank()) return ""
-    val firstId = recipientIdStr.trim().split(Regex("\\s+")).firstOrNull() ?: return ""
-    return try {
-        val uri = Uri.parse("content://mms-sms/canonical-address/$firstId")
-        context.contentResolver.query(uri, null, null, null, null)?.use { c ->
-            if (c.moveToFirst()) {
-                c.getString(0) ?: ""
-            } else ""
-        } ?: ""
-    } catch (_: Exception) {
-        ""
-    }
-}
-
-/** Pobiera wątki SMS bezpośrednio z pre-indeksowanego natywnego widoku Telephony.Threads (content://mms-sms/conversations).
- *  Zwraca gotowe kafelki czatów w kilkanaście milisekund, niezależnie od liczby wiadomości w bazie! */
-internal fun pobierzWątkiSms(context: Context, odswiez: Boolean = false): List<SmsWatek> {
-    if (!odswiez) {
-        WatekCache.watki?.let { return it }
-    }
-    if (odswiez) {
-        KontaktyCache.invalidate()
-    }
-
-    val wynik = mutableListOf<SmsWatek>()
-    try {
-        val uri = Uri.parse("content://mms-sms/conversations?simple=true")
-        val projection = arrayOf("_id", "date", "message_count", "snippet", "read", "recipient_ids")
-        context.contentResolver.query(uri, projection, null, null, "date DESC")?.use { cursor ->
-            val dateIdx = cursor.getColumnIndex("date")
-            val snippetIdx = cursor.getColumnIndex("snippet")
-            val readIdx = cursor.getColumnIndex("read")
-            val recipientIdsIdx = cursor.getColumnIndex("recipient_ids")
-
-            while (cursor.moveToNext()) {
-                var date = if (dateIdx != -1) cursor.getLong(dateIdx) else 0L
-                if (date < 10000000000L) date *= 1000L
-                val snippet = if (snippetIdx != -1) cursor.getString(snippetIdx) ?: "" else ""
-                val read = if (readIdx != -1) cursor.getInt(readIdx) == 1 else true
-                val recipientIds = if (recipientIdsIdx != -1) cursor.getString(recipientIdsIdx) ?: "" else ""
-
-                val address = pobierzAdresDlaRecipientId(context, recipientIds)
-                if (address.isNotBlank()) {
-                    val kontaktInfo = KontaktyCache.get(context, address)
-                    val nazwa = kontaktInfo?.name
-                    val foto = kontaktInfo?.photoUri
-
-                    wynik.add(
-                        SmsWatek(
-                            address = address,
-                            contactName = nazwa,
-                            lastMessage = snippet,
-                            lastDate = date,
-                            messages = emptyList(),
-                            isKontakt = nazwa != null,
-                            nieprzeczytane = if (!read) 1 else 0,
-                            pseudonim = nazwa?.let { pobierzPseudonim(context, it) },
-                            fotoUri = foto
-                        )
-                    )
-                }
-            }
-        }
-    } catch (e: Exception) {
-        e.printStackTrace()
-    }
-
-    val ostateczneWiersze = if (wynik.isNotEmpty()) wynik else pobierzWątkiSmsFallback(context)
-
-    // content://mms-sms/conversations potrafi zwrócić dwa wątki o tym samym adresie
-    // (np. wiadomość grupowa + MMS, lub ten sam numer pod dwoma zapisami). Bez dedupe
-    // LazyColumn z key={address} rzucał IllegalArgument: Key "..." already used — dokładnie
-    // tak wywalało się przy wyszukiwaniu. Dedupe po znormalizowanym numerze.
-    val zdeduplikowane = ostateczneWiersze.distinctBy { normalizujAdresSms(it.address) }
-
-    WatekCache.watki = zdeduplikowane
-    return zdeduplikowane
-}
-
-internal fun pobierzWątkiSmsFallback(context: Context): List<SmsWatek> {
-    val wpisy = pobierzSkrzynkeSms(context, odswiez = true)
-    val grupy = wpisy.groupBy { normalizujAdresSms(it.address) }
-    return grupy.map { (normAddress, listaWpisow) ->
-        val posortowane = listaWpisow.sortedBy { it.date }
-        val ostatnia = posortowane.lastOrNull()
-        val address = ostatnia?.address ?: normAddress
-        val kontaktInfo = KontaktyCache.get(context, address)
-        val nazwa = kontaktInfo?.name
-        val foto = kontaktInfo?.photoUri
-        val nieprzeczytane = listaWpisow.count { it.type == Telephony.Sms.MESSAGE_TYPE_INBOX && !it.read }
-        SmsWatek(
-            address = address,
-            contactName = nazwa,
-            lastMessage = ostatnia?.body ?: "",
-            lastDate = ostatnia?.date ?: 0L,
-            messages = emptyList(),
-            isKontakt = nazwa != null,
-            nieprzeczytane = nieprzeczytane,
-            pseudonim = nazwa?.let { pobierzPseudonim(context, it) },
-            fotoUri = foto
-        )
-    }.sortedByDescending { it.lastDate }
-}
-
-/** URI zdjęcia kontaktu z książki (PhoneLookup) albo null, gdy nie ma. */
-internal fun pobierzFotoUriKontaktu(context: Context, numer: String): String? {
-    if (numer.isBlank()) return null
-    return try {
-        val uri = ContactsContract.PhoneLookup.CONTENT_FILTER_URI.buildUpon()
-            .appendPath(Uri.encode(numer)).appendQueryParameter(ContactsContract.PhoneLookup.PHOTO_URI, "1").build()
-        context.contentResolver.query(uri, arrayOf(ContactsContract.PhoneLookup.PHOTO_URI), null, null, null)?.use { c ->
-            if (c.moveToFirst()) c.getString(0) else null
-        }
-    } catch (e: Exception) { null }
-}
-
-/**
- * Oznacza wszystkie nieprzeczytane wiadomości danego nadawcy jako przeczytane
- * (Telephony.Sms.READ = 1). Wywoływane przy otwarciu czatu — dzięki temu
- * karta wątku przestaje być wyróżniona jako „nieprzeczytana".
- */
-internal fun oznaczWatekJakoPrzeczytany(context: Context, address: String) {
-    try {
-        val values = ContentValues().apply { put(Telephony.Sms.READ, 1) }
-        context.contentResolver.update(
-            Telephony.Sms.CONTENT_URI,
-            values,
-            "${Telephony.Sms.ADDRESS} = ? AND ${Telephony.Sms.READ} = 0",
-            arrayOf(address)
-        )
-    } catch (e: Exception) {
-        e.printStackTrace()
-    }
-}
-
-/** Rozwiązuje nazwę kontaktu dla numeru telefonu. */
-internal fun resolveContactName(context: Context, phoneNumber: String): String? {
-    try {
-        val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(phoneNumber))
-        context.contentResolver.query(uri, arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME), null, null, null)?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                val nameIdx = cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
-                if (nameIdx != -1) return cursor.getString(nameIdx)
-            }
-        }
-    } catch (e: Exception) {
-        e.printStackTrace()
-    }
-    return null
-}
-
-private const val SENT_SMS_ACTION = "dialer.dominik.pl.SENT_SMS"
-private const val DELIVERY_SMS_ACTION = "dialer.dominik.pl.DELIVERY_SMS"
-
-/** Wysyła SMS (lub otwiera komunikator) z potwierdzeniem statusu wysłania. */
 internal fun wyslijWiadomosc(
     context: Context,
     numer: String,
     tresc: String,
-    kanal: KanalWiadomosci
-) {
+    kanal: KanalWiadomosci,
+    lokalnyKlucz: Long = System.nanoTime()
+): WynikWysylkiSms? {
     if (kanal != KanalWiadomosci.Sms) {
         wyslijPrzezKomunikator(context, kanal, numer, tresc)
-        return
+        return null
     }
 
     val maSendSms = context.checkSelfPermission(Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED
     if (!maSendSms) {
-        // Fallback: otwarcie systemowej apki SMS z gotową treścią
         val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:$numer")).apply {
             putExtra("sms_body", tresc)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -375,83 +119,71 @@ internal fun wyslijWiadomosc(
         } catch (e: Exception) {
             Toast.makeText(context, "Błąd wysyłania", Toast.LENGTH_SHORT).show()
         }
-        return
+        return null
     }
 
-    try {
-        val smsManager = context.getSystemService(SmsManager::class.java)
-            ?: run { Toast.makeText(context, "Błąd wysyłania", Toast.LENGTH_SHORT).show(); return }
+    return try {
+        // Dual-SIM: SmsManager.getDefault() bywa bez subskrypcji → błąd wysyłki/MMS.
+        val smsManager = dialer.dominik.pl.sms.smsManagerDlaDomyslnejSubskrypcji(context)
 
-        // Dzielimy długą wiadomość na części (np. 160 znaków) — bez tego
-        // SmsManager ucina treść. Każdą część wysyłamy z potwierdzeniem.
         val czesci = smsManager.divideMessage(tresc)
-        if (czesci.isEmpty()) return
+        if (czesci.isNullOrEmpty()) return null
 
-        val sentIntenty = ArrayList<PendingIntent>()
-        val deliveryIntenty = ArrayList<PendingIntent>()
-
-        var odliczanie = System.currentTimeMillis().toInt()
-        for (i in czesci.indices) {
-            val id = odliczanie + i
-            sentIntenty.add(PendingIntent.getBroadcast(
-                context, id, Intent(SENT_SMS_ACTION).apply { setPackage(context.packageName) },
-                PendingIntent.FLAG_IMMUTABLE
-            ))
-            deliveryIntenty.add(PendingIntent.getBroadcast(
-                context, id + 1_000_000, Intent(DELIVERY_SMS_ACTION).apply { setPackage(context.packageName) },
-                PendingIntent.FLAG_IMMUTABLE
-            ))
+        val teraz = System.currentTimeMillis()
+        val values = ContentValues().apply {
+            put(Telephony.Sms.ADDRESS, numer)
+            put(Telephony.Sms.BODY, tresc)
+            put(Telephony.Sms.DATE, teraz)
+            put(Telephony.Sms.READ, 1)
+            put(Telephony.Sms.SEEN, 1)
+            put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_OUTBOX)
+            put(Telephony.Sms.STATUS, Telephony.Sms.STATUS_PENDING)
         }
-
-        // Rejestrujemy chwilowy odbiornik statusu wysłania — po odebraniu
-        // sam się wyrejestrowuje. (registerReceiver zwraca Intent, nie receiver,
-        // więc nie przechowujemy referencji do celowego wyrejestrowania.)
-        val filterOdpowiedz = IntentFilter().apply { addAction(SENT_SMS_ACTION) }
-        context.registerReceiver(
-            object : BroadcastReceiver() {
-                override fun onReceive(rcvContext: Context, rcvIntent: Intent) {
-                    val wynik = when (resultCode) {
-                        android.app.Activity.RESULT_OK -> "SMS wysłany"
-                        SmsManager.RESULT_ERROR_GENERIC_FAILURE -> "Błąd wysyłania SMS"
-                        SmsManager.RESULT_ERROR_NO_SERVICE -> "Brak zasięgu"
-                        SmsManager.RESULT_ERROR_NULL_PDU -> "Błąd SMS (null PDU)"
-                        SmsManager.RESULT_ERROR_RADIO_OFF -> "Radio wyłączone"
-                        else -> "Błąd SMS"
-                    }
-                    Toast.makeText(context, wynik, Toast.LENGTH_SHORT).show()
-                    rcvContext.unregisterReceiver(this)
-                }
-            },
-            filterOdpowiedz,
-            ContextCompat.RECEIVER_NOT_EXPORTED
-        )
-
-        // Zapis do systemowej skrzynki "wysłane" — żeby wiadomość widniała
-        // w historii. Status dostarczenia aktualizuje się przez deliveryIntent.
-        try {
-            val values = ContentValues().apply {
-                put(Telephony.Sms.Sent.ADDRESS, numer)
-                put(Telephony.Sms.Sent.BODY, tresc)
-                put(Telephony.Sms.Sent.DATE, System.currentTimeMillis())
-                put(Telephony.Sms.Sent.READ, 1)
+        val messageUri = context.contentResolver.insert(Telephony.Sms.CONTENT_URI, values)
+            ?: context.contentResolver.insert(Telephony.Sms.Outbox.CONTENT_URI, values)
+            ?: run {
+                Toast.makeText(context, "Nie można zapisać SMS", Toast.LENGTH_SHORT).show()
+                return null
             }
-            context.contentResolver.insert(Telephony.Sms.Sent.CONTENT_URI, values)
-        } catch (e: Exception) {
-            e.printStackTrace()
+        val messageId = messageUri.lastPathSegment?.toLongOrNull() ?: teraz
+
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        val sentIntenty = java.util.ArrayList<PendingIntent>(czesci.size)
+        val deliveryIntenty = java.util.ArrayList<PendingIntent?>(czesci.size)
+
+        for (i in czesci.indices) {
+            val partReq = (messageId.toInt() xor (i shl 8))
+            val sentIntent = Intent(context, dialer.dominik.pl.sms.SmsStatusSentReceiver::class.java).apply {
+                action = dialer.dominik.pl.sms.SmsStatusSentReceiver.ACTION
+                data = messageUri
+                putExtra(dialer.dominik.pl.sms.SmsStatusSentReceiver.EXTRA_MESSAGE_ID, messageId)
+                putExtra(dialer.dominik.pl.sms.SmsStatusSentReceiver.EXTRA_LOKALNY_KLUCZ, lokalnyKlucz)
+            }
+            sentIntenty.add(PendingIntent.getBroadcast(context, partReq, sentIntent, flags))
+
+            // Raport dostarczenia tylko dla ostatniej części (jak Fossify).
+            if (i == czesci.lastIndex) {
+                val delIntent = Intent(context, dialer.dominik.pl.sms.SmsStatusDeliveredReceiver::class.java).apply {
+                    action = dialer.dominik.pl.sms.SmsStatusDeliveredReceiver.ACTION
+                    data = messageUri
+                    putExtra(dialer.dominik.pl.sms.SmsStatusDeliveredReceiver.EXTRA_MESSAGE_ID, messageId)
+                    putExtra(dialer.dominik.pl.sms.SmsStatusDeliveredReceiver.EXTRA_LOKALNY_KLUCZ, lokalnyKlucz)
+                }
+                deliveryIntenty.add(PendingIntent.getBroadcast(context, partReq + 0x100000, delIntent, flags))
+            } else {
+                deliveryIntenty.add(null)
+            }
         }
 
-        // Wysyłka: sendMultipartTextMessage obsłuży też pojedyncze części
-        try {
-            smsManager.sendMultipartTextMessage(
-                numer, null, czesci, sentIntenty, deliveryIntenty
-            )
-        } catch (e: Exception) {
-            e.printStackTrace()
-            Toast.makeText(context, "Błąd wysyłania", Toast.LENGTH_SHORT).show()
-        }
+        @Suppress("UNCHECKED_CAST")
+        smsManager.sendMultipartTextMessage(
+            numer, null, czesci, sentIntenty, deliveryIntenty as java.util.ArrayList<PendingIntent>
+        )
+        WynikWysylkiSms(messageId = messageId, messageUri = messageUri, lokalnyKlucz = lokalnyKlucz)
     } catch (e: Exception) {
         e.printStackTrace()
         Toast.makeText(context, "Błąd wysyłania", Toast.LENGTH_SHORT).show()
+        null
     }
 }
 
@@ -471,21 +203,33 @@ internal fun pobierzSkrzynkeSms(context: Context, odswiez: Boolean = false): Lis
     }
     val lista = mutableListOf<SmsWpis>()
     
-    // 1. Pobierz SMS-y (limit do 300 najnowszych dla natychmiastowego startu)
+    // 1. Pobierz SMS-y (limit 300 najnowszych — Bundle QUERY_ARG_*, nie „LIMIT” w sortOrder).
     try {
+        val projekcja = arrayOf(
+            Telephony.Sms._ID,
+            Telephony.Sms.ADDRESS,
+            Telephony.Sms.BODY,
+            Telephony.Sms.DATE,
+            Telephony.Sms.TYPE,
+            Telephony.Sms.READ,
+            Telephony.Sms.STATUS
+        )
+        val queryArgs = android.os.Bundle().apply {
+            putInt(android.content.ContentResolver.QUERY_ARG_LIMIT, 300)
+            putStringArray(
+                android.content.ContentResolver.QUERY_ARG_SORT_COLUMNS,
+                arrayOf(Telephony.Sms.DATE)
+            )
+            putInt(
+                android.content.ContentResolver.QUERY_ARG_SORT_DIRECTION,
+                android.content.ContentResolver.QUERY_SORT_DIRECTION_DESCENDING
+            )
+        }
         val cursor = context.contentResolver.query(
             Telephony.Sms.CONTENT_URI,
-            arrayOf(
-                Telephony.Sms._ID,
-                Telephony.Sms.ADDRESS,
-                Telephony.Sms.BODY,
-                Telephony.Sms.DATE,
-                Telephony.Sms.TYPE,
-                Telephony.Sms.READ
-            ),
-            null,
-            null,
-            "${Telephony.Sms.DATE} DESC LIMIT 300"
+            projekcja,
+            queryArgs,
+            null
         )
         cursor?.use {
             val idIdx = cursor.getColumnIndex(Telephony.Sms._ID)
@@ -494,6 +238,7 @@ internal fun pobierzSkrzynkeSms(context: Context, odswiez: Boolean = false): Lis
             val dateIdx = cursor.getColumnIndex(Telephony.Sms.DATE)
             val typeIdx = cursor.getColumnIndex(Telephony.Sms.TYPE)
             val readIdx = cursor.getColumnIndex(Telephony.Sms.READ)
+            val statusIdx = cursor.getColumnIndex(Telephony.Sms.STATUS)
 
             while (cursor.moveToNext()) {
                 val id = if (idIdx != -1) cursor.getLong(idIdx) else 0L
@@ -502,9 +247,10 @@ internal fun pobierzSkrzynkeSms(context: Context, odswiez: Boolean = false): Lis
                 val date = if (dateIdx != -1) cursor.getLong(dateIdx) else 0L
                 val type = if (typeIdx != -1) cursor.getInt(typeIdx) else Telephony.Sms.MESSAGE_TYPE_INBOX
                 val read = if (readIdx != -1) cursor.getInt(readIdx) == 1 else true
+                val status = if (statusIdx != -1) cursor.getInt(statusIdx) else Telephony.Sms.STATUS_NONE
 
                 if (address.isNotBlank()) {
-                    lista.add(SmsWpis(id, address, body, date, type, read, null))
+                    lista.add(SmsWpis(id, address, body, date, type, read, null, status = status))
                 }
             }
         }
@@ -512,14 +258,24 @@ internal fun pobierzSkrzynkeSms(context: Context, odswiez: Boolean = false): Lis
         e.printStackTrace()
     }
 
-    // 2. Pobierz MMS-y (Inbox i Sent - limit do 100 najnowszych)
+    // 2. Pobierz MMS-y (Inbox/Sent — limit 100 przez queryArgs).
     try {
+        val mmsArgs = android.os.Bundle().apply {
+            putInt(android.content.ContentResolver.QUERY_ARG_LIMIT, 100)
+            putStringArray(
+                android.content.ContentResolver.QUERY_ARG_SORT_COLUMNS,
+                arrayOf(android.provider.Telephony.Mms.DATE)
+            )
+            putInt(
+                android.content.ContentResolver.QUERY_ARG_SORT_DIRECTION,
+                android.content.ContentResolver.QUERY_SORT_DIRECTION_DESCENDING
+            )
+        }
         val mmsCursor = context.contentResolver.query(
             android.provider.Telephony.Mms.CONTENT_URI,
             arrayOf("_id", "date", "msg_box", "read"),
-            null,
-            null,
-            "date DESC LIMIT 100"
+            mmsArgs,
+            null
         )
         mmsCursor?.use {
             val idIdx = mmsCursor.getColumnIndex("_id")
@@ -537,9 +293,10 @@ internal fun pobierzSkrzynkeSms(context: Context, odswiez: Boolean = false): Lis
 
                 val address = pobierzAdresMms(context, id, box) ?: continue
                 val textBody = pobierzTekstMms(context, id)
-                val bitmap = pobierzCzescObrazu(context, id)
+                // Bitmapy ładujemy leniwie w UI (mmsMsgId) — pełne dekodowanie 100 MMS
+                // przy każdym odświeżeniu skrzynki blokowało wątek i często wywalało OOM.
 
-                val finalBody = if (textBody.isNotBlank()) textBody else if (bitmap != null) "📷 [MMS]" else "MMS"
+                val finalBody = if (textBody.isNotBlank()) textBody else "📷 [MMS]"
 
                 lista.add(
                     SmsWpis(
@@ -549,7 +306,8 @@ internal fun pobierzSkrzynkeSms(context: Context, odswiez: Boolean = false): Lis
                         date = date,
                         type = type,
                         read = read,
-                        bitmap = bitmap
+                        bitmap = null,
+                        mmsMsgId = id
                     )
                 )
             }
@@ -563,68 +321,227 @@ internal fun pobierzSkrzynkeSms(context: Context, odswiez: Boolean = false): Lis
     return posortowane
 }
 
-internal fun pobierzWiadomosciDlaAdresu(context: Context, adres: String): List<SmsWpis> {
-    val lista = mutableListOf<SmsWpis>()
+/**
+ * Wiadomości czatu dla adresu — po [threadId] / wariantach ADDRESS, z limitem stron.
+ * @param starszeNizMs gdy nie-null: kolejna strona historii starsza niż ta data (ms).
+ * @param uzyjCache true = zwróć cache jeśli jest (tylko pierwsza strona).
+ */
+internal fun pobierzWiadomosciDlaAdresu(
+    context: Context,
+    adres: String,
+    limit: Int = CZAT_PAGE_SIZE,
+    starszeNizMs: Long? = null,
+    uzyjCache: Boolean = true
+): List<SmsWpis> {
+    val t0 = SystemClock.elapsedRealtime()
     val normTarget = normalizujAdresSms(adres)
-    try {
-        val cursor = context.contentResolver.query(
-            Telephony.Sms.CONTENT_URI,
-            arrayOf(
-                Telephony.Sms._ID,
-                Telephony.Sms.ADDRESS,
-                Telephony.Sms.BODY,
-                Telephony.Sms.DATE,
-                Telephony.Sms.TYPE,
-                Telephony.Sms.READ
-            ),
-            null,
-            null,
-            "${Telephony.Sms.DATE} DESC"
-        )
-        cursor?.use {
-            val idIdx = cursor.getColumnIndex(Telephony.Sms._ID)
-            val addrIdx = cursor.getColumnIndex(Telephony.Sms.ADDRESS)
-            val bodyIdx = cursor.getColumnIndex(Telephony.Sms.BODY)
-            val dateIdx = cursor.getColumnIndex(Telephony.Sms.DATE)
-            val typeIdx = cursor.getColumnIndex(Telephony.Sms.TYPE)
-            val readIdx = cursor.getColumnIndex(Telephony.Sms.READ)
 
-            while (cursor.moveToNext()) {
-                val address = if (addrIdx != -1) cursor.getString(addrIdx) ?: "" else ""
-                if (normalizujAdresSms(address) == normTarget) {
-                    val id = if (idIdx != -1) cursor.getLong(idIdx) else 0L
-                    val body = if (bodyIdx != -1) cursor.getString(bodyIdx) ?: "" else ""
-                    val date = if (dateIdx != -1) cursor.getLong(dateIdx) else 0L
-                    val type = if (typeIdx != -1) cursor.getInt(typeIdx) else Telephony.Sms.MESSAGE_TYPE_INBOX
-                    val read = if (readIdx != -1) cursor.getInt(readIdx) == 1 else true
-
-                    lista.add(SmsWpis(id, address, body, date, type, read, null))
-                }
-            }
+    if (uzyjCache && starszeNizMs == null) {
+        CzatWatekCache.get(normTarget)?.let { cached ->
+            val out = if (limit < Int.MAX_VALUE) cached.take(limit) else cached
+            Log.i(TAG_CZAT_PERF, "cache hit norm=$normTarget n=${out.size} ${SystemClock.elapsedRealtime() - t0}ms")
+            return out
         }
-        val mmsyDlaAdresu = pobierzMmsZdjeciaDlaAdresu(context, adres)
-        lista.addAll(mmsyDlaAdresu)
-    } catch (e: Exception) {
-        e.printStackTrace()
     }
-    return lista.sortedByDescending { it.date }
+
+    val lista = mutableListOf<SmsWpis>()
+    val threadId = threadIdDlaAdresu(context, adres)
+
+    try {
+        lista.addAll(
+            pobierzSmsDlaWatku(
+                context = context,
+                adres = adres,
+                threadId = threadId,
+                limit = limit,
+                starszeNizMs = starszeNizMs
+            )
+        )
+        lista.addAll(
+            pobierzMmsZdjeciaDlaAdresu(
+                context = context,
+                adres = adres,
+                threadId = threadId,
+                limit = limit,
+                starszeNizMs = starszeNizMs
+            )
+        )
+    } catch (e: Exception) {
+        Log.e(TAG_CZAT_PERF, "pobierzWiadomosciDlaAdresu", e)
+    }
+
+    val posortowane = lista
+        .distinctBy { if (it.mmsMsgId != null) "m${it.mmsMsgId}" else "s${it.id}" }
+        .sortedByDescending { it.date }
+        .let { if (limit < Int.MAX_VALUE) it.take(limit) else it }
+
+    if (starszeNizMs == null) {
+        CzatWatekCache.put(normTarget, posortowane)
+    } else if (posortowane.isNotEmpty()) {
+        val merged = ((CzatWatekCache.get(normTarget).orEmpty()) + posortowane)
+            .distinctBy { if (it.mmsMsgId != null) "m${it.mmsMsgId}" else "s${it.id}" }
+            .sortedByDescending { it.date }
+        CzatWatekCache.put(normTarget, merged)
+    }
+
+    Log.i(
+        TAG_CZAT_PERF,
+        "load norm=$normTarget thread=$threadId n=${posortowane.size} olderThan=$starszeNizMs ${SystemClock.elapsedRealtime() - t0}ms"
+    )
+    return posortowane
 }
 
-internal fun pobierzMmsZdjeciaDlaAdresu(context: Context, adres: String): List<SmsWpis> {
+private fun pobierzSmsDlaWatku(
+    context: Context,
+    adres: String,
+    threadId: Long?,
+    limit: Int,
+    starszeNizMs: Long?
+): List<SmsWpis> {
+    val lista = mutableListOf<SmsWpis>()
+    val sel = mutableListOf<String>()
+    val args = mutableListOf<String>()
+
+    if (threadId != null && threadId > 0L) {
+        sel += "${Telephony.Sms.THREAD_ID}=?"
+        args += threadId.toString()
+    } else {
+        val warianty = wariantyAdresuDoQuery(adres)
+        if (warianty.isEmpty()) return emptyList()
+        sel += "(" + warianty.joinToString(" OR ") { "${Telephony.Sms.ADDRESS}=?" } + ")"
+        args.addAll(warianty)
+    }
+    if (starszeNizMs != null) {
+        sel += "${Telephony.Sms.DATE}<?"
+        args += starszeNizMs.toString()
+    }
+
+    val queryArgs = Bundle().apply {
+        if (limit < Int.MAX_VALUE) putInt(android.content.ContentResolver.QUERY_ARG_LIMIT, limit)
+        putStringArray(
+            android.content.ContentResolver.QUERY_ARG_SORT_COLUMNS,
+            arrayOf(Telephony.Sms.DATE)
+        )
+        putInt(
+            android.content.ContentResolver.QUERY_ARG_SORT_DIRECTION,
+            android.content.ContentResolver.QUERY_SORT_DIRECTION_DESCENDING
+        )
+        putString(
+            android.content.ContentResolver.QUERY_ARG_SQL_SELECTION,
+            sel.joinToString(" AND ")
+        )
+        putStringArray(
+            android.content.ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS,
+            args.toTypedArray()
+        )
+    }
+
+    context.contentResolver.query(
+        Telephony.Sms.CONTENT_URI,
+        arrayOf(
+            Telephony.Sms._ID,
+            Telephony.Sms.ADDRESS,
+            Telephony.Sms.BODY,
+            Telephony.Sms.DATE,
+            Telephony.Sms.TYPE,
+            Telephony.Sms.READ,
+            Telephony.Sms.STATUS
+        ),
+        queryArgs,
+        null
+    )?.use { cursor ->
+        val idIdx = cursor.getColumnIndex(Telephony.Sms._ID)
+        val addrIdx = cursor.getColumnIndex(Telephony.Sms.ADDRESS)
+        val bodyIdx = cursor.getColumnIndex(Telephony.Sms.BODY)
+        val dateIdx = cursor.getColumnIndex(Telephony.Sms.DATE)
+        val typeIdx = cursor.getColumnIndex(Telephony.Sms.TYPE)
+        val readIdx = cursor.getColumnIndex(Telephony.Sms.READ)
+        val statusIdx = cursor.getColumnIndex(Telephony.Sms.STATUS)
+        val normTarget = normalizujAdresSms(adres)
+        while (cursor.moveToNext()) {
+            val address = if (addrIdx != -1) cursor.getString(addrIdx) ?: "" else ""
+            // Gdy query po ADDRESS — i tak filtr norm (różne zapisy tego samego numeru).
+            if (threadId == null && normalizujAdresSms(address) != normTarget) continue
+            lista.add(
+                SmsWpis(
+                    id = if (idIdx != -1) cursor.getLong(idIdx) else 0L,
+                    address = address,
+                    body = if (bodyIdx != -1) cursor.getString(bodyIdx) ?: "" else "",
+                    date = if (dateIdx != -1) cursor.getLong(dateIdx) else 0L,
+                    type = if (typeIdx != -1) cursor.getInt(typeIdx) else Telephony.Sms.MESSAGE_TYPE_INBOX,
+                    read = if (readIdx != -1) cursor.getInt(readIdx) == 1 else true,
+                    bitmap = null,
+                    status = if (statusIdx != -1) cursor.getInt(statusIdx) else Telephony.Sms.STATUS_NONE
+                )
+            )
+        }
+    }
+    return lista
+}
+
+/**
+ * MMS dla wątku — po THREAD_ID (szybko) lub skan z limitem + filtr adresu (fallback).
+ * Pomija NotificationInd (m_type=130).
+ */
+internal fun pobierzMmsZdjeciaDlaAdresu(
+    context: Context,
+    adres: String,
+    threadId: Long? = null,
+    limit: Int = CZAT_PAGE_SIZE,
+    starszeNizMs: Long? = null
+): List<SmsWpis> {
     val wynik = mutableListOf<SmsWpis>()
     val normTarget = normalizujAdresSms(adres)
+    val tid = threadId ?: threadIdDlaAdresu(context, adres)
     try {
-        val mmsCursor = context.contentResolver.query(
-            android.provider.Telephony.Mms.CONTENT_URI,
-            arrayOf("_id", "date", "msg_box", "read"),
-            null, null, "date DESC"
-        )
-        mmsCursor?.use { mms ->
+        val sel = mutableListOf<String>()
+        val args = mutableListOf<String>()
+        // 130 = NOTIFICATION_IND — bez treści.
+        sel += "${Telephony.Mms.MESSAGE_TYPE}!=?"
+        args += "130"
+        if (tid != null && tid > 0L) {
+            sel += "${Telephony.Mms.THREAD_ID}=?"
+            args += tid.toString()
+        }
+        if (starszeNizMs != null) {
+            // Kolumna date MMS = sekundy.
+            sel += "${Telephony.Mms.DATE}<?"
+            args += (starszeNizMs / 1000L).toString()
+        }
+
+        val queryArgs = Bundle().apply {
+            // Bez threadId i tak nie skanujemy nieskończenie — limit × 3 zapas na filtr adresu.
+            val lim = if (tid != null) limit else (limit * 3).coerceAtMost(300)
+            if (lim < Int.MAX_VALUE) putInt(android.content.ContentResolver.QUERY_ARG_LIMIT, lim)
+            putStringArray(
+                android.content.ContentResolver.QUERY_ARG_SORT_COLUMNS,
+                arrayOf(Telephony.Mms.DATE)
+            )
+            putInt(
+                android.content.ContentResolver.QUERY_ARG_SORT_DIRECTION,
+                android.content.ContentResolver.QUERY_SORT_DIRECTION_DESCENDING
+            )
+            putString(
+                android.content.ContentResolver.QUERY_ARG_SQL_SELECTION,
+                sel.joinToString(" AND ")
+            )
+            putStringArray(
+                android.content.ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS,
+                args.toTypedArray()
+            )
+        }
+
+        context.contentResolver.query(
+            Telephony.Mms.CONTENT_URI,
+            arrayOf("_id", "date", "msg_box", "read", "thread_id"),
+            queryArgs,
+            null
+        )?.use { mms ->
             val idIdx = mms.getColumnIndex("_id")
             val dateIdx = mms.getColumnIndex("date")
             val boxIdx = mms.getColumnIndex("msg_box")
             val readIdx = mms.getColumnIndex("read")
-            while (mms.moveToNext()) {
+            while (mms.moveToNext() && wynik.size < limit) {
                 val id = if (idIdx != -1) mms.getLong(idIdx) else 0L
                 var date = if (dateIdx != -1) mms.getLong(dateIdx) else 0L
                 if (date < 10000000000L) date *= 1000L
@@ -633,26 +550,31 @@ internal fun pobierzMmsZdjeciaDlaAdresu(context: Context, adres: String): List<S
                 val type = if (box == 2 || box == 4) Telephony.Sms.MESSAGE_TYPE_SENT else Telephony.Sms.MESSAGE_TYPE_INBOX
 
                 val mmsAddress = pobierzAdresMms(context, id, box) ?: continue
-                if (normalizujAdresSms(mmsAddress) == normTarget) {
-                    val textBody = pobierzTekstMms(context, id)
-                    val finalBody = if (textBody.isNotBlank()) textBody else "📷 [MMS]"
-                    wynik.add(
-                        SmsWpis(
-                            id = 1_000_000_000L + id,
-                            address = mmsAddress,
-                            body = finalBody,
-                            date = date,
-                            type = type,
-                            read = read,
-                            bitmap = null, // Ładowane leniwie w UI, żeby zapobiec wyciekom pamięci (OOM)!
-                            mmsMsgId = id
-                        )
-                    )
+                if (tid == null && normalizujAdresSms(mmsAddress) != normTarget) continue
+                // Przy threadId i tak weryfikuj norm — grupowe wątki rzadkie, ale bezpieczniej.
+                if (tid != null && normalizujAdresSms(mmsAddress) != normTarget &&
+                    normalizujAdresSms(mmsAddress).isNotEmpty()
+                ) {
+                    // Wątek 1:1 — zwykle match; przy mismatch zostaw (OEM czasem myli addr).
                 }
+                val textBody = pobierzTekstMms(context, id)
+                val finalBody = if (textBody.isNotBlank()) textBody else "📷 [MMS]"
+                wynik.add(
+                    SmsWpis(
+                        id = 1_000_000_000L + id,
+                        address = mmsAddress.ifBlank { adres },
+                        body = finalBody,
+                        date = date,
+                        type = type,
+                        read = read,
+                        bitmap = null,
+                        mmsMsgId = id
+                    )
+                )
             }
         }
     } catch (e: Exception) {
-        e.printStackTrace()
+        Log.e(TAG_CZAT_PERF, "pobierzMmsZdjeciaDlaAdresu", e)
     }
     return wynik
 }
@@ -714,6 +636,34 @@ internal fun czyZnanaFirma(adres: String?): Boolean {
     val litery = adres.count { it.isLetter() }
     val tylkoNumer = cyfry > 0 && litery == 0
     return !tylkoNumer && litery >= 3 && !adres.contains("@")
+}
+
+/** Czy ta aplikacja jest domyślną do SMS (rola ROLE_SMS / pakiet systemowy). */
+internal fun czyJestDomyslnaAplikacjaSms(context: Context): Boolean {
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+        val roleManager = context.getSystemService(android.app.role.RoleManager::class.java)
+        if (roleManager != null && roleManager.isRoleAvailable(android.app.role.RoleManager.ROLE_SMS)) {
+            return roleManager.isRoleHeld(android.app.role.RoleManager.ROLE_SMS)
+        }
+    }
+    return Telephony.Sms.getDefaultSmsPackage(context) == context.packageName
+}
+
+/**
+ * Intencja systemowego wyboru domyślnej aplikacji SMS
+ * ([RoleManager.createRequestRoleIntent] / starsze ACTION_CHANGE_DEFAULT).
+ */
+internal fun intencjaUstawDomyslnaSms(context: Context): Intent {
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+        val roleManager = context.getSystemService(android.app.role.RoleManager::class.java)
+        if (roleManager != null && roleManager.isRoleAvailable(android.app.role.RoleManager.ROLE_SMS)) {
+            return roleManager.createRequestRoleIntent(android.app.role.RoleManager.ROLE_SMS)
+        }
+    }
+    @Suppress("DEPRECATION")
+    return Intent(Telephony.Sms.Intents.ACTION_CHANGE_DEFAULT).apply {
+        putExtra(Telephony.Sms.Intents.EXTRA_PACKAGE_NAME, context.packageName)
+    }
 }
 
 /** Normalizuje tekst: lowercase + foldowanie polskich znaków diakrytycznych (ą→a itd.). */
@@ -783,79 +733,6 @@ internal fun szukajWWatku(watek: SmsWatek, zapytanie: String): Boolean {
         }
     }
     return false
-}
-
-/** Normalizuje nazwę firmy (alfa-nadawcy SMS) do domeny — mapa znanych polskich/firm +
- *  spadek na <nazwa>.com. Google favicons pobiera ikonę strony po domenie. */
-internal fun domenaFirmy(nazwa: String): String {
-    val klucz = nazwa.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]"), "")
-    val mapa = mapOf(
-        "microsoft" to "microsoft.com",
-        "tmobile" to "t-mobile.pl",
-        "play" to "play.pl",
-        "orange" to "orange.pl",
-        "pluss" to "plus.pl",
-        "allegro" to "allegro.pl",
-        "pekao" to "pekao.pl",
-        "pkobp" to "pkobp.pl",
-        "ing" to "ing.pl",
-        "bzwbk" to "bzwbk.pl",
-        "mbank" to "mbank.pl",
-        "olx" to "olx.pl",
-        "facebook" to "facebook.com",
-        "google" to "google.com",
-        "netflix" to "netflix.com",
-        "spotify" to "spotify.com",
-        "amazon" to "amazon.com",
-        "apple" to "apple.com",
-        "marketul" to "unilever.com",
-        "unilever" to "unilever.com",
-        "blik" to "blik.com"
-    )
-    return mapa[klucz] ?: (if (klucz.isNotBlank()) klucz + ".com" else "placeholder.com")
-}
-
-/**
- * Pobiera logo firmy (alfa-nadawcy) z internetu raz i cache'uje lokalnie
- * w filesDir/loga_firm/<hash>.png. Gdy brak sieci / nie znaleziono → null
- * (wtedy UI pokaże inicjał/lub logo aplikacji, a pobieranie wróci przy
- * następnej recompozycji wątku, aż sieć będzie dostępna).
- */
-internal fun pobierzLogoFirmy(context: Context, nazwa: String): Bitmap? {
-    if (nazwa.isBlank()) return null
-    val katalog = java.io.File(context.filesDir, "loga_firm")
-    if (!katalog.exists()) katalog.mkdirs()
-    val plik = java.io.File(katalog, nazwa.hashCode().toString() + ".png")
-
-    // Cache — już pobrane wcześniej.
-    if (plik.exists() && plik.length() > 0) {
-        return BitmapFactory.decodeFile(plik.absolutePath)
-    }
-
-    return try {
-        val domain = domenaFirmy(nazwa)
-        // Google favicons — pewniejsze niż Clearbit (działa dla praktycznie każdej
-        // domeny, zwraca favicon strony firmowej). 128px, przezroczyste tło.
-        val url = java.net.URL("https://www.google.com/s2/favicons?sz=128&domain=$domain")
-        val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 4000
-            readTimeout = 4000
-            setRequestProperty("User-Agent", "Mozilla/5.0")
-        }
-        val kod = conn.responseCode
-        android.util.Log.i("LogoFirmy", "nazwa=$nazwa domena=$domain kod=$kod")
-        if (kod == 200) {
-            val bajty = conn.inputStream.use { it.readBytes() }
-            if (bajty.isNotEmpty()) {
-                plik.writeBytes(bajty)
-                BitmapFactory.decodeByteArray(bajty, 0, bajty.size)
-            } else null
-        } else null
-    } catch (e: Exception) {
-        android.util.Log.w("LogoFirmy", "pobranie logo nieudane dla $nazwa", e)
-        null // brak sieci etc. — spróbujemy przy następnej recompozycji
-    }
 }
 
 /**
@@ -1075,32 +952,43 @@ internal fun dolaczRoboczeDoWatkow(context: Context, watki: List<SmsWatek>): Lis
 
 // ===== MMS / ZAŁĄCZNIKI (zdjęcia) =====
 
+/**
+ * Adres rozmówcy MMS.
+ * Inbox (msg_box=1): FROM = 137; Sent/Outbox: TO = 151.
+ * Niektóre OEM-y zapisują typy odwrotnie / tylko jeden wpis — dlatego fallback
+ * po „drugim” typie, a na końcu pierwszy sensowny adres (bez insert-address-token).
+ */
 internal fun pobierzAdresMms(context: Context, msgId: Long, msgBox: Int): String? {
     try {
-        val targetType = if (msgBox == 1) 137 else 151
-        var fallbackAddr: String? = null
+        val preferFrom = msgBox == Telephony.Mms.MESSAGE_BOX_INBOX ||
+            msgBox == Telephony.Mms.MESSAGE_BOX_ALL
+        val primaryType = if (preferFrom) 137 else 151   // FROM / TO (PduHeaders)
+        val secondaryType = if (preferFrom) 151 else 137
+
+        var primary: String? = null
+        var secondary: String? = null
+        var any: String? = null
 
         context.contentResolver.query(
-            android.net.Uri.withAppendedPath(android.provider.Telephony.Mms.CONTENT_URI, "$msgId/addr"),
-            arrayOf(android.provider.Telephony.Mms.Addr.ADDRESS, android.provider.Telephony.Mms.Addr.TYPE),
+            Uri.withAppendedPath(Telephony.Mms.CONTENT_URI, "$msgId/addr"),
+            arrayOf(Telephony.Mms.Addr.ADDRESS, Telephony.Mms.Addr.TYPE),
             null, null, null
         )?.use { c ->
-            val addrIdx = c.getColumnIndex(android.provider.Telephony.Mms.Addr.ADDRESS)
-            val typeIdx = c.getColumnIndex(android.provider.Telephony.Mms.Addr.TYPE)
+            val addrIdx = c.getColumnIndex(Telephony.Mms.Addr.ADDRESS)
+            val typeIdx = c.getColumnIndex(Telephony.Mms.Addr.TYPE)
             while (c.moveToNext()) {
-                val addr = c.getString(addrIdx) ?: continue
-                val type = if (typeIdx != -1) c.getInt(typeIdx) else 0
-                if (addr.isNotBlank() && addr != "insert-address-token") {
-                    if (type == targetType) {
-                        return addr
-                    }
-                    if (fallbackAddr == null) {
-                        fallbackAddr = addr
-                    }
+                val addr = if (addrIdx >= 0) c.getString(addrIdx) else null
+                if (addr.isNullOrBlank() || addr == "insert-address-token") continue
+                val type = if (typeIdx >= 0) c.getInt(typeIdx) else 0
+                when (type) {
+                    primaryType -> if (primary == null) primary = addr
+                    secondaryType -> if (secondary == null) secondary = addr
+                    else -> if (any == null) any = addr
                 }
+                if (any == null) any = addr
             }
         }
-        return fallbackAddr
+        return primary ?: secondary ?: any
     } catch (e: Exception) {
         e.printStackTrace()
     }
@@ -1204,7 +1092,7 @@ internal fun pobierzCzescObrazu(context: Context, msgId: Long): android.graphics
 internal fun przygotujZdjecieDoMms(context: Context, zrodloUri: android.net.Uri): android.net.Uri? {
     return try {
         val dir = java.io.File(context.cacheDir, "images").apply { mkdirs() }
-        val plik = java.io.File(dir, "mms_" + System.currentTimeMillis() + ".jpg")
+        val plik = java.io.File(dir, "mms_${System.nanoTime()}_${(1000..9999).random()}.jpg")
         context.contentResolver.openInputStream(zrodloUri)?.use { wejscie ->
             plik.outputStream().use { wyjscie -> wejscie.copyTo(wyjscie) }
         }
@@ -1220,26 +1108,155 @@ internal fun przygotujZdjecieDoMms(context: Context, zrodloUri: android.net.Uri)
 }
 
 /**
- * Wysyła zdjęcie (załącznik) jako MMS do [numer] przez SmsManager.sendMultimediaMessage.
- * [contentUri] to FileProvider Uri (z przygotujZdjecieDoMms).
+ * Wynik optymistycznej wysyłki MMS.
  */
-internal fun wyslijMms(context: Context, numer: String, contentUri: android.net.Uri, tekst: String = "") {
-    try {
-        val smsManager = android.telephony.SmsManager.getDefault()
-        val sentIntent = android.app.PendingIntent.getBroadcast(
-            context, 0,
-            android.content.Intent("dialer.dominik.pl.MMS_SENT").setPackage(context.packageName),
-            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-        )
-        if (tekst.isBlank()) {
-            smsManager.sendMultimediaMessage(context, contentUri, null, null, sentIntent)
-        } else {
-            smsManager.sendTextMessage(numer, null, tekst, null, null)
-            smsManager.sendMultimediaMessage(context, contentUri, null, null, sentIntent)
+data class WynikWysylkiMms(
+    val lokalnyKlucz: Long
+)
+
+/**
+ * Max bok przy starcie kompresji — potem i tak dopasowujemy do limitu operatora.
+ * (Błąd MMS 5 = IO_ERROR często = za duży PDU względem limitu operatora.)
+ */
+private const val MMS_START_MAX_BOK = 2048
+/** Zapas na SMIL + nagłówki PDU przy limicie operatora. */
+private const val MMS_PDU_OVERHEAD = 40_000
+private const val MMS_DOMYSLNY_LIMIT = 300_000
+
+/**
+ * Wysyła MMS ze zdjęciem (wzorzec Fossify MessagingUtils + mmslib):
+ * kompresja do limitu [SmsManager.MMS_CONFIG_MAX_MESSAGE_SIZE] operatora.
+ */
+internal fun wyslijMms(
+    context: Context,
+    numer: String,
+    contentUri: android.net.Uri,
+    tekst: String = "",
+    bitmap: Bitmap? = null,
+    lokalnyKlucz: Long = System.nanoTime()
+): WynikWysylkiMms? {
+    if (numer.isBlank()) {
+        Toast.makeText(context, "Brak numeru odbiorcy", Toast.LENGTH_SHORT).show()
+        return null
+    }
+    return try {
+        val limitPdu = pobierzLimitMmsBajtow(context)
+        val limitObrazu = (limitPdu - MMS_PDU_OVERHEAD).coerceAtLeast(80_000)
+
+        val bajty = przygotujBajtyObrazuMms(context, contentUri, limitObrazu)
+            ?: bitmap?.let { bitmapDoJpegMms(it, limitObrazu) }
+            ?: run {
+                Toast.makeText(context, "Nie można odczytać zdjęcia", Toast.LENGTH_SHORT).show()
+                return null
+            }
+
+        val settings = com.klinker.android.send_message.Settings().apply {
+            setUseSystemSending(true)
+            setDeliveryReports(true)
         }
-        Toast.makeText(context, "MMS wysłany", Toast.LENGTH_SHORT).show()
+        val transaction = com.klinker.android.send_message.Transaction(context, settings)
+        // Krótki tekst (nawet spacja) pomaga niektórym stackom MMS zbudować body.
+        val message = com.klinker.android.send_message.Message(tekst.ifBlank { " " }, numer)
+        message.addMedia(bajty, "image/jpeg", "image.jpg", "image.jpg")
+
+        val sentIntent = Intent(context, dialer.dominik.pl.sms.MmsStatusSentReceiver::class.java).apply {
+            action = dialer.dominik.pl.sms.MmsStatusSentReceiver.ACTION
+            putExtra(dialer.dominik.pl.sms.MmsStatusSentReceiver.EXTRA_LOKALNY_KLUCZ, lokalnyKlucz)
+        }
+        transaction.setExplicitBroadcastForSentMms(sentIntent)
+        transaction.sendNewMessage(message)
+
+        WynikWysylkiMms(lokalnyKlucz = lokalnyKlucz)
     } catch (e: Exception) {
         e.printStackTrace()
         Toast.makeText(context, "Błąd wysyłania MMS", Toast.LENGTH_SHORT).show()
+        dialer.dominik.pl.sms.StatusWiadomosciBus.emituj(
+            dialer.dominik.pl.sms.AktualizacjaStatusuWiadomosci(
+                messageUri = null,
+                messageId = null,
+                lokalnyKlucz = lokalnyKlucz,
+                stan = dialer.dominik.pl.sms.StanWysylki.BLAD
+            )
+        )
+        null
     }
+}
+
+/** Limit PDU z konfiguracji operatora (Fossify / SO: błąd 5 przy przekroczeniu). */
+private fun pobierzLimitMmsBajtow(context: Context): Int {
+    return try {
+        val sms = dialer.dominik.pl.sms.smsManagerDlaDomyslnejSubskrypcji(context)
+        val cfg = sms.carrierConfigValues
+        val zConfig = cfg?.getInt(SmsManager.MMS_CONFIG_MAX_MESSAGE_SIZE) ?: 0
+        when {
+            zConfig in 50_000..2_000_000 -> zConfig
+            else -> MMS_DOMYSLNY_LIMIT
+        }
+    } catch (_: Exception) {
+        MMS_DOMYSLNY_LIMIT
+    }
+}
+
+/**
+ * JPEG pod limit operatora: najpierw skala, potem jakość, na końcu dalsze zmniejszanie boku.
+ */
+private fun przygotujBajtyObrazuMms(context: Context, uri: Uri, limitBajtow: Int): ByteArray? {
+    return try {
+        val surowe = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
+        if (surowe.isEmpty()) return null
+
+        val mime = context.contentResolver.getType(uri)?.lowercase().orEmpty()
+        val toJpeg = mime.contains("jpeg") || mime.contains("jpg") ||
+            (surowe.size >= 3 && surowe[0] == 0xFF.toByte() && surowe[1] == 0xD8.toByte())
+        if (toJpeg && surowe.size <= limitBajtow) return surowe
+
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(surowe, 0, surowe.size, opts)
+        val bok = maxOf(opts.outWidth, opts.outHeight).coerceAtLeast(1)
+        var sample = 1
+        while (bok / sample > MMS_START_MAX_BOK * 2) sample *= 2
+
+        var decoded = BitmapFactory.decodeByteArray(
+            surowe, 0, surowe.size,
+            BitmapFactory.Options().apply { inSampleSize = sample }
+        ) ?: return null
+
+        var maxBok = MMS_START_MAX_BOK
+        var wynik: ByteArray? = null
+        repeat(6) {
+            val najdluzszy = maxOf(decoded.width, decoded.height)
+            val skala = if (najdluzszy > maxBok) maxBok.toFloat() / najdluzszy else 1f
+            val robocza = if (skala < 1f) {
+                Bitmap.createScaledBitmap(
+                    decoded,
+                    (decoded.width * skala).toInt().coerceAtLeast(1),
+                    (decoded.height * skala).toInt().coerceAtLeast(1),
+                    true
+                )
+            } else decoded
+
+            wynik = bitmapDoJpegMms(robocza, limitBajtow)
+            if (robocza !== decoded && !robocza.isRecycled) robocza.recycle()
+            if (wynik != null && wynik!!.size <= limitBajtow) return@repeat
+            maxBok = (maxBok * 0.75f).toInt().coerceAtLeast(640)
+        }
+        if (!decoded.isRecycled) decoded.recycle()
+        wynik
+    } catch (e: Exception) {
+        e.printStackTrace()
+        null
+    }
+}
+
+private fun bitmapDoJpegMms(bitmap: Bitmap, limitBajtow: Int): ByteArray? {
+    var jakosc = 90
+    var bajty: ByteArray = ByteArray(0)
+    while (jakosc >= 55) {
+        val baos = java.io.ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, jakosc, baos)
+        bajty = baos.toByteArray()
+        if (bajty.size <= limitBajtow) return bajty
+        jakosc -= 7
+    }
+    return bajty.takeIf { it.isNotEmpty() }
 }

@@ -1,7 +1,6 @@
 package dialer.dominik.pl.ui.components
 
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -28,29 +27,18 @@ import dialer.dominik.pl.ui.theme.ZielonyNeon
 import kotlin.math.min
 
 /**
- * Animowane logo aplikacji — rysowane w całości na Canvas, więc każdy element
- * może żyć: obwód się obraca, trzy fale emitują na zmianę, rdzeń pulsuje.
- * Brak pliku drawable = brak rozmycia przy każdym rozmiarze.
+ * Animowane logo aplikacji — rysowane na Canvas.
  *
  * @param wejscieAnimacji postęp animacji wejścia 0..1 (scale + alpha przy starcie)
+ * @param pokazPierscien czy rysować obracający się pierścień (wyłącz np. przy loaderze czatu)
  */
 @Composable
 fun LogoAnimowane(
     modifier: Modifier = Modifier,
-    wejscieAnimacji: Float = 1f
+    wejscieAnimacji: Float = 1f,
+    pokazPierscien: Boolean = true
 ) {
     val animacja = rememberInfiniteTransition(label = "logoAnimowane")
-
-    // Obrót pierścienia — pełne 360° w 26 s (spokojny, dostojny ruch)
-    val obrot by animacja.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 26_000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "obrotPierscienia"
-    )
 
     // Puls rdzenia — 3.6 s, płynnie w obie strony
     val puls by animacja.animateFloat(
@@ -64,7 +52,6 @@ fun LogoAnimowane(
     )
 
     // Fale: jeden cykl 6.6 s — fala rozchodzi się ~2.4 s, potem chwila ciszy.
-    // Każda kolejna startuje 0.9 s po poprzedniej.
     val falaA by animacja.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
@@ -110,20 +97,29 @@ fun LogoAnimowane(
         label = "falaC"
     )
 
-    // Kolor poświaty oddycha między dwoma zieleniami
-    val kolorPoswiaty = lerp(ZielonyJasny, ZielonyNeon, puls.let { (it - 0.92f) / 0.14f }.coerceIn(0f, 1f))
+    // Obrót pierścienia tylko gdy włączony (powitanie).
+    val obrot by animacja.animateFloat(
+        initialValue = 0f,
+        targetValue = if (pokazPierscien) 360f else 0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(
+                durationMillis = if (pokazPierscien) 26_000 else 1,
+                easing = androidx.compose.animation.core.LinearEasing
+            ),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "obrotPierscienia"
+    )
 
-    // Animacja wejścia: skala od 0.82 i alfa od 0
+    val kolorPoswiaty = lerp(ZielonyJasny, ZielonyNeon, puls.let { (it - 0.92f) / 0.14f }.coerceIn(0f, 1f))
     val skala = 0.82f + 0.18f * wejscieAnimacji
 
     Canvas(modifier = modifier) {
         val srodek = Offset(size.width / 2f, size.height / 2f)
         val promienBazy = min(size.width, size.height) / 2f
         val grubosc = promienBazy * 0.055f
-
         val widocznosc = wejscieAnimacji.coerceIn(0f, 1f)
 
-        // --- 1. Poświata pod logo (miękka, zielona) ---
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(
@@ -138,7 +134,6 @@ fun LogoAnimowane(
             center = srodek
         )
 
-        // --- 2. Rdzeń: ciemnozielone wypełnienie z delikatnym gradientem ---
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(
@@ -152,36 +147,35 @@ fun LogoAnimowane(
             center = srodek
         )
 
-        // --- 3. Obracający się pierścień z gradientem (niedomknięty łuk) ---
-        rotate(obrot, pivot = srodek) {
-            drawArc(
-                brush = Brush.sweepGradient(
-                    colors = listOf(
-                        Color.Transparent,
-                        ZielonyJasny.copy(alpha = 0.15f),
-                        ZielonyMorski.copy(alpha = 0.9f),
-                        ZielonyNeon,
-                        Color.Transparent
+        if (pokazPierscien) {
+            rotate(obrot, pivot = srodek) {
+                drawArc(
+                    brush = Brush.sweepGradient(
+                        colors = listOf(
+                            Color.Transparent,
+                            ZielonyJasny.copy(alpha = 0.15f),
+                            ZielonyMorski.copy(alpha = 0.9f),
+                            ZielonyNeon,
+                            Color.Transparent
+                        ),
+                        center = srodek
                     ),
-                    center = srodek
-                ),
-                startAngle = 0f,
-                sweepAngle = 300f,
-                useCenter = false,
-                topLeft = Offset(
-                    srodek.x - promienBazy * 0.86f,
-                    srodek.y - promienBazy * 0.86f
-                ),
-                size = Size(promienBazy * 1.72f, promienBazy * 1.72f),
-                style = Stroke(width = grubosc, cap = StrokeCap.Round),
-                alpha = widocznosc
-            )
+                    startAngle = 0f,
+                    sweepAngle = 300f,
+                    useCenter = false,
+                    topLeft = Offset(
+                        srodek.x - promienBazy * 0.86f,
+                        srodek.y - promienBazy * 0.86f
+                    ),
+                    size = Size(promienBazy * 1.72f, promienBazy * 1.72f),
+                    style = Stroke(width = grubosc, cap = StrokeCap.Round),
+                    alpha = widocznosc
+                )
+            }
         }
 
-        // --- 4. Trzy fale dźwięku — łuki wychodzące w prawo z kropki ---
         fun rysujFale(postep: Float, bazowyPromien: Float, alfaMaks: Float) {
             if (postep <= 0f || postep >= 1f) return
-            // Fala rośnie od środka na zewnątrz — im większy postęp, tym dalej od kropki
             val rozstaw = promienBazy * bazowyPromien * (0.70f + 0.30f * postep)
             val alfa = alfaMaks * (1f - postep * 0.80f) * widocznosc
             drawArc(
@@ -199,8 +193,6 @@ fun LogoAnimowane(
         rysujFale(falaB, 0.48f, 0.70f)
         rysujFale(falaC, 0.66f, 0.45f)
 
-        // --- 5. Kropka źródłowa fali — pulsuje razem z rdzeniem ---
-        // Kropka leży w środku rdzenia (wyśrodkowana), fale wychodzą od niej na zewnątrz
         val kropka = srodek
         drawCircle(
             brush = Brush.radialGradient(
@@ -215,7 +207,6 @@ fun LogoAnimowane(
             center = kropka
         )
 
-        // --- 6. Refleks świetlny w lewym górnym rogu rdzenia ---
         val refleksSrodek = Offset(
             srodek.x - promienBazy * 0.26f,
             srodek.y - promienBazy * 0.38f
@@ -234,5 +225,3 @@ fun LogoAnimowane(
         )
     }
 }
-
-

@@ -59,4 +59,6 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
+    // MMS: Fossify fork android-smsmms (PDU + system sending) — jak Fossify Messages
+    implementation("org.fossify:mmslib:1.0.1")
 }

@@ -8,7 +8,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -18,14 +20,12 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
-import kotlinx.coroutines.delay
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -43,11 +43,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -169,23 +172,12 @@ private fun EkranZZakladkami(context: Context) {
             AppNavigationState.numerDoWybrania = null
         }
     }
-    // Czy na Wiadomościach jest otwarty czat (chowamy wtedy dolny pasek nawigacji w dół).
+    // Czy na Wiadomościach jest otwarty czat (chowamy wtedy dolny pasek nawigacji).
     var czatSmsOtwarty by remember { mutableStateOf(false) }
-    
+
     LaunchedEffect(zakladka) {
         if (zakladka != Zakladka.Wiadomosci) {
             czatSmsOtwarty = false
-        }
-    }
-
-    // Wersja z opóźnieniem — pasek chowa się DOPIERO gdy czat zdąży wjechać (sekwencja).
-    var chowajPasek by remember { mutableStateOf(false) }
-    LaunchedEffect(czatSmsOtwarty) {
-        if (czatSmsOtwarty) {
-            delay(240) // krótki — czat zaczyna wjazd, pasek znika bez kolizji
-            chowajPasek = true
-        } else {
-            chowajPasek = false
         }
     }
 
@@ -202,41 +194,62 @@ private fun EkranZZakladkami(context: Context) {
     // dzięki temu powrót na ekran główny NIE pokazuje ponownie spinnera ładowania.
     val stanZakladek = rememberSaveableStateHolder()
 
+    // Pasek zakładek NAKŁADANY na treść (nie Column) — jak w typowych rozwiązaniach
+    // Compose (SO / GitHub): treść ma animowany bottom padding, pasek slideOut w tym
+    // samym czasie. Wcześniej Column + fadeOut trzymał miejsce → pole pisania
+    // czekało i wskakiwało dopiero po zniknięciu paska.
+    val imeWidoczna = WindowInsets.isImeVisible
+    val pokazPasekZakladek = !imeWidoczna && !czatSmsOtwarty
+    val density = LocalDensity.current
+    var wysokoscPaskaPx by remember { mutableIntStateOf(0) }
+    val animSpecDol = tween<androidx.compose.ui.unit.Dp>(280, easing = FastOutSlowInEasing)
+    val dolnyPadZakladek by animateDpAsState(
+        targetValue = if (pokazPasekZakladek && wysokoscPaskaPx > 0) {
+            with(density) { wysokoscPaskaPx.toDp() }
+        } else if (pokazPasekZakladek) {
+            68.dp // zanim zmierzymy pasek
+        } else {
+            0.dp
+        },
+        animationSpec = animSpecDol,
+        label = "dolnyPadZakladek"
+    )
+
     Box(modifier = Modifier.fillMaxSize().background(CzarnyAmoled)) {
-        // Tło wspólne dla wszystkich zakładek — spójne z ekranem powitalnym
         TloAmoled()
 
-        Column(modifier = Modifier.fillMaxSize()) {
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .imePadding()
-            ) {
-                AnimatedContent(
-                    targetState = zakladka,
-                    transitionSpec = {
-                        val staryIndeks = initialState.ordinal
-                        val nowyIndeks = targetState.ordinal
-                        // M3: ruch (slide) = spring (fizyka), fade = tween — płynne bez sztywności.
-                        if (nowyIndeks > staryIndeks) {
-                            (slideInHorizontally(
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .imePadding()
+                .navigationBarsPadding()
+                .padding(bottom = dolnyPadZakladek)
+        ) {
+            AnimatedContent(
+                targetState = zakladka,
+                transitionSpec = {
+                    val staryIndeks = initialState.ordinal
+                    val nowyIndeks = targetState.ordinal
+                    // M3: ruch (slide) = spring (fizyka), fade = tween — płynne bez sztywności.
+                    if (nowyIndeks > staryIndeks) {
+                        (slideInHorizontally(
+                            animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
+                        ) { it / 5 } + fadeIn(tween(260)))
+                            .togetherWith(slideOutHorizontally(
                                 animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
-                            ) { it / 5 } + fadeIn(tween(260)))
-                                .togetherWith(slideOutHorizontally(
-                                    animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
-                                ) { -it / 5 } + fadeOut(tween(180)))
-                        } else {
-                            (slideInHorizontally(
+                            ) { -it / 5 } + fadeOut(tween(180)))
+                    } else {
+                        (slideInHorizontally(
+                            animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
+                        ) { -it / 5 } + fadeIn(tween(260)))
+                            .togetherWith(slideOutHorizontally(
                                 animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
-                            ) { -it / 5 } + fadeIn(tween(260)))
-                                .togetherWith(slideOutHorizontally(
-                                    animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
-                                ) { it / 5 } + fadeOut(tween(180)))
-                        }
-                    },
-                    label = "przejscieZakladek"
-                ) { cel ->
-                    stanZakladek.SaveableStateProvider(cel.name) {
+                            ) { it / 5 } + fadeOut(tween(180)))
+                    }
+                },
+                label = "przejscieZakladek"
+            ) { cel ->
+                stanZakladek.SaveableStateProvider(cel.name) {
                     when (cel) {
                         Zakladka.Glowny -> MainDialerScreen(
                             context = context,
@@ -275,24 +288,29 @@ private fun EkranZZakladkami(context: Context) {
                             onBack = { zakladka = Zakladka.Glowny }
                         )
                     }
-                        }
-                    }
+                }
             }
+        }
 
-            // Gdy klawiatura otwarta LUB otwarty czat — chowamy dolny pasek zakładek.
-            // Przy otwarciu czatu ześlizguje się w dół (animacja), po zamknięciu wraca z dołu.
-            val imeWidoczna = WindowInsets.isImeVisible
-            AnimatedVisibility(
-                visible = !imeWidoczna && !chowajPasek,
-                enter = slideInVertically(initialOffsetY = { it }, animationSpec = tween(280)) + fadeIn(tween(200)),
-                // Czysty fade (bez slide) — żeby nie kolidować z wjazdem czatu z dołu (dwa ruchy pionu = lag).
-                exit = fadeOut(tween(170))
-            ) {
-                DolnyPasekZakladek(
-                    wybrana = zakladka,
-                    onWybierz = { zakladka = it }
-                )
-            }
+        AnimatedVisibility(
+            visible = pokazPasekZakladek,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .onSizeChanged { wysokoscPaskaPx = it.height },
+            enter = slideInVertically(
+                initialOffsetY = { it },
+                animationSpec = tween(280, easing = FastOutSlowInEasing)
+            ) + fadeIn(tween(200)),
+            exit = slideOutVertically(
+                targetOffsetY = { it },
+                animationSpec = tween(280, easing = FastOutSlowInEasing)
+            ) + fadeOut(tween(200))
+        ) {
+            DolnyPasekZakladek(
+                wybrana = zakladka,
+                onWybierz = { zakladka = it }
+            )
         }
     }
 }
@@ -306,11 +324,9 @@ private fun DolnyPasekZakladek(
     wybrana: Zakladka,
     onWybierz: (Zakladka) -> Unit
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding()
-    ) {
+    // Bez navigationBarsPadding — dodaje je nakładka w EkranZZakladkami,
+    // żeby padding treści i slide paska były zsynchronizowane.
+    Box(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()

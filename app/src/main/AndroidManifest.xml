@@ -10,6 +10,7 @@
     <!-- READ_CONTACTS: MainDialerScreen czyta kontakty (wyszukajKontakty),
          bez tego provider kontaktów rzuca SecurityException. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- WRITE_CONTACTS: zapis nowego kontaktu w ContactsContract
@@ -31,6 +32,8 @@
     <uses-permission android:name="android.permission.RECEIVE_WAP_PUSH" />
     <uses-permission android:name="android.permission.WRITE_SMS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.SEND_RESPOND_VIA_MESSAGE" tools:ignore="ProtectedPermissions" />
+    <!-- MMS download (mmslib DownloadManager) trzyma wakelock podczas zapisu PDU. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Planowane wysyłanie SMS (scheduled send): dokładny alarm w tle. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 <!-- ===== Pełny dialer: InCallService + nagrywanie rozmów ===== -->
@@ -215,16 +218,47 @@
             android:name=".sms.AkcjaSmsReceiver"
             android:exported="false" />
 
-        <!-- 2. Odbiornik MMS -->
+        <!-- 2. WAP PUSH MMS — oficjalny PushReceiver z Fossify mmslib
+             (parsuje NotificationInd, zleca downloadMultimediaMessage + grant URI).
+             Własny OdbiorcaMms omijał grantUriPermission / MmsFileProvider i gubił PDU. -->
         <receiver
-            android:name=".sms.OdbiorcaMms"
+            android:name="com.android.mms.transaction.PushReceiver"
             android:exported="true"
             android:permission="android.permission.BROADCAST_WAP_PUSH">
             <intent-filter>
                 <action android:name="android.provider.Telephony.WAP_PUSH_DELIVER" />
                 <data android:mimeType="application/vnd.wap.mms-message" />
+                <data android:mimeType="application/vnd.wap.sic" />
             </intent-filter>
         </receiver>
+
+        <!-- Status wysyłki / dostarczenia SMS (Fossify pattern) -->
+        <receiver
+            android:name=".sms.SmsStatusSentReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="dialer.dominik.pl.SMS_SENT" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".sms.SmsStatusDeliveredReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="dialer.dominik.pl.SMS_DELIVERED" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".sms.MmsStatusSentReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="dialer.dominik.pl.MMS_SENT" />
+            </intent-filter>
+        </receiver>
+        <!-- Po downloadzie mmslib szuka receivera po taskAffinity == MMS_RECEIVED. -->
+        <receiver
+            android:name=".sms.MmsPobranyIZapisanyReceiver"
+            android:exported="true"
+            android:taskAffinity="com.klinker.android.messaging.MMS_RECEIVED" />
 
         <!-- 3. Odpowiedź SMS-em na odrzucone połączenie -->
         <service

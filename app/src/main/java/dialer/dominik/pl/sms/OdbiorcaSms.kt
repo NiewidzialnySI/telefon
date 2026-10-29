@@ -89,40 +89,46 @@ class OdbiorcaSms : BroadcastReceiver() {
                     persona = null
                 }
                 val zdjecie = dialer.dominik.pl.call.WeryfikacjaNumeru.pobierzZdjecieKontaktu(context, nadawca)
-                // Ikona shortcutu = LOGO FIRMY (alfa-nadawca) > zdjęcie kontaktu > logo apki.
-                // Głowa dymka (bubble) używa ikony z SHORTCUTU konwersacji (nie z BubbleMetadata).
-                val scIkona = if (dialer.dominik.pl.ui.screens.czyZnanaFirma(nadawca)) {
-                    val logo = dialer.dominik.pl.ui.screens.pobierzLogoFirmy(context, nadawca)
-                    if (logo != null) IconCompat.createWithAdaptiveBitmap(przycinajDoOkregu(logo))
-                    else IconCompat.createWithResource(context, R.drawable.ic_logo_nowoczesny)
-                } else if (zdjecie != null) {
-                    IconCompat.createWithAdaptiveBitmap(przycinajDoOkregu(zdjecie))
-                } else {
-                    IconCompat.createWithResource(context, R.drawable.ic_logo_nowoczesny)
+                val firma = dialer.dominik.pl.ui.screens.czyZnanaFirma(nadawca)
+                // Szybka ikona BEZ sieci (kontakt / logo apki) — powiadomienie nie czeka na favicon.
+                // Logo firmy dociągamy w tle i odświeżamy shortcut (głowa dymka).
+                val scIkonaSzybka = when {
+                    zdjecie != null -> IconCompat.createWithAdaptiveBitmap(przycinajDoOkregu(zdjecie))
+                    else -> IconCompat.createWithResource(context, R.drawable.ic_logo_nowoczesny)
                 }
-                val scBuilder = ShortcutInfoCompat.Builder(context, shortcutId)
-                    .setShortLabel(nadawca)
-                    .setLongLabel(nadawca)
-                    // Ikona shortcutu decyduje o głowie dymka (bubble) — patrz wyżej.
-                    .setIcon(scIkona)
-                    .setIntent(intent)
-                    // Shortcut MUSI wskazywać na aktywność MAIN (launcher) — inaczej
-                    // pushDynamicShortcut rzuca "activity ... is not main activity".
-                    // BubbleChatActivity zostaje tylko jako target PendingIntenta dymka.
-                    .setActivity(android.content.ComponentName(context, MainActivity::class.java))
-                    .setLocusId(androidx.core.content.LocusIdCompat(shortcutId))
-                // setIsConversation() — to flaga sprawiająca, że system traktuje
-                // shortcut jako konwersację (bez niej "found valid? false"). Wzorzec
-                // z Fossify Messages (ShortcutHelper.buildShortcut).
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    scBuilder.setIsConversation()
+                fun zbudujIOpublikuj(ikona: IconCompat) {
+                    val scBuilder = ShortcutInfoCompat.Builder(context, shortcutId)
+                        .setShortLabel(nadawca)
+                        .setLongLabel(nadawca)
+                        .setIcon(ikona)
+                        .setIntent(intent)
+                        .setActivity(android.content.ComponentName(context, MainActivity::class.java))
+                        .setLocusId(androidx.core.content.LocusIdCompat(shortcutId))
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        scBuilder.setIsConversation()
+                    }
+                    if (persona != null) {
+                        scBuilder.setPersons(arrayOf(persona))
+                    }
+                    ostatniShortcut = scBuilder.build()
+                    ShortcutManagerCompat.pushDynamicShortcut(context, ostatniShortcut!!)
                 }
-                if (persona != null) {
-                    scBuilder.setPersons(arrayOf(persona))
+                zbudujIOpublikuj(scIkonaSzybka)
+                if (firma) {
+                    val appCtx = context.applicationContext
+                    Thread {
+                        try {
+                            val logo = dialer.dominik.pl.ui.screens.pobierzLogoFirmy(appCtx, nadawca)
+                            if (logo != null) {
+                                zbudujIOpublikuj(
+                                    IconCompat.createWithAdaptiveBitmap(przycinajDoOkregu(logo))
+                                )
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Async logo shortcut: ${e.message}")
+                        }
+                    }.start()
                 }
-                // Zapamiętaj pełny ShortcutInfo dla notyfikacji (setShortcutInfo).
-                ostatniShortcut = scBuilder.build()
-                ShortcutManagerCompat.pushDynamicShortcut(context, ostatniShortcut!!)
             } catch (e: Exception) {
                 Log.e(TAG, "Błąd publikacji skrótu konwersacji", e)
             }
@@ -204,8 +210,11 @@ class OdbiorcaSms : BroadcastReceiver() {
                         put(Telephony.Sms.Inbox.BODY, tresc)
                         put(Telephony.Sms.Inbox.DATE, czas)
                         put(Telephony.Sms.Inbox.READ, 0)
+                        put(Telephony.Sms.Inbox.SEEN, 0)
                     }
                     context.contentResolver.insert(Telephony.Sms.Inbox.CONTENT_URI, values)
+                    // Bez unieważnienia cache skrzynka w UI pokazuje stare wątki do ręcznego odświeżenia.
+                    dialer.dominik.pl.ui.screens.uniewaznijCacheSkrzynki()
                 } catch (e: Exception) {
                     Log.e(TAG, "Błąd zapisu przychodzącego SMS do Inbox", e)
                 }
@@ -219,10 +228,9 @@ class OdbiorcaSms : BroadcastReceiver() {
 
                 // Bez shortcut-a konwersacji system nie pozwoli na dymek (bubble)
                 // — publikuj go przed pokazaniem powiadomienia (wzorzec Signal).
+                // Bez Thread.sleep (blokował goAsync); krótkie yield + ponowna próba w notify.
                 ensureShortcutForRecipient(context, nadawca)
-                // Daj ShortcutService chwilę na przetworzenie opublikowanego skrótu,
-                // inaczej `notify` widzi go jako "found valid? false" (wyścig).
-                try { Thread.sleep(400) } catch (e: InterruptedException) {}
+                try { Thread.yield() } catch (_: Exception) {}
 
                 pokazPowiadomienie(context, nadawca, tresc, czas, otp)
                 // Nowa wiadomość od nadawcy, który jest w ARCHIWUM (ukrytych) — zdejmij go
@@ -366,21 +374,10 @@ class OdbiorcaSms : BroadcastReceiver() {
             val zdjecie = dialer.dominik.pl.call.WeryfikacjaNumeru.pobierzZdjecieKontaktu(context, nadawca)
             // Diagnoza: czy zdjęcie się znalazło dla ikony dymka.
             android.util.Log.i("IkonaDymka", "nadawca=$nadawca zdjecie=${zdjecie != null}")
+            // Bez synchronicznego pobierania logo sieciowego — ikona z shortcutu
+            // (aktualizowana async w ensureShortcut) albo zdjęcie kontaktu / logo apki.
             val ikonaDymka = when {
-                // Alfa-firma (Microsoft, MarketUL...) — głowa dymka = prawdziwe LOGO firmy.
-                dialer.dominik.pl.ui.screens.czyZnanaFirma(nadawca) -> {
-                    val logo = dialer.dominik.pl.ui.screens.pobierzLogoFirmy(context, nadawca)
-                    if (logo != null) IconCompat.createWithAdaptiveBitmap(przycinajDoOkregu(logo))
-                    else androidx.core.graphics.drawable.IconCompat.createWithResource(
-                        context, R.drawable.ic_logo_nowoczesny
-                    )
-                }
-                zdjecie != null -> {
-                    // AdaptiveBitmap + okrągła maska: Android traktuje ikonę jak adaptive
-                    // (bez dodatkowego paddingu), więc zdjęcie wypełnia całość jak w Signal,
-                    // bez białego pierścienia.
-                    IconCompat.createWithAdaptiveBitmap(przycinajDoOkregu(zdjecie))
-                }
+                zdjecie != null -> IconCompat.createWithAdaptiveBitmap(przycinajDoOkregu(zdjecie))
                 else -> androidx.core.graphics.drawable.IconCompat.createWithResource(
                     context, R.drawable.ic_logo_nowoczesny
                 )
