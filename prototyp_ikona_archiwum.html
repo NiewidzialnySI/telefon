@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prototyp — animacja Archiwum ↔ Powrót</title>
+<style>
+  :root {
+    --neon: #69F0AE;
+    --bg: #0a0e0c;
+    --bar: rgba(255,255,255,.04);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    background: #14171c; color: #e8eaed;
+    font-family: system-ui, sans-serif;
+    padding: 16px;
+  }
+  h1 { font-size: 15px; margin: 0 0 6px; }
+  .hint { font-size: 12px; opacity: .55; margin: 0 0 16px; max-width: 420px; line-height: 1.4; }
+
+  .phone {
+    width: 360px; height: 200px;
+    margin: 0 auto 20px;
+    border: 2px solid #2b3038; border-radius: 24px;
+    background: var(--bg);
+    overflow: hidden;
+    position: relative;
+  }
+  .topbar {
+    height: 56px;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 8px 0 4px;
+    border-bottom: 1px solid rgba(255,255,255,.06);
+  }
+  .nav {
+    display: flex; align-items: center; gap: 0;
+    min-width: 96px;
+  }
+  .title {
+    flex: 1; text-align: center;
+    font-size: 11px; letter-spacing: 2.2px; font-weight: 500;
+    color: rgba(255,255,255,.42);
+  }
+  .spacer { width: 48px; }
+
+  .ibtn {
+    width: 48px; height: 48px;
+    border: none; background: transparent;
+    color: var(--neon);
+    border-radius: 50%;
+    display: grid; place-items: center;
+    cursor: pointer;
+    position: relative;
+  }
+  .ibtn:active { background: rgba(105,240,174,.08); }
+
+  /* Kosz — chowa się / pokazuje */
+  .trash-wrap {
+    display: grid; place-items: center;
+    overflow: hidden;
+    width: 48px;
+    transition: width .22s ease, opacity .18s ease, transform .22s ease;
+  }
+  .trash-wrap.hide {
+    width: 0;
+    opacity: 0;
+    transform: scale(.7);
+    pointer-events: none;
+  }
+
+  /* Slot morphującej ikony */
+  .morph {
+    width: 48px; height: 48px;
+    position: relative;
+    display: grid; place-items: center;
+  }
+  .morph svg {
+    position: absolute;
+    width: 24px; height: 24px;
+    fill: none;
+    stroke: var(--neon);
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    transition:
+      opacity .2s ease,
+      transform .28s cubic-bezier(.34, 1.4, .64, 1);
+  }
+  .morph .archiwum { opacity: 1; transform: scale(1) rotate(0deg); }
+  .morph .powrot   { opacity: 0; transform: scale(.35) rotate(-40deg); }
+
+  .phone.w-archiwum .morph .archiwum {
+    opacity: 0;
+    transform: scale(.35) rotate(40deg);
+  }
+  .phone.w-archiwum .morph .powrot {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+
+  .body {
+    padding: 24px; text-align: center;
+    color: rgba(255,255,255,.35); font-size: 13px;
+  }
+
+  .variants {
+    max-width: 420px; margin: 0 auto;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .variants label {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 13px; cursor: pointer;
+    padding: 10px 12px;
+    background: #1c2128; border-radius: 12px;
+    border: 1px solid rgba(255,255,255,.08);
+  }
+  .variants input { accent-color: var(--neon); }
+
+  /* Wariant B: Crossfade bez obrotu */
+  .phone.v-b .morph svg { transition: opacity .25s ease, transform .25s ease; }
+  .phone.v-b .morph .archiwum,
+  .phone.v-b .morph .powrot { transform: scale(1) !important; }
+
+  /* Wariant C: flip 3D w osi Y */
+  .phone.v-c .morph { perspective: 200px; }
+  .phone.v-c .morph svg {
+    backface-visibility: hidden;
+    transition: opacity .15s ease, transform .4s cubic-bezier(.4,.0,.2,1);
+  }
+  .phone.v-c .morph .archiwum { transform: rotateY(0deg) scale(1); }
+  .phone.v-c .morph .powrot   { transform: rotateY(90deg) scale(1); opacity: 1; }
+  .phone.v-c.w-archiwum .morph .archiwum { transform: rotateY(-90deg); opacity: 1; }
+  .phone.v-c.w-archiwum .morph .powrot   { transform: rotateY(0deg); }
+
+  /* Wariant D: ścieżka morph (stroke-dash + swap) — „rysowanie” */
+  .phone.v-d .morph svg {
+    transition: opacity .15s ease .1s, transform .35s cubic-bezier(.34,1.56,.64,1);
+  }
+</style>
+</head>
+<body>
+
+<h1>Animacja: Archiwum → Powrót</h1>
+<p class="hint">
+  Kliknij zieloną ikonę archiwum na pasku (jak w aplikacji). Potem wybierz wariant poniżej
+  i napisz, który jest bliżej tego, czego chcesz — albo czym różni się od Twojej wizji.
+</p>
+
+<div class="phone" id="phone">
+  <div class="topbar">
+    <div class="nav">
+      <div class="trash-wrap" id="trash">
+        <button type="button" class="ibtn" title="Kosz 2FA" aria-label="Kosz">
+          <!-- trash -->
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 14h10l1-14"/><path d="M10 11v6M14 11v6"/>
+          </svg>
+        </button>
+      </div>
+      <button type="button" class="ibtn" id="btnMorph" title="Archiwum / Powrót" aria-label="Archiwum">
+        <span class="morph" id="morph">
+          <!-- Archiwum (pudełko) -->
+          <svg class="archiwum" viewBox="0 0 24 24">
+            <path d="M3 3h18l-1 5H4L3 3z"/>
+            <path d="M4 8h16v13H4z"/>
+            <path d="M7 13h10M7 17h10"/>
+          </svg>
+          <!-- Powrót (strzałka) -->
+          <svg class="powrot" viewBox="0 0 24 24">
+            <path d="M19 6H7"/>
+            <path d="M7 2.5L3 6l4 3.5"/>
+            <path d="M7 6v8a4 4 0 0 0 4 4h5"/>
+          </svg>
+        </span>
+      </button>
+    </div>
+    <div class="title" id="title">SKRZYNKA ODBIORCZA</div>
+    <div class="spacer"></div>
+  </div>
+  <div class="body" id="body">Lista wątków SMS…</div>
+</div>
+
+<div class="variants">
+  <label><input type="radio" name="v" value="a" checked> <b>A</b> — scale + rotacja + bounce (to jest w Kotlinie teraz)</label>
+  <label><input type="radio" name="v" value="b"> <b>B</b> — tylko crossfade (bez skalowania)</label>
+  <label><input type="radio" name="v" value="c"> <b>C</b> — flip 3D (jak przewrócenie karty)</label>
+  <label><input type="radio" name="v" value="d"> <b>D</b> — mocniejszy bounce (ikona „wyskakuje”)</label>
+</div>
+
+<script>
+const phone = document.getElementById('phone');
+const trash = document.getElementById('trash');
+const title = document.getElementById('title');
+const body = document.getElementById('body');
+const btn = document.getElementById('btnMorph');
+let archiwum = false;
+
+function apply() {
+  phone.classList.toggle('w-archiwum', archiwum);
+  trash.classList.toggle('hide', archiwum);
+  title.textContent = archiwum ? 'ARCHIWUM (UKRYTE)' : 'SKRZYNKA ODBIORCZA';
+  body.textContent = archiwum ? 'Ukryte wątki…' : 'Lista wątków SMS…';
+  btn.setAttribute('aria-label', archiwum ? 'Powrót' : 'Archiwum');
+}
+
+btn.addEventListener('click', () => {
+  archiwum = !archiwum;
+  apply();
+});
+
+document.querySelectorAll('input[name="v"]').forEach(r => {
+  r.addEventListener('change', () => {
+    phone.classList.remove('v-b', 'v-c', 'v-d');
+    if (r.value === 'b') phone.classList.add('v-b');
+    if (r.value === 'c') phone.classList.add('v-c');
+    if (r.value === 'd') {
+      phone.classList.add('v-d');
+      // mocniejszy bounce przez dłuższy overshoot w CSS już jest w A; D = dłuższy spring
+      document.querySelectorAll('.morph svg').forEach(el => {
+        el.style.transition = 'opacity .18s ease, transform .45s cubic-bezier(.22, 1.8, .36, 1)';
+      });
+    } else {
+      document.querySelectorAll('.morph svg').forEach(el => { el.style.transition = ''; });
+    }
+  });
+});
+
+apply();
+</script>
+</body>
+</html>

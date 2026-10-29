@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dostępne ścieżki dla FileProvider (udostępnianie załączników MMS). -->
+<paths>
+    <cache-path name="cache_zdjecia" path="images/" />
+    <external-files-path name="ext_zdjecia" path="images/" />
+    <files-path name="wew_zdjecia" path="images/" />
+</paths>

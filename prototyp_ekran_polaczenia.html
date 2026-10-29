@@ -1,0 +1,886 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Prototyp — ekran połączenia (3 tryby + dymek)</title>
+<style>
+  :root {
+    --neon: #69F0AE;
+    --morski: #2E8B6A;
+    --gleboki: #0B2A20;
+    --czerwony: #E0333F;
+    --amoled: #000000;
+    --panel: #14201A;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; min-height: 100%;
+    background: #14171c;
+    color: #e8eaed;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  body { padding: 12px 12px 32px; }
+
+  h1 { font-size: 15px; font-weight: 600; margin: 0 0 8px; opacity: .9; }
+  .hint { font-size: 12px; opacity: .55; margin: 0 0 14px; line-height: 1.4; max-width: 420px; }
+
+  .toolbar {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; max-width: 420px;
+  }
+  .toolbar button {
+    border: 1px solid rgba(255,255,255,.12);
+    background: #1c2128;
+    color: #e8eaed;
+    border-radius: 999px;
+    padding: 8px 14px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .toolbar button.active {
+    background: rgba(105,240,174,.18);
+    border-color: rgba(105,240,174,.45);
+    color: var(--neon);
+  }
+
+  .phone {
+    position: relative;
+    width: 360px; height: 780px;
+    margin: 0 auto;
+    border: 2px solid #2b3038;
+    border-radius: 28px;
+    box-shadow: 0 12px 32px rgba(0,0,0,.45);
+    background: #050806;
+    overflow: hidden;
+    touch-action: none;
+    user-select: none;
+  }
+
+  /* Tło AMOLED + delikatny zielony gradient jak w aplikacji */
+  .tlo {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(ellipse 80% 50% at 50% 18%, rgba(46,139,106,.28), transparent 60%),
+      radial-gradient(ellipse 70% 40% at 50% 100%, rgba(11,42,32,.55), transparent 55%),
+      #000;
+    transition: opacity .2s linear;
+  }
+
+  .statusbar {
+    position: absolute; top: 0; left: 0; right: 0; height: 36px; z-index: 40;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 14px;
+    color: rgba(255,255,255,.85); font-size: 12px;
+    pointer-events: none;
+  }
+
+  /* ===== SZKIELET ===== */
+  .shell {
+    position: absolute; inset: 0; z-index: 10;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 52px 24px 28px;
+    transition: opacity .15s linear;
+  }
+
+  .avatar-wrap {
+    position: relative;
+    width: 200px; height: 200px;
+    display: grid; place-items: center;
+    flex-shrink: 0;
+    margin-top: 8px;
+  }
+  .halo {
+    position: absolute; inset: 0;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(46,139,106,.28), rgba(46,139,106,.06), transparent 70%);
+    animation: puls 1.6s ease-in-out infinite alternate;
+  }
+  @keyframes puls { from { transform: scale(.94); } to { transform: scale(1.06); } }
+
+  .avatar {
+    position: relative;
+    width: 124px; height: 124px;
+    border-radius: 50%;
+    background: radial-gradient(circle, #12362A, #081A14);
+    border: 2px solid rgba(105,240,174,.5);
+    color: var(--neon);
+    font: 600 42px/124px system-ui;
+    text-align: center;
+    letter-spacing: 1px;
+  }
+  .avatar.small-incoming {
+    width: 100px; height: 100px; font-size: 36px; line-height: 100px;
+    border-width: 1.5px;
+  }
+
+  .name {
+    margin-top: 8px;
+    color: #fff;
+    font: 600 26px/1.2 system-ui;
+    text-align: center;
+    max-width: 100%;
+    word-break: break-all;
+  }
+  .status {
+    margin-top: 10px;
+    color: var(--neon);
+    font: 500 16px/1.2 system-ui;
+    letter-spacing: 1.2px;
+    text-align: center;
+    min-height: 20px;
+  }
+  .status.muted { color: rgba(255,255,255,.55); }
+
+  .mid {
+    width: 100%;
+    margin-top: 12px;
+    flex: 1 1 auto;
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 0;
+  }
+  .bottom {
+    width: 100%;
+    flex-shrink: 0;
+    display: flex; flex-direction: column; align-items: center;
+    gap: 16px;
+    padding-bottom: 8px;
+  }
+
+  /* Notatka */
+  .note {
+    width: 100%;
+    border: 1px solid rgba(105,240,174,.35);
+    border-radius: 14px;
+    background: rgba(255,255,255,.04);
+    color: #fff;
+    font: 400 14px system-ui;
+    padding: 12px 14px;
+    outline: none;
+    resize: none;
+    min-height: 44px;
+    touch-action: auto;
+  }
+  .note::placeholder { color: rgba(255,255,255,.35); }
+
+  /* Panel audio — 4 przyciski */
+  .audio-row {
+    width: 100%;
+    display: flex; justify-content: space-evenly; align-items: center;
+  }
+  .opt {
+    width: 68px; height: 68px; border-radius: 50%;
+    border: none; cursor: pointer;
+    background: rgba(255,255,255,.08);
+    color: #fff;
+    display: grid; place-items: center;
+    transition: background .2s, color .2s;
+  }
+  .opt.active { background: var(--neon); color: #06231A; }
+  .opt svg { width: 26px; height: 26px; fill: currentColor; }
+
+  /* Rozłącz */
+  .hangup {
+    width: 72px; height: 72px; border-radius: 50%;
+    border: none; cursor: pointer;
+    background: var(--czerwony); color: #fff;
+    display: grid; place-items: center;
+    font: 700 34px/1 system-ui;
+  }
+  .hangup svg { width: 32px; height: 32px; fill: currentColor; }
+
+  /* Przychodzące: spam + opinie */
+  .spam {
+    margin-top: 8px;
+    padding: 5px 14px;
+    border-radius: 50px;
+    background: rgba(224,51,63,.2);
+    border: 1px solid rgba(224,51,63,.4);
+    color: var(--czerwony);
+    font: 700 12px system-ui;
+    letter-spacing: 1.5px;
+  }
+  .opinie-label {
+    align-self: flex-start;
+    margin: 10px 0 4px;
+    color: rgba(255,255,255,.45);
+    font: 700 10px system-ui;
+    letter-spacing: 1px;
+  }
+  .opinie {
+    width: 100%;
+    max-height: 120px;
+    overflow: auto;
+    border-radius: 14px;
+    background: rgba(255,255,255,.04);
+    padding: 8px;
+    touch-action: pan-y;
+  }
+  .opinia {
+    border-radius: 10px;
+    background: rgba(0,0,0,.25);
+    padding: 10px;
+    margin-bottom: 6px;
+  }
+  .opinia:last-child { margin-bottom: 0; }
+  .opinia .meta {
+    display: flex; justify-content: space-between; gap: 8px;
+    color: var(--neon); font: 600 11px system-ui; margin-bottom: 4px;
+  }
+  .opinia .tresc { color: rgba(255,255,255,.8); font: 400 12px/1.35 system-ui; }
+
+  .chip-row {
+    width: 100%;
+    display: flex; justify-content: space-evenly; gap: 10px;
+  }
+  .chip {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 20px;
+    border-radius: 20px;
+    border: 1px solid rgba(255,255,255,.15);
+    background: rgba(255,255,255,.08);
+    color: #fff;
+    font: 600 13px system-ui;
+    cursor: pointer;
+  }
+  .chip svg { width: 18px; height: 18px; fill: var(--neon); }
+
+  /* Slajder */
+  .slider {
+    position: relative;
+    width: 90%;
+    height: 68px;
+    border-radius: 34px;
+    border: 1px solid rgba(255,255,255,.15);
+    background: linear-gradient(90deg,
+      rgba(105,240,174,.2),
+      #16221C 45%,
+      #16221C 55%,
+      rgba(224,51,63,.2));
+    touch-action: none;
+  }
+  .slider-knob {
+    position: absolute; top: 5px; left: 50%;
+    width: 58px; height: 58px;
+    margin-left: -29px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,.5);
+    background: #384740;
+    color: #fff;
+    display: grid; place-items: center;
+    transition: background .15s, color .15s;
+  }
+  .slider-knob svg { width: 28px; height: 28px; fill: currentColor; }
+
+  /* Panel SMS (uproszczony) */
+  .sms-panel {
+    width: 100%;
+    border-radius: 16px;
+    background: rgba(255,255,255,.06);
+    border: 1px solid rgba(255,255,255,.12);
+    padding: 12px;
+    margin-bottom: 8px;
+  }
+  .sms-panel textarea {
+    width: 100%; min-height: 64px; resize: none;
+    background: transparent; border: none; color: #fff;
+    font: 400 14px system-ui; outline: none; touch-action: auto;
+  }
+  .sms-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .sms-actions button {
+    background: none; border: none; color: rgba(255,255,255,.7);
+    font: 600 13px system-ui; cursor: pointer; padding: 6px 8px;
+  }
+  .sms-actions .send { color: var(--neon); }
+
+  /* Klawiatura DTMF */
+  .dtmf {
+    width: 85%;
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+    margin-bottom: 8px;
+  }
+  .dtmf button {
+    height: 52px; border-radius: 50%;
+    border: none; background: rgba(255,255,255,.08);
+    color: #fff; font: 400 20px system-ui; cursor: pointer;
+  }
+
+  /* Dymek — jeden obiekt: śledzi mysz, potem leci / wraca sprężyną */
+  .fly-avatar {
+    position: absolute; z-index: 30;
+    width: 124px; height: 124px;
+    left: 0; top: 0;
+    margin-left: -62px; margin-top: -62px;
+    border-radius: 50%;
+    background: radial-gradient(circle, #12362A, #081A14);
+    border: 2px solid rgba(105,240,174,.5);
+    color: var(--neon);
+    font: 600 42px system-ui;
+    display: none;
+    align-items: center; justify-content: center;
+    letter-spacing: 1px;
+    will-change: transform;
+    pointer-events: auto;
+    cursor: grab;
+    touch-action: none;
+    box-shadow: 0 4px 16px rgba(0,0,0,.4);
+  }
+  .fly-avatar.visible { display: flex; }
+  .fly-avatar:active { cursor: grabbing; }
+
+  .wallpaper {
+    position: absolute; inset: 0; z-index: 1;
+    display: none;
+    pointer-events: none;
+    background:
+      linear-gradient(160deg, #1a2330, #0d1218),
+      repeating-linear-gradient(0deg, transparent, transparent 40px, rgba(255,255,255,.02) 40px, rgba(255,255,255,.02) 41px);
+    color: rgba(255,255,255,.35);
+    font: 500 14px system-ui;
+    align-items: center; justify-content: center;
+    text-align: center; padding: 24px;
+  }
+  .wallpaper.show { display: flex; }
+
+  .toast {
+    position: absolute; left: 50%; bottom: 100px; transform: translateX(-50%);
+    z-index: 50; background: rgba(20,32,26,.95); color: #fff;
+    border: 1px solid rgba(105,240,174,.3); border-radius: 12px;
+    padding: 10px 14px; font-size: 13px; opacity: 0; pointer-events: none;
+    transition: opacity .2s;
+  }
+  .toast.show { opacity: 1; }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<h1>Prototyp ekranu połączenia</h1>
+<p class="hint">
+  Jeden szkielet (awatar → nazwa → status → środek → dół). Przełącz tryby poniżej.
+  W trybie <b>Rozmowa</b>: przeciągnij awatar z myszką (ekran gaśnie) → po puszczeniu leci w prawo.
+  Dymek możesz przeciągać; klik (bez ruchu) → animowany powrót ekranu rozmowy.
+</p>
+
+<div class="toolbar" id="toolbar">
+  <button type="button" data-mode="dzwonienie">1. Dzwonienie</button>
+  <button type="button" data-mode="rozmowa" class="active">2. Rozmowa</button>
+  <button type="button" data-mode="przychodzace">3. Ktoś dzwoni</button>
+</div>
+
+<div class="phone" id="phone">
+  <div class="wallpaper" id="wallpaper">Aplikacja pod spodem<br>(po minimalizacji)</div>
+  <div class="tlo" id="tlo"></div>
+  <div class="statusbar"><span id="clock">14:23</span><span>LTE · 71%</span></div>
+
+  <div class="shell" id="shell">
+    <!-- Awatar w szkielecie (ukrywany gdy leci dymek) -->
+    <div class="avatar-wrap" id="avatarWrap">
+      <div class="halo" id="halo"></div>
+      <div class="avatar" id="avatar">PG</div>
+    </div>
+    <div class="name" id="name">Poczta głos.</div>
+    <div class="status" id="status">00:34</div>
+
+    <div class="mid" id="mid"></div>
+    <div class="bottom" id="bottom"></div>
+  </div>
+
+  <!-- Latający awatar = dymek (jak warstwa nad Column w Compose) -->
+  <div class="fly-avatar" id="flyAvatar">PG</div>
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+"use strict";
+
+/* Ikony SVG (uproszczone, bez zależności) */
+const I = {
+  mic: '<svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V21h2v-3.1A7 7 0 0 0 19 11h-2z"/><path d="M3 3l18 18" stroke="currentColor" stroke-width="2" fill="none"/></svg>',
+  bt: '<svg viewBox="0 0 24 24"><path d="M7 7l10 5-5 3V4l5 3-10 5 10 5-5 3v-7"/></svg>',
+  spk: '<svg viewBox="0 0 24 24"><path d="M3 10v4h4l5 5V5L7 10H3zm13.5 2a3.5 3.5 0 0 0-1.5-2.9v5.8A3.5 3.5 0 0 0 16.5 12zM14 5.1v2.1a6 6 0 0 1 0 9.6v2.1a8 8 0 0 0 0-13.8z"/></svg>',
+  pad: '<svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="1.6"/><circle cx="12" cy="6" r="1.6"/><circle cx="18" cy="6" r="1.6"/><circle cx="6" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18" cy="12" r="1.6"/><circle cx="6" cy="18" r="1.6"/><circle cx="12" cy="18" r="1.6"/><circle cx="18" cy="18" r="1.6"/></svg>',
+  phone: '<svg viewBox="0 0 24 24"><path d="M6.6 10.8a15 15 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 11 11 0 0 0 3.4.55 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11 11 0 0 0 .55 3.4 1 1 0 0 1-.25 1L6.6 10.8z"/></svg>',
+  hang: '<svg viewBox="0 0 24 24"><path d="M12 9c-1.5 0-3 .3-4.3.8l1.5 1.5c.9-.2 1.8-.3 2.8-.3 3.9 0 7.2 1.6 9.7 4.1l1.4-1.4C20.3 11 16.4 9 12 9zM4.3 5.7 3 7l3.3 3.3C4.9 11.5 3.7 13 3 14.7l1.4 1.4C5.7 13.6 8.6 12 12 12c.4 0 .7 0 1.1.1l6.2-6.2 1.4 1.4-16.4 16.4-1.4-1.4 3.8-3.8C5.4 16.8 4 18.7 3.3 20.9L4.7 22c.9-2.5 2.5-4.7 4.6-6.4l1.2-1 1.5-1.5L4.3 5.7z"/></svg>',
+  msg: '<svg viewBox="0 0 24 24"><path d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2z"/></svg>',
+  muteR: '<svg viewBox="0 0 24 24"><path d="M16.5 12a4.5 4.5 0 0 0-1.5-3.4v1.7l1.5 1.5V12zm2.5 0c0 .8-.1 1.5-.4 2.2l1.5 1.5c.6-1.1.9-2.4.9-3.7a8 8 0 0 0-3-6.2l-1.4 1.4A6 6 0 0 1 19 12zM4.3 3 3 4.3 7.7 9H3v6h4l5 5v-6.7l4 4c-.6.4-1.3.8-2 .9v2.1a8 8 0 0 0 3.4-1.1L19.7 21 21 19.7 4.3 3zM12 4 9.9 6.1 12 8.2V4z"/></svg>'
+};
+
+const phone = document.getElementById('phone');
+const shell = document.getElementById('shell');
+const tlo = document.getElementById('tlo');
+const wallpaper = document.getElementById('wallpaper');
+const avatar = document.getElementById('avatar');
+const avatarWrap = document.getElementById('avatarWrap');
+const flyAvatar = document.getElementById('flyAvatar');
+const nameEl = document.getElementById('name');
+const statusEl = document.getElementById('status');
+const mid = document.getElementById('mid');
+const bottom = document.getElementById('bottom');
+const toast = document.getElementById('toast');
+
+const AV = 124, DYM = 64;
+const skalaDymka = DYM / AV;
+
+let mode = 'rozmowa';          // dzwonienie | rozmowa | przychodzace
+let uiPhase = 'full';         // full | minimizing | dymek
+let sekundy = 34;
+let odliczanie = 1;
+let wycisz = false, bt = false, glosnik = false, klawiatura = false;
+let smsOpen = false;
+let timerId = null, countdownId = null;
+
+/* Absolutne współrzędne środka awatara (px) — jak .target w prototyp_dymek_v2 */
+let x = 180, y = 160, s = 1, krycie = 1;
+const M = 12; // margines od krawędzi dla dymka
+
+function centerCall() {
+  return { x: phone.clientWidth / 2, y: 52 + 8 + 100 };
+}
+function gumowy(dy, h) { return dy / (1 + dy / (h * 1.6)); }
+function nearestSide(cx) { return cx < phone.clientWidth / 2 ? 'left' : 'right'; }
+/** Po puszczeniu dymka: przyklej do bliższej krawędzi L/P, zachowaj Y */
+function edgeAnchor(cx, cy) {
+  const w = phone.clientWidth, h = phone.clientHeight;
+  return {
+    x: nearestSide(cx) === 'right' ? w - M - DYM / 2 : M + DYM / 2,
+    y: Math.min(h - DYM / 2, Math.max(46 + DYM / 2, cy))
+  };
+}
+/** Domyślny cel po minimalizacji z ekranu rozmowy = prawa góra */
+function defaultDymekPos() {
+  const w = phone.clientWidth;
+  return { x: w - 32 - DYM / 2, y: 120 };
+}
+
+function showToast(t) {
+  toast.textContent = t;
+  toast.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => toast.classList.remove('show'), 1600);
+}
+
+function formatCzas(s) {
+  const m = Math.floor(s / 60), sec = s % 60;
+  return String(m).padStart(2,'0') + ':' + String(sec).padStart(2,'0');
+}
+
+function paintFly() {
+  flyAvatar.style.transform = `translate(${x}px, ${y}px) scale(${s})`;
+}
+
+function setShellOpacity(a) {
+  shell.style.opacity = String(a);
+  tlo.style.opacity = String(a);
+}
+
+function syncAvatarText() {
+  flyAvatar.textContent = avatar.textContent;
+}
+
+function localPos(e) {
+  const r = phone.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+/* ===== Render slotów ===== */
+function render() {
+  document.querySelectorAll('#toolbar button').forEach(b => {
+    b.classList.toggle('active', b.dataset.mode === mode);
+  });
+
+  avatar.classList.toggle('small-incoming', mode === 'przychodzace');
+  klawiatura = mode === 'przychodzace' ? false : klawiatura;
+
+  if (mode === 'dzwonienie') {
+    avatar.textContent = '+';
+    nameEl.textContent = '+48601222222';
+    statusEl.textContent = 'Dzwonię…';
+    statusEl.classList.remove('muted');
+    mid.innerHTML = klawiatura ? dtmfHtml() : '';
+    bottom.innerHTML = audioHtml() + hangupHtml(odliczanie > 0 ? String(odliczanie) : null);
+  } else if (mode === 'rozmowa') {
+    avatar.textContent = 'PG';
+    nameEl.textContent = 'Poczta głos.';
+    statusEl.textContent = formatCzas(sekundy);
+    statusEl.classList.remove('muted');
+    mid.innerHTML =
+      '<textarea class="note" placeholder="Notatka do tej rozmowy…" rows="2"></textarea>' +
+      (klawiatura ? dtmfHtml() : '');
+    bottom.innerHTML = audioHtml() + hangupHtml(null);
+  } else {
+    avatar.textContent = '46';
+    nameEl.textContent = '57575446';
+    statusEl.textContent = '';
+    mid.innerHTML =
+      '<div class="spam">SPAM</div>' +
+      '<div class="opinie-label">OPINIE Z INTERNETU:</div>' +
+      '<div class="opinie">' +
+        '<div class="opinia"><div class="meta"><span>Twoja aplikacja · Dzisiaj</span><span>Zablokowany</span></div>' +
+        '<div class="tresc">Numer został wcześniej dodany do Twojej osobistej bazy spamu.</div></div>' +
+      '</div>' +
+      (smsOpen ? smsHtml() : '');
+    bottom.innerHTML =
+      (smsOpen ? '' :
+        '<div class="chip-row">' +
+          '<button type="button" class="chip" data-act="sms">' + I.msg + ' Wiadomość</button>' +
+          '<button type="button" class="chip" data-act="scisz">' + I.muteR + ' Ścisz</button>' +
+        '</div>') +
+      '<div class="slider" id="slider"><div class="slider-knob" id="knob">' + I.phone + '</div></div>';
+  }
+
+  syncAvatarText();
+  wireBottom();
+  if (mode === 'przychodzace') wireSlider();
+  updateTimers();
+}
+
+function audioHtml() {
+  return '<div class="audio-row">' +
+    btn('wycisz', I.mic, wycisz) +
+    btn('bt', I.bt, bt) +
+    btn('glosnik', I.spk, glosnik) +
+    btn('klawiatura', I.pad, klawiatura) +
+  '</div>';
+}
+function btn(act, icon, on) {
+  return '<button type="button" class="opt' + (on ? ' active' : '') + '" data-act="' + act + '">' + icon + '</button>';
+}
+function hangupHtml(label) {
+  if (label != null) return '<button type="button" class="hangup" data-act="hangup">' + label + '</button>';
+  return '<button type="button" class="hangup" data-act="hangup">' + I.hang + '</button>';
+}
+function dtmfHtml() {
+  const keys = '123456789*0#';
+  let h = '<div class="dtmf">';
+  for (const k of keys) h += '<button type="button" data-dtmf="' + k + '">' + k + '</button>';
+  return h + '</div>';
+}
+function smsHtml() {
+  return '<div class="sms-panel"><textarea placeholder="Szybka wiadomość…"></textarea>' +
+    '<div class="sms-actions"><button type="button" data-act="sms-close">Zamknij</button>' +
+    '<button type="button" class="send" data-act="sms-send">Wyślij</button></div></div>';
+}
+
+function wireBottom() {
+  bottom.querySelectorAll('[data-act]').forEach(el => {
+    el.addEventListener('click', () => onAct(el.dataset.act));
+  });
+  mid.querySelectorAll('[data-act]').forEach(el => {
+    el.addEventListener('click', () => onAct(el.dataset.act));
+  });
+  mid.querySelectorAll('[data-dtmf]').forEach(el => {
+    el.addEventListener('click', () => showToast('DTMF: ' + el.dataset.dtmf));
+  });
+}
+
+function onAct(act) {
+  if (act === 'wycisz') { wycisz = !wycisz; render(); }
+  else if (act === 'bt') { bt = !bt; if (bt) glosnik = false; render(); }
+  else if (act === 'glosnik') { glosnik = !glosnik; if (glosnik) bt = false; render(); }
+  else if (act === 'klawiatura') { klawiatura = !klawiatura; render(); }
+  else if (act === 'hangup') {
+    if (mode === 'dzwonienie' && odliczanie > 0) showToast('Anulowano (usuń log)');
+    else showToast('Rozłączono');
+  }
+  else if (act === 'sms') { smsOpen = true; render(); }
+  else if (act === 'sms-close') { smsOpen = false; render(); }
+  else if (act === 'sms-send') { smsOpen = false; showToast('SMS + odrzuć'); setMode('rozmowa'); }
+  else if (act === 'scisz') showToast('Dzwonek ściszony');
+}
+
+function wireSlider() {
+  const slider = document.getElementById('slider');
+  const knob = document.getElementById('knob');
+  if (!slider || !knob) return;
+  const max = 120;
+  let ox = 0, dragging = false;
+
+  const setX = (x) => {
+    ox = Math.max(-max, Math.min(max, x));
+    knob.style.transform = 'translateX(' + ox + 'px)';
+    const p = ox / max;
+    if (p < -0.2) { knob.style.background = 'var(--neon)'; knob.style.color = '#06231A'; }
+    else if (p > 0.2) { knob.style.background = 'var(--czerwony)'; knob.style.color = '#fff'; }
+    else { knob.style.background = '#384740'; knob.style.color = '#fff'; }
+  };
+
+  const end = () => {
+    if (!dragging) return;
+    dragging = false;
+    if (ox <= -0.6 * max) { showToast('Odebrano'); setMode('rozmowa'); }
+    else if (ox >= 0.6 * max) showToast('Odrzucono');
+    setX(0);
+  };
+
+  const pos = (e) => {
+    const t = e.touches ? e.touches[0] : e;
+    return t.clientX;
+  };
+  let startX = 0;
+  knob.addEventListener('mousedown', e => { dragging = true; startX = pos(e) - ox; e.preventDefault(); });
+  knob.addEventListener('touchstart', e => { dragging = true; startX = pos(e) - ox; e.preventDefault(); }, {passive:false});
+  window.addEventListener('mousemove', e => { if (dragging) setX(pos(e) - startX); });
+  window.addEventListener('touchmove', e => { if (dragging) { setX(pos(e) - startX); e.preventDefault(); } }, {passive:false});
+  window.addEventListener('mouseup', end);
+  window.addEventListener('touchend', end);
+}
+
+function updateTimers() {
+  clearInterval(timerId); clearInterval(countdownId);
+  if (mode === 'rozmowa' && uiPhase === 'full') {
+    timerId = setInterval(() => { sekundy++; statusEl.textContent = formatCzas(sekundy); }, 1000);
+  }
+  if (mode === 'dzwonienie') {
+    odliczanie = 3;
+    const hang = bottom.querySelector('.hangup');
+    if (hang) hang.textContent = String(odliczanie);
+    countdownId = setInterval(() => {
+      odliczanie--;
+      const h = bottom.querySelector('.hangup');
+      if (!h) return;
+      if (odliczanie > 0) h.textContent = String(odliczanie);
+      else { clearInterval(countdownId); h.innerHTML = I.hang; }
+    }, 1000);
+  }
+}
+
+function setMode(m) {
+  if (uiPhase === 'dymek' || uiPhase === 'minimizing' || uiPhase === 'returning') exitDymekInstant();
+  mode = m;
+  smsOpen = false;
+  klawiatura = false;
+  if (m === 'rozmowa') sekundy = 34;
+  render();
+  resetFlyToCenter();
+}
+
+/* ===== Dymek / minimalizacja =====
+   1) Ciągniesz → awatar IDZIE Z MYSZKĄ (x,y), ekran gaśnie, awatar maleje.
+   2) Puszczasz → dopiero wtedy SPRĘŻYNA do prawej (albo powrót na środek).
+   3) Dymek możesz swobodnie przeciągać; po puszczeniu przykleja się L/P.
+   4) Klik (bez ruchu) → ładna animacja powrotu ekranu rozmowy.
+*/
+function resetFlyToCenter() {
+  const c = centerCall();
+  x = c.x; y = c.y; s = 1; krycie = 1;
+  uiPhase = 'full';
+  wallpaper.classList.remove('show');
+  shell.classList.remove('hidden');
+  tlo.classList.remove('hidden');
+  avatarWrap.style.visibility = 'visible';
+  flyAvatar.classList.remove('visible');
+  setShellOpacity(1);
+  paintFly();
+}
+
+function enterMinimizeGesture() {
+  if (mode !== 'rozmowa' || uiPhase !== 'full') return false;
+  uiPhase = 'minimizing';
+  syncAvatarText();
+  const c = centerCall();
+  x = c.x; y = c.y; s = 1;
+  avatarWrap.style.visibility = 'hidden';
+  flyAvatar.classList.add('visible');
+  paintFly();
+  return true;
+}
+
+function finishZwin() {
+  /* Po puszczeniu: animacja do prawej krawędzi (domyślnie góra-prawo) */
+  const a = edgeAnchor(x, y);
+  /* jeśli puszczono nisko, i tak dociągnij do prawej, Y zachowaj w granicach */
+  const cel = { x: phone.clientWidth - M - DYM / 2, y: a.y };
+  animateSpring(cel.x, cel.y, skalaDymka, 0, 480, 0.32, () => {
+    uiPhase = 'dymek';
+    s = skalaDymka;
+    setShellOpacity(0);
+    wallpaper.classList.add('show');
+    shell.classList.add('hidden');
+    tlo.classList.add('hidden');
+    paintFly();
+  });
+}
+
+function finishWroc() {
+  const c = centerCall();
+  animateSpring(c.x, c.y, 1, 1, 420, 0.35, () => {
+    uiPhase = 'full';
+    avatarWrap.style.visibility = 'visible';
+    flyAvatar.classList.remove('visible');
+    setShellOpacity(1);
+  });
+}
+
+function returnFromDymek() {
+  if (uiPhase !== 'dymek') return;
+  uiPhase = 'returning';
+  /* Pokaż ekran pod spodem od razu (opacity 0) i animuj fade + awatar */
+  shell.classList.remove('hidden');
+  tlo.classList.remove('hidden');
+  wallpaper.classList.remove('show');
+  setShellOpacity(0);
+  krycie = 0;
+  flyAvatar.classList.add('visible');
+  avatarWrap.style.visibility = 'hidden';
+  const c = centerCall();
+  animateSpring(c.x, c.y, 1, 1, 560, 0.38, () => {
+    uiPhase = 'full';
+    avatarWrap.style.visibility = 'visible';
+    flyAvatar.classList.remove('visible');
+    setShellOpacity(1);
+    updateTimers();
+  });
+}
+
+function exitDymekInstant() {
+  if (animRaf) { cancelAnimationFrame(animRaf); animRaf = null; }
+  shell.classList.remove('hidden');
+  tlo.classList.remove('hidden');
+  wallpaper.classList.remove('show');
+  resetFlyToCenter();
+}
+
+let animRaf = null;
+function animateSpring(tx, ty, ts, tk, dur, back, done) {
+  if (animRaf) cancelAnimationFrame(animRaf);
+  const fx = x, fy = y, fs = s, fk = krycie;
+  const t0 = performance.now();
+  const c1 = 1.70158 + back, c3 = c1 + 1;
+  const ease = (e) => 1 + c3 * Math.pow(e - 1, 3) + c1 * Math.pow(e - 1, 2);
+  function step(now) {
+    const e = Math.min(1, (now - t0) / dur);
+    const p = ease(e);
+    x = fx + (tx - fx) * p;
+    y = fy + (ty - fy) * p;
+    s = fs + (ts - fs) * Math.min(1, e);
+    krycie = fk + (tk - fk) * Math.min(1, e);
+    paintFly();
+    setShellOpacity(krycie);
+    if (e < 1) animRaf = requestAnimationFrame(step);
+    else { animRaf = null; x = tx; y = ty; s = ts; krycie = tk; paintFly(); setShellOpacity(tk); if (done) done(); }
+  }
+  animRaf = requestAnimationFrame(step);
+}
+
+let drag = null;
+
+phone.addEventListener('pointerdown', (e) => {
+  if (uiPhase === 'returning') return;
+
+  if (uiPhase === 'dymek') {
+    const p = localPos(e);
+    /* Hit-test względem wizualnego środka (uwzględnia scale) */
+    if (Math.hypot(p.x - x, p.y - y) > DYM * 0.75) return;
+    e.preventDefault();
+    drag = {
+      kind: 'dymek',
+      moved: false,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      offX: x - p.x,
+      offY: y - p.y
+    };
+    phone.setPointerCapture(e.pointerId);
+    return;
+  }
+
+  if (mode !== 'rozmowa' || uiPhase !== 'full') return;
+  if (e.target.closest('textarea, input, button, .note, .dtmf, .audio-row, .hangup')) return;
+  drag = {
+    kind: 'min',
+    startY: e.clientY,
+    startX: e.clientX,
+    dy: 0,
+    origin: centerCall()
+  };
+  phone.setPointerCapture(e.pointerId);
+});
+
+phone.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+
+  if (drag.kind === 'dymek') {
+    const p = localPos(e);
+    const dx = e.clientX - drag.startClientX;
+    const dy = e.clientY - drag.startClientY;
+    if (Math.hypot(dx, dy) > 8) drag.moved = true;
+    const w = phone.clientWidth, h = phone.clientHeight;
+    x = Math.min(w - DYM / 2, Math.max(DYM / 2, p.x + drag.offX));
+    y = Math.min(h - DYM / 2, Math.max(46 + DYM / 2, p.y + drag.offY));
+    s = skalaDymka;
+    paintFly();
+    return;
+  }
+
+  if (drag.kind === 'min') {
+    const raw = Math.max(0, e.clientY - drag.startY);
+    drag.dy = raw;
+    if (raw > 6 && uiPhase === 'full') enterMinimizeGesture();
+    if (uiPhase !== 'minimizing') return;
+
+    /* Awatar ŚLEDZI MYSZKĘ — bez automatycznego lotu w prawo */
+    const p = localPos(e);
+    const h = phone.clientHeight * 0.6;
+    const visY = gumowy(raw, h);
+    const prog = Math.min(1, Math.max(0, visY / h));
+    x = p.x;
+    y = drag.origin.y + visY;
+    s = 1 - (1 - skalaDymka) * prog;
+    krycie = 1 - prog;
+    paintFly();
+    setShellOpacity(krycie);
+  }
+});
+
+function endDrag() {
+  if (!drag) return;
+  const d = drag;
+  drag = null;
+
+  if (d.kind === 'dymek') {
+    if (!d.moved) {
+      returnFromDymek();
+    } else {
+      const a = edgeAnchor(x, y);
+      animateSpring(a.x, a.y, skalaDymka, 0, 380, 0.28, () => { uiPhase = 'dymek'; });
+    }
+    return;
+  }
+
+  if (d.kind === 'min' && uiPhase === 'minimizing') {
+    const h = phone.clientHeight * 0.6;
+    const prog = Math.min(1, Math.max(0, gumowy(d.dy, h) / h));
+    if (prog >= 0.45) finishZwin();
+    else finishWroc();
+  }
+}
+
+phone.addEventListener('pointerup', endDrag);
+phone.addEventListener('pointercancel', () => {
+  if (drag && drag.kind === 'min' && uiPhase === 'minimizing') {
+    drag = null;
+    finishWroc();
+  } else {
+    endDrag();
+  }
+});
+
+document.getElementById('toolbar').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-mode]');
+  if (!b) return;
+  setMode(b.dataset.mode);
+});
+
+/* zegar */
+setInterval(() => {
+  const d = new Date();
+  document.getElementById('clock').textContent =
+    String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+}, 1000);
+
+render();
+resetFlyToCenter(false);
+</script>
+</body>
+</html>

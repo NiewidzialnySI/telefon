@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prototyp — ekran rozmowy i dymek (1:1 ze zrzutu)</title>
+<style>
+  * { box-sizing:border-box; -webkit-user-select:none; user-select:none; touch-action:none; }
+  html,body { margin:0; height:100%; background:#191c22; overflow:hidden; }
+
+  /* ŚRODOWISKO: symulacja ekranu telefonu */
+  .phone {
+    position:relative; width:360px; height:780px; margin:8px auto;
+    border:2px solid #2b3038; border-radius:28px;
+    box-shadow:0 10px 28px rgba(0,0,0,.5);
+    background:#000; overflow:hidden; touch-action:none;
+  }
+
+  /* PASEK STATUSU / powiadomień na górze (~46px) — jak na zrzucie */
+  .statusbar {
+    position:absolute; top:0; left:0; right:0; height:46px; z-index:300;
+    background:rgba(0,0,0,.35); color:#dfe2e8; font:12px/46px system-ui;
+    padding:0 10px;
+  }
+  .statusbar .t { opacity:.9; }
+  .statusbar .r { position:absolute; right:10px; font-size:11px; }
+  .statusbar span.b { color:#69F0AE; }
+
+  /* ============================================================
+     EKRAN ROZMOWY — 1:1 ze zrzutu (Poczta głos. 00:03)
+     ============================================================ */
+  .call {
+    position:absolute; inset:0; background:#000; z-index:100;
+    will-change:opacity;
+  }
+  .call .halo {   /* zielona poświata pod awatarem (200px) */
+    position:absolute; left:50%; top:162px; width:200px; height:200px;
+    transform:translate(-50%,-50%);
+    background:radial-gradient(circle, rgba(74,218,128,.24), rgba(74,218,128,.06), transparent 68%);
+    border-radius:50%;
+  }
+  .call .avatar { /* okrągły awatar 124px z inicjałami */
+    position:absolute; left:50%; top:162px; width:124px; height:124px;
+    transform:translate(-50%,-50%);
+    background:radial-gradient(circle, #12362A, #081A14);
+    border:2px solid rgba(74,218,128,.50);
+    border-radius:50%;
+    color:#69F0AE; font:600 40px system-ui;
+    line-height:124px; text-align:center;
+  }
+  .call .name {
+    position:absolute; left:50%; top:230px; transform:translateX(-50%);
+    color:#fff; font:600 25px system-ui; white-space:nowrap;
+  }
+  .call .counter {
+    position:absolute; left:50%; top:262px; transform:translateX(-50%);
+    color:#69F0AE; font:500 15px system-ui; letter-spacing:1.4px;
+  }
+  .call .note {   /* pole "Notatka do tej rozmowy…" */
+    position:absolute; left:24px; right:24px; top:350px; height:46px;
+    border:1px solid rgba(255,255,255,.15); border-radius:14px;
+    background:rgba(255,255,255,.03);
+    color:rgba(255,255,255,.35); font:400 13px system-ui; padding:0 12px;
+    line-height:46px;
+  }
+  .call .ctrlrow { /* 4 przyciski: wycisz, BT, głośnik, klawiatura */
+    position:absolute; left:0; right:0; top:414px; height:70px;
+  }
+  .call .cbtn {
+    width:56px; height:56px; border-radius:50%;
+    background:#1f2937; color:#dfe2e8; font:400 22px system-ui;
+    line-height:56px; text-align:center;
+  }
+  .call .end {   /* czerwone rozłącz */
+    position:absolute; left:50%; top:588px; transform:translateX(-50%);
+    width:74px; height:74px; border-radius:50%; background:#E0333F; color:#fff;
+    font:500 26px system-ui; line-height:74px; text-align:center;
+  }
+
+  /* ============================================================
+     DYMEK = awatar 64dp przyklejony do krawędzi. JEDEN obiekt .target
+     jest śledzony przez JS — ekran i dymek dzielą ten sam punkt
+     zaczepienia, więc NIE MA "przeskoku", że dymek pojawia się
+     gdzie indziej niż pokazuje animacja.
+     ============================================================ */
+  .target {
+    position:absolute; left:0; top:0; width:124px; height:124px; z-index:200;
+    will-change:transform; touch-action:none;
+  }
+  .target .tavatar {
+    position:absolute; left:50%; top:50%; width:124px; height:124px;
+    transform:translate(-50%,-50%) scale(var(--s,1));
+    border-radius:50%;
+    background:radial-gradient(circle, #12362A, #081A14);
+    border:2px solid rgba(74,218,128,.50);
+    color:#69F0AE; font:600 34px system-ui; line-height:86px; text-align:center;
+  }
+</style>
+</head>
+<body>
+
+<div class="phone" id="phone">
+  <div class="statusbar">
+    <span class="t">13:57</span>
+    <span class="r">▂ ▂ ▂  <span class="b">LTE</span>  ▮▮  75%</span>
+  </div>
+
+  <!-- EKRAN ROZMOWY -->
+  <div class="call" id="call">
+    <div class="halo"></div>
+    <div class="avatar">PG</div>
+    <div class="name">Poczta głos.</div>
+    <div class="counter">00:03</div>
+    <div class="note">Notatka do tej rozmowy…</div>
+    <div class="ctrlrow">
+      <div class="cbtn" style="left:16px;top:0">⌁</div>
+      <div class="cbtn" style="left:104px;top:0">✆◈</div>
+      <div class="cbtn" style="left:192px;top:0">▷</div>
+      <div class="cbtn" style="left:280px;top:0">#</div>
+    </div>
+    <div class="end">✆</div>
+  </div>
+
+  <!-- DYMEK (ten sam awatar, przyklejany do krawędzi) -->
+  <div class="target" id="target"><div class="tavatar" id="tavatar">PG</div></div>
+</div>
+
+<script>
+"use strict";
+/* ================================================================
+   ZACHOWANIE (odpowiada implementacji Kotlin/Compose):
+    1. Awatar ma JEDEN punkt zaczepienia (x,y) — ekran i dymek to ten
+       sam obiekt, więc nie ma przeskoku pozycji.
+    2. Przeciągnij awatar w dół → ekran gaśnie, awatar kurczy się.
+    3. Puść → awatar leci SPRĘŻYNĄ do BLIŻSZEJ krawędzi (lewo/prawo)
+       i przykleja się na tej samej osi Y.
+    4. Dymek przeciągasz swobodnie; po puszczeniu przykleja się do
+       bliższej krawędzi (lewo/prawo).
+    5. Klik (bez ruchu) → awatar wraca na środek, ekran wraca.
+   ================================================================ */
+
+const P = document.getElementById('phone');
+const call = document.getElementById('call');
+const tgt  = document.getElementById('target');
+
+const W = P.clientWidth, H = P.clientHeight;
+const AV = 124, DYM = 64, M = 12;   // rozmiary i margines
+const CY = 162;                     // oś Y środka awatara na ekranie
+
+let x = W/2, y = CY, s = 1;         // środek + skala
+let mode = 'call';                  // 'call' | 'dymek'
+let dragging = false, moved = false;
+let gdx = 0, gdy = 0, dx0 = 0, dy0 = 0;
+let raf = null;
+
+function paint(){
+  tgt.style.transform = `translate(${x}px,${y}px) translate(-50%,-50%) scale(${s})`;
+}
+function clamp(v,a,b){ return Math.min(b, Math.max(a,v)); }
+
+/* Sprężyna (easeOutBack) do (tx,ty); skala leci do DYM/AV. */
+function spring(tx, ty, dur, back){
+  if (raf) cancelAnimationFrame(raf);
+  const fx = x, fy = y, fs = s;
+  const start = performance.now();
+  const c1 = 1.70158 + (back*1.0), c3 = c1 + 1;
+  raf = requestAnimationFrame(function step(now){
+    const e = Math.min(1, (now - start)/dur);
+    const eo = 1 + c3*Math.pow(e-1,3) + c1*Math.pow(e-1,2);
+    x = fx + (tx - fx)*eo;
+    y = fy + (ty - fy)*eo;
+    s = fs + ((DYM/AV) - fs)*eo;
+    paint();
+    if (e < 1) raf = requestAnimationFrame(step);
+    else { raf = null; snapEdge(); }
+  });
+}
+
+function nearestSide(cx){ return cx < W/2 ? 'left' : 'right'; }
+/* Punkt przyklejenia: krawędź lewa/prawa na tej samej osi Y. */
+function edgeAnchor(cx, cy){
+  return {
+    x: nearestSide(cx) === 'right' ? W - M - DYM/2 : M + DYM/2,
+    y: clamp(cy, 46 + DYM/2, H - DYM/2)
+  };
+}
+function snapEdge(){ const a = edgeAnchor(x,y); x=a.x; y=a.y; s = DYM/AV; paint(); }
+
+function onUpPos(){
+  if (!dragging) return;
+  dragging = false;
+  if (!moved){ returnToCall(); return; }
+  const a = edgeAnchor(x, y);
+  spring(a.x, a.y, 430, 0.30);
+  mode = 'dymek';
+  call.style.display = 'none';
+  call.style.opacity = '1';
+}
+
+function returnToCall(){
+  dragging = false; moved = false;
+  if (call.style.display !== 'block'){ call.style.display = 'block'; call.style.opacity = '0'; }
+  spring(W/2, CY, 500, 0.35);
+  setTimeout(()=>{ mode = 'call'; call.style.opacity = '1'; }, 160);
+}
+
+function coords(e){ const r = P.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+function onDown(pos){
+  dragging = true; moved = false;
+  gdx = x - pos.x; gdy = y - pos.y;
+  dx0 = pos.x; dy0 = pos.y;
+}
+function onMove(pos){
+  if (!dragging) return;
+  if (!moved && Math.hypot(pos.x - dx0, pos.y - dy0) < 6) return;
+  moved = true;
+  x = clamp(pos.x + gdx, M + DYM/2, W - M - DYM/2);
+  y = clamp(pos.y + gdy, 46 + DYM/2, H - DYM/2);
+  const prog = clamp((pos.y - dy0) / (H*0.6), 0, 1);
+  s = 1 - (1 - DYM/AV) * prog;
+  paint();
+  if (mode === 'call') call.style.opacity = String(1 - prog);
+}
+function onUp(){ onUpPos(); }
+
+function pe(e){ e.preventDefault(); e.stopPropagation(); }
+P.addEventListener('mousedown', e=>{ pe(e); onDown(coords(e)); });
+P.addEventListener('mousemove', e=>{ pe(e); onMove(coords(e)); });
+window.addEventListener('mouseup', onUp);
+P.addEventListener('touchstart', e=>{ pe(e); onDown(e.touches[0] || e); }, {passive:false});
+P.addEventListener('touchmove',  e=>{ pe(e); onMove(e.touches[0] || e); }, {passive:false});
+P.addEventListener('touchend',  onUp);
+
+paint();
+</script>
+</body>
+</html>

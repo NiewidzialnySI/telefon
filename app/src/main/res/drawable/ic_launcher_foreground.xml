@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!--
+        Nowy symbol marki: ciemnozielony rdzeń z jasnym obrysem, kropka źródłowa
+        i trzy fale. Ta sama forma co animowane logo na ekranie powitalnym.
+        Tło ikony jest czarne, więc symbol idzie w jasnej zieleni.
+        Rysunek mieści się w safe zone 66dp z 108dp (adaptive icon).
+    -->
+
+    <!-- Rdzeń: koło średnicy 46, wyśrodkowane w punkcie 54,54 -->
+    <path
+        android:fillColor="#0B3D2E"
+        android:strokeColor="#00E676"
+        android:strokeWidth="2.4"
+        android:pathData="M54,54m-23,0a23,23 0 1,0 46,0a23,23 0 1,0 -46,0" />
+
+    <!-- Kropka źródłowa fali — środek rdzenia -->
+    <path
+        android:fillColor="#69F0AE"
+        android:pathData="M54,54m-4.6,0a4.6,4.6 0 1,0 9.2,0a4.6,4.6 0 1,0 -9.2,0" />
+
+    <!-- Fala wewnętrzna -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#69F0AE"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:pathData="M60,47.6 A 8.6,8.6 0 0 1 60,60.4" />
+
+    <!-- Fala środkowa -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#69F0AE"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:pathData="M63.4,42.6 A 14.4,14.4 0 0 1 63.4,65.4" />
+
+    <!-- Fala zewnętrzna -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#00E676"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:pathData="M66.8,37.6 A 20.2,20.2 0 0 1 66.8,70.4" />
+</vector>

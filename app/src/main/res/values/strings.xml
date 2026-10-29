@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Telefon</string>
+    <string name="welcome_title">Telefon</string>
+    <string name="welcome_start">Rozpocznij</string>
+    <string name="welcome_logo_description">Logo aplikacji Telefon</string>
+    <string name="welcome_subtitle">Połączenia, wiadomości i kontakty w jednym miejscu</string>
+</resources>

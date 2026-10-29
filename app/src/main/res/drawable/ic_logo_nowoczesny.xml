@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Nowoczesne logo: ciemne koło z falami dźwięku wychodzącymi z kropki.
+     Kolory z palety zielono-czarnej: #0B3D2E (ciemny zielony) i #00C853 (jasny zielony). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Tło: ciemne koło -->
+    <path
+        android:fillColor="#FF0B3D2E"
+        android:pathData="M12,12m-12,0a12,12 0 1,0 24,0a12,12 0 1,0 -24,0" />
+    <!-- Środkowa kropka -->
+    <path
+        android:fillColor="#FF00C853"
+        android:pathData="M8.5,12m-1.8,0a1.8,1.8 0 1,0 3.6,0a1.8,1.8 0 1,0 -3.6,0" />
+    <!-- Wewnętrzna fala -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF00C853"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:pathData="M11.68,8.82 A4.5,4.5 0 0 1 11.68,15.18" />
+    <!-- Zewnętrzna fala -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FF00C853"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:pathData="M13.8,6.7 A7.5,7.5 0 0 1 13.8,17.3" />
+</vector>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Zielone kółko własnego dymka rozmowy; przezroczysta nakładka wokół niego. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <gradient
+        android:startColor="#2E7D5B"
+        android:centerColor="#1FA963"
+        android:endColor="#12B351"
+        android:angle="315" />
+    <stroke
+        android:width="2dp"
+        android:color="#B0FFE3" />
+</shape>
