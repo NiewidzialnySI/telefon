@@ -72,6 +72,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -97,6 +98,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -112,10 +114,14 @@ import dialer.dominik.pl.data.BazaSpamu
 import dialer.dominik.pl.call.NotatkiRozmow
 import dialer.dominik.pl.ui.components.IkonyAplikacji
 import dialer.dominik.pl.ui.theme.CzerwonyPolaczenia
+import dialer.dominik.pl.ui.theme.MglaNaPrzycisku
+import dialer.dominik.pl.ui.theme.CzcionkiWiedzmina
+import dialer.dominik.pl.ui.theme.MotywStan
 import dialer.dominik.pl.ui.theme.ZielonyGleboki
 import dialer.dominik.pl.ui.theme.ZielonyMorski
 import dialer.dominik.pl.ui.theme.ZielonyNeon
 import dialer.dominik.pl.ui.theme.gradientKafelka
+import dialer.dominik.pl.ui.theme.tloSrebrnyPolysk
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -142,6 +148,8 @@ internal fun GrupaPolaczenKarta(
     val formatDaty = remember { SimpleDateFormat("d MMM, HH:mm", Locale.getDefault()) }
     val context = LocalContext.current
     val paletaMotywu = dialer.dominik.pl.ui.theme.LocalMotyw.current
+    val motywStan by MotywStan.stan.collectAsState()
+    val mglaWiedzmina = motywStan.paletaId == "wiedzmin"
     val ksztaltKafla = RoundedCornerShape(paletaMotywu.promienKafla.dp)
     // Pseudonim ustawiony w tej aplikacji (po nazwie z dziennika). Jeśli jest,
             // pokazujemy go zamiast nazwy systemowej — np. „Luluś" zamiast „Emilka Kowalska".
@@ -251,22 +259,17 @@ internal fun GrupaPolaczenKarta(
             }
         }
 
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                                .graphicsLayer {
-                                    // graphicsLayer zamiast offset: przy przeciąganiu przesuwana jest
-                                    // warstwa renderowania, bez ponownego layoutu/recomposition treści
-                                    // (w tym 10 wpisów) — to eliminuje lag podczas gestu Ukryj/Spam.
-                                    translationX = zasieg
-                                }
+                .graphicsLayer {
+                    // graphicsLayer zamiast offset: przy przeciąganiu przesuwana jest
+                    // warstwa renderowania, bez ponownego layoutu/recomposition treści
+                    // (w tym 10 wpisów) — to eliminuje lag podczas gestu Ukryj/Spam.
+                    translationX = zasieg
+                }
                 .clip(ksztaltKafla)
-                .background(paletaMotywu.gradientKafelka())
-                .border(
-                    1.dp,
-                    paletaMotywu.kafelekRamka,
-                    ksztaltKafla
-                )
+                .border(1.dp, paletaMotywu.kafelekRamka, ksztaltKafla)
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures(
                         onDragEnd = {
@@ -285,6 +288,23 @@ internal fun GrupaPolaczenKarta(
                     )
                 }
         ) {
+            // Tło kafelka — lekko prześwitujące przy Wiedźminie, żeby widać było film + mgłę
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .background(
+                        paletaMotywu.gradientKafelka(
+                            alfaGora = if (mglaWiedzmina) 0.82f else 1f
+                        )
+                    )
+            )
+            Column(modifier = Modifier.fillMaxWidth()) {
+            // Mgła tylko na głównym wierszu — rozwinięta lista bez animacji chmur
+            Box(Modifier.fillMaxWidth()) {
+                if (mglaWiedzmina) {
+                    // lekka=true: Canvas zamiast GIF na każdym wierszu historii
+                    MglaNaPrzycisku(Modifier.matchParentSize(), sila = 0.9f, seed = 3, lekka = true)
+                }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -298,11 +318,20 @@ internal fun GrupaPolaczenKarta(
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                                                    text = pseudonim ?: grupa.nazwa ?: grupa.numer,
-                                                    color = paletaMotywu.naTle,
-                                                    fontSize = 16.sp,
-                                                    fontWeight = FontWeight.Medium
-                                                )
+                            text = pseudonim ?: grupa.nazwa ?: grupa.numer,
+                            color = Color(0xFFF2F4F7),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            // Handvetica tylko na nazwy; sam numer = system (czytelne cyfry)
+                            fontFamily = when {
+                                !mglaWiedzmina -> null
+                                !pseudonim.isNullOrBlank() || !grupa.nazwa.isNullOrBlank() ->
+                                    CzcionkiWiedzmina.HelveticaNeue
+                                else -> FontFamily.Default
+                            },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                         if (grupa.liczba > 1) {
                             Spacer(Modifier.width(8.dp))
                             Box(
@@ -319,6 +348,18 @@ internal fun GrupaPolaczenKarta(
                                 )
                             }
                         }
+                    }
+                    if (mglaWiedzmina && !grupa.nazwa.isNullOrBlank() && grupa.numer.isNotBlank()) {
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = grupa.numer,
+                            color = Color(0xFFE8EAEE),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            fontFamily = FontFamily.Default,
+                            letterSpacing = 0.6.sp,
+                            maxLines = 1
+                        )
                     }
                     Spacer(Modifier.height(4.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -342,13 +383,19 @@ internal fun GrupaPolaczenKarta(
                         modifier = Modifier
                             .size(38.dp)
                             .clip(CircleShape)
-                            .background(
-                                Brush.horizontalGradient(
-                                    colors = listOf(
-                                        ZielonyMorski.copy(alpha = 0.22f),
-                                        ZielonyNeon.copy(alpha = 0.30f)
+                            .then(
+                                if (mglaWiedzmina) {
+                                    Modifier.tloSrebrnyPolysk(CircleShape, animuj = false)
+                                } else {
+                                    Modifier.background(
+                                        Brush.horizontalGradient(
+                                            colors = listOf(
+                                                ZielonyMorski.copy(alpha = 0.22f),
+                                                ZielonyNeon.copy(alpha = 0.30f)
+                                            )
+                                        )
                                     )
-                                )
+                                }
                             )
                             .clickable(onClick = onZadzwon),
                         contentAlignment = Alignment.Center
@@ -356,7 +403,7 @@ internal fun GrupaPolaczenKarta(
                         Icon(
                             imageVector = IkonyAplikacji.TelefonLogo,
                             contentDescription = "Zadzwoń",
-                            tint = ZielonyNeon,
+                            tint = if (mglaWiedzmina) Color(0xFF1A1C1E) else ZielonyNeon,
                             modifier = Modifier.size(22.dp)
                         )
                     }
@@ -364,19 +411,26 @@ internal fun GrupaPolaczenKarta(
                         modifier = Modifier
                             .size(40.dp)
                             .clip(CircleShape)
-                            .background(paletaMotywu.naTle.copy(alpha = 0.08f))
+                            .then(
+                                if (mglaWiedzmina) {
+                                    Modifier.tloSrebrnyPolysk(CircleShape, animuj = false)
+                                } else {
+                                    Modifier.background(paletaMotywu.naTle.copy(alpha = 0.08f))
+                                }
+                            )
                             .clickable { onWiadomosc(grupa.numer) },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = IkonyAplikacji.Wiadomosc,
                             contentDescription = "Napisz wiadomość",
-                            tint = paletaMotywu.naTle.copy(alpha = 0.65f),
+                            tint = if (mglaWiedzmina) Color(0xFF1A1C1E) else paletaMotywu.naTle.copy(alpha = 0.65f),
                             modifier = Modifier.size(20.dp)
                         )
                     }
                 }
             }
+            } // Box nagłówka z mgłą
 
             AnimatedVisibility(visible = rozwinieta) {
                 Column(modifier = Modifier.fillMaxWidth()) {
@@ -527,7 +581,8 @@ internal fun GrupaPolaczenKarta(
                     }
                 }
             }
-        }
+            } // Column treści kafelka
+        } // Box kafelka (tło + mgła + treść)
     }
 
     val edycja = edycjaNotatki

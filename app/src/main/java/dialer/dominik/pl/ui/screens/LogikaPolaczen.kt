@@ -179,6 +179,18 @@ internal fun ustawJakoDomyslnyDialer(context: Context) {
 internal fun wykonajPolaczenie(context: Context, numer: String) {
     if (numer.isBlank()) return
 
+    // Easter eggi — fejkowe połączenia (bez prawdziwego placeCall).
+    when {
+        dialer.dominik.pl.call.FejkowePolaczenieJp2.czyNumer(numer) -> {
+            dialer.dominik.pl.call.FejkowePolaczenieJp2.uruchom(context)
+            return
+        }
+        dialer.dominik.pl.call.FejkowePolaczenie420.czyNumer(numer) -> {
+            dialer.dominik.pl.call.FejkowePolaczenie420.uruchom(context)
+            return
+        }
+    }
+
     StanPolaczenia.rozmowca = numer
         StanPolaczenia.numerRozmowy = numer
         StanPolaczenia.czyPrzychodzace = false

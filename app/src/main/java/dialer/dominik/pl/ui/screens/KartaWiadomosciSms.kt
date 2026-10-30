@@ -36,7 +36,10 @@ import dialer.dominik.pl.ui.components.LogoAnimowane
 import dialer.dominik.pl.ui.theme.CzerwonyPolaczenia
 import dialer.dominik.pl.ui.theme.ZielonyMorski
 import dialer.dominik.pl.ui.theme.NaPrzycisku
+import dialer.dominik.pl.ui.theme.Pergamin
 import dialer.dominik.pl.ui.theme.ZielonyNeon
+import dialer.dominik.pl.ui.theme.czyMotywWiedzmin
+import dialer.dominik.pl.ui.theme.motywAkcent
 import dialer.dominik.pl.ui.theme.gradientKafelka
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -96,6 +99,10 @@ internal fun KartaWiadomosciNowoczesna(
     szukanaFraza: String? = null,
     modifier: Modifier = Modifier
 ) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
+
     val context = androidx.compose.ui.platform.LocalContext.current
     val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
     val wychodzaca = wpis.type == Telephony.Sms.MESSAGE_TYPE_SENT ||
@@ -160,7 +167,11 @@ internal fun KartaWiadomosciNowoczesna(
                         url = urlOrAction,
                         styles = androidx.compose.ui.text.TextLinkStyles(
                             style = androidx.compose.ui.text.SpanStyle(
-                                color = if (wychodzaca) Color(0xFF033023) else ZielonyNeon,
+                                color = when {
+                                    wychodzaca && wiedzmin -> Pergamin.Atrament
+                                    wychodzaca -> Color(0xFF033023)
+                                    else -> akcent
+                                },
                                 textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
                                 fontWeight = FontWeight.Medium
                             )
@@ -245,21 +256,37 @@ internal fun KartaWiadomosciNowoczesna(
                     .then(
                         if (wychodzaca)
                             Modifier.background(
-                                if (stanWysylki == StanWysylki.BLAD)
-                                    Brush.horizontalGradient(listOf(Color(0xFF5A1A1A), Color(0xFF8B2E2E)))
-                                else
-                                    Brush.horizontalGradient(listOf(ZielonyMorski, ZielonyNeon))
+                                when {
+                                    stanWysylki == StanWysylki.BLAD ->
+                                        Brush.horizontalGradient(listOf(Color(0xFF5A1A1A), Color(0xFF8B2E2E)))
+                                    wiedzmin ->
+                                        Brush.horizontalGradient(
+                                            listOf(Pergamin.Papier, Pergamin.PapierCiemny, Pergamin.Zloto.copy(alpha = 0.85f))
+                                        )
+                                    else ->
+                                        Brush.horizontalGradient(listOf(akcentMorski, akcent))
+                                }
                             )
                         else
                             Modifier.background(
-                                dialer.dominik.pl.ui.theme.LocalMotyw.current.gradientKafelka()
+                                if (wiedzmin) {
+                                    Brush.verticalGradient(
+                                        listOf(Color(0xFF1A1C20), Color(0xFF12141A))
+                                    )
+                                } else {
+                                    dialer.dominik.pl.ui.theme.LocalMotyw.current.gradientKafelka()
+                                }
                             )
+                                .then(
+                                    if (wiedzmin) Modifier.border(1.dp, Pergamin.Zloto.copy(alpha = 0.28f), RoundedCornerShape(18.dp))
+                                    else Modifier
+                                )
                     )
                     .then(
-                        if (podswietlonaGlowna) Modifier.border(2.dp, ZielonyNeon.copy(alpha = ramkaAlpha), RoundedCornerShape(18.dp))
-                        else if (podswietlona) Modifier.border(1.5.dp, ZielonyNeon.copy(alpha = 0.55f), RoundedCornerShape(18.dp))
-                        else if (przypieta && wychodzaca) Modifier.border(1.dp, ZielonyNeon.copy(alpha = 0.4f), RoundedCornerShape(18.dp))
-                        else if (przypieta) Modifier.border(1.dp, ZielonyNeon.copy(alpha = 0.4f), RoundedCornerShape(18.dp))
+                        if (podswietlonaGlowna) Modifier.border(2.dp, akcent.copy(alpha = ramkaAlpha), RoundedCornerShape(18.dp))
+                        else if (podswietlona) Modifier.border(1.5.dp, akcent.copy(alpha = 0.55f), RoundedCornerShape(18.dp))
+                        else if (przypieta && wychodzaca) Modifier.border(1.dp, akcent.copy(alpha = 0.4f), RoundedCornerShape(18.dp))
+                        else if (przypieta) Modifier.border(1.dp, akcent.copy(alpha = 0.4f), RoundedCornerShape(18.dp))
                         else Modifier
                     )
                     .combinedClickable(
@@ -307,6 +334,7 @@ internal fun KartaWiadomosciNowoczesna(
                         // Podświetlenie rozjaśnia tło — wybielamy tekst, by był czytelny.
                         color = when {
                             podswietlona -> Color.White
+                            wychodzaca && wiedzmin -> Pergamin.Atrament
                             wychodzaca -> NaPrzycisku
                             else -> dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle
                         },
@@ -362,6 +390,10 @@ internal fun ListRowMenu(tekst: String, ikona: androidx.compose.ui.graphics.vect
  * - Błąd — wysyłka lub niedostarczenie
  */
 internal fun StatusWysylkiWskaznik(stan: StanWysylki) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
+
     when (stan) {
         StanWysylki.WYSYLANIE -> {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -371,7 +403,7 @@ internal fun StatusWysylkiWskaznik(stan: StanWysylki) {
                     pokazPierscien = false,
                     trybLekki = true
                 )
-                Text("Wysyłanie…", color = ZielonyNeon.copy(alpha = 0.7f), fontSize = 10.sp)
+                Text("Wysyłanie…", color = akcent.copy(alpha = 0.7f), fontSize = 10.sp)
             }
         }
         StanWysylki.WYSŁANO -> {
@@ -382,7 +414,7 @@ internal fun StatusWysylkiWskaznik(stan: StanWysylki) {
             )
         }
         StanWysylki.DOSTARCZONO -> {
-            Text("Dostarczono ✓✓", color = ZielonyNeon.copy(alpha = 0.85f), fontSize = 10.sp)
+            Text("Dostarczono ✓✓", color = akcent.copy(alpha = 0.85f), fontSize = 10.sp)
         }
         StanWysylki.BLAD -> {
             Text("Nie dostarczono", color = CzerwonyPolaczenia.copy(alpha = 0.9f), fontSize = 10.sp)

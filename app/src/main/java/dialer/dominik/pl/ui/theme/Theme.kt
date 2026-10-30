@@ -66,6 +66,9 @@ fun TelefonTheme(
             }
         }
 
+        val typografia = remember(stan.paletaId) {
+            if (stan.paletaId == "wiedzmin") typografiaWiedzmina() else Typography
+        }
         DynamicMaterialTheme(
             seedColor = stan.seed,
             useDarkTheme = ciemny,
@@ -76,7 +79,7 @@ fun TelefonTheme(
             // animate=true + pełny overlay = przycinanie; przejście robi circular reveal
             animate = false,
             shapes = KsztaltyAplikacji,
-            typography = Typography,
+            typography = typografia,
             content = {
                 val scheme = MaterialTheme.colorScheme
                 val ekran = LocalEkranMotywu.current

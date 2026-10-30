@@ -85,6 +85,11 @@ import dialer.dominik.pl.ui.theme.CzerwonyPolaczenia
 import dialer.dominik.pl.ui.theme.ZielonyMorski
 import dialer.dominik.pl.ui.theme.NaPrzycisku
 import dialer.dominik.pl.ui.theme.ZielonyNeon
+import dialer.dominik.pl.ui.theme.tloSrebrnyPolysk
+import dialer.dominik.pl.ui.theme.CzcionkiWiedzmina
+import dialer.dominik.pl.ui.theme.MglaNaPrzycisku
+import dialer.dominik.pl.ui.theme.czyMotywWiedzmin
+import dialer.dominik.pl.ui.theme.motywAkcent
 import dialer.dominik.pl.ui.theme.gradientKafelka
 import kotlin.math.roundToInt
 import java.text.SimpleDateFormat
@@ -111,6 +116,9 @@ fun SmsScreen(
 ) {
     val scope = rememberCoroutineScope()
     val paletaSms = dialer.dominik.pl.ui.theme.LocalMotyw.current
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
     var stanEkranu by remember { mutableStateOf<SmsEkranStan>(SmsEkranStan.Skrzynka) }
             // Informatuj MainActivity, czy czat jest otwarty (do schowania dolnego paska w dół).
             LaunchedEffect(stanEkranu) {
@@ -430,7 +438,7 @@ fun SmsScreen(
                                                     Icon(
                                                         imageVector = IkonyAplikacji.Kosz,
                                                         contentDescription = "Wyczyść kody 2FA",
-                                                        tint = ZielonyNeon
+                                                        tint = akcent
                                                     )
                                                 }
                                             }
@@ -442,7 +450,7 @@ fun SmsScreen(
                                                     Icon(
                                                         imageVector = IkonyAplikacji.Archiwum,
                                                         contentDescription = null,
-                                                        tint = ZielonyNeon,
+                                                        tint = akcent,
                                                         modifier = Modifier
                                                             .size(24.dp)
                                                             .graphicsLayer {
@@ -460,7 +468,7 @@ fun SmsScreen(
                                                         } else {
                                                             "Archiwum"
                                                         },
-                                                        tint = ZielonyNeon,
+                                                        tint = akcent,
                                                         modifier = Modifier
                                                             .size(24.dp)
                                                             .graphicsLayer {
@@ -490,7 +498,7 @@ fun SmsScreen(
                                                                                                         Icon(
                                                                                                             imageVector = IkonyAplikacji.TelefonLogo,
                                                                                                             contentDescription = "Zadzwoń",
-                                                                                                            tint = ZielonyNeon,
+                                                                                                            tint = akcent,
                                                                                                             modifier = Modifier.size(26.dp)
                                                                                                         )
                                                                                                         }
@@ -509,7 +517,7 @@ fun SmsScreen(
                                                                                                             .padding(horizontal = 16.dp, vertical = 8.dp)
                                                                         .clip(RoundedCornerShape(16.dp))
                                         .background(dialer.dominik.pl.ui.theme.LocalMotyw.current.kafelek)
-                                        .border(1.dp, ZielonyNeon.copy(alpha = 0.14f), RoundedCornerShape(16.dp))
+                                        .border(1.dp, akcent.copy(alpha = 0.14f), RoundedCornerShape(16.dp))
                                         .padding(start = 12.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -521,7 +529,7 @@ fun SmsScreen(
                                             color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle,
                                             fontSize = 15.sp
                                         ),
-                                        cursorBrush = SolidColor(ZielonyNeon),
+                                        cursorBrush = SolidColor(akcent),
                                         modifier = Modifier
                                             .weight(1f)
                                             .padding(vertical = 12.dp),
@@ -543,13 +551,16 @@ fun SmsScreen(
                                         modifier = Modifier
                                             .size(48.dp)
                                             .clip(RoundedCornerShape(0.dp))
-                                            .background(ZielonyNeon.copy(alpha = 0.18f))
+                                            .then(
+                                                if (wiedzmin) Modifier.tloSrebrnyPolysk(RoundedCornerShape(0.dp))
+                                                else Modifier.background(akcent.copy(alpha = 0.18f))
+                                            )
                                             .clickable { stanEkranu = SmsEkranStan.NowaWiadomosc("") },
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Text(
                                             text = "+",
-                                            color = ZielonyNeon,
+                                            color = if (wiedzmin) Color(0xFF1A1C1E) else akcent,
                                             fontSize = 22.sp,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -748,8 +759,8 @@ fun SmsScreen(
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(14.dp))
-                                            .background(ZielonyNeon.copy(alpha = 0.18f))
-                                            .border(1.dp, ZielonyNeon.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
+                                            .background(akcent.copy(alpha = 0.18f))
+                                            .border(1.dp, akcent.copy(alpha = 0.45f), RoundedCornerShape(14.dp))
                                             .clickable {
                                                 launcherDomyslnejSms.launch(intencjaUstawDomyslnaSms(context))
                                             }
@@ -758,7 +769,7 @@ fun SmsScreen(
                                     ) {
                                         Text(
                                             text = "Ustaw jako domyślną do SMS",
-                                            color = ZielonyNeon,
+                                            color = akcent,
                                             fontSize = 15.sp,
                                             fontWeight = FontWeight.SemiBold
                                         )
@@ -830,6 +841,7 @@ fun SmsScreen(
         nazwa: String,
         rozmiar: androidx.compose.ui.unit.Dp
     ) {
+        val akcent = motywAkcent()
         val bitmap by produceState<Bitmap?>(initialValue = null, nazwa, context) {
             value = withContext(Dispatchers.IO) { pobierzLogoFirmy(context, nazwa) }
         }
@@ -844,7 +856,7 @@ fun SmsScreen(
             // Fallback do czasu pobrania logo / gdy brak domeny: inicjał.
             Text(
                 text = nazwa.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?",
-                color = ZielonyNeon,
+                color = akcent,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -862,6 +874,9 @@ fun SmsScreen(
         modifier: Modifier = Modifier
     ) {
         val paletaSms = dialer.dominik.pl.ui.theme.LocalMotyw.current
+        val wiedzmin = czyMotywWiedzmin()
+        val akcent = motywAkcent()
+        val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
         val ksztaltKafla = RoundedCornerShape(paletaSms.promienKafla.dp)
         val formatDaty = remember { SimpleDateFormat("dd.MM.yyyy, HH:mm", Locale.getDefault()) }
         val roboczy = watek.lastDate == Long.MAX_VALUE
@@ -869,7 +884,7 @@ fun SmsScreen(
     // Numer z kontaktu → ciemniejsze tło; nieznany numer → jaśniejsze (wyróżnienie).
         val nieprzeczytana = watek.nieprzeczytane > 0
         val obramowanie = when {
-            nieprzeczytana -> ZielonyNeon.copy(alpha = 0.40f)
+            nieprzeczytana -> akcent.copy(alpha = 0.40f)
             else -> paletaSms.kafelekRamka
         }
         val gradientKarty = paletaSms.gradientKafelka()
@@ -922,7 +937,7 @@ fun SmsScreen(
                 modifier = Modifier
                     .matchParentSize()
                     .clip(ksztaltKafla)
-                    .background(ZielonyMorski.copy(alpha = 0.20f)),
+                    .background(akcentMorski.copy(alpha = 0.20f)),
                 contentAlignment = Alignment.CenterStart
             ) {
                 if (zasieg > 0f) {
@@ -930,11 +945,11 @@ fun SmsScreen(
                         Icon(
                             imageVector = IkonyAplikacji.Kosz,
                             contentDescription = null,
-                            tint = ZielonyNeon,
+                            tint = akcent,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(Modifier.width(5.dp))
-                        Text(if (trybArchiwum) "Przywróć" else "Ukryj", color = ZielonyNeon, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text(if (trybArchiwum) "Przywróć" else "Ukryj", color = akcent, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -944,7 +959,9 @@ fun SmsScreen(
                     .fillMaxWidth()
                     .offset { IntOffset(zasieg.roundToInt(), 0) }
                     .clip(ksztaltKafla)
-                    .background(gradientKarty)
+                    .background(
+                        if (wiedzmin) paletaSms.gradientKafelka(alfaGora = 0.82f) else gradientKarty
+                    )
                     .border(1.dp, obramowanie, ksztaltKafla)
                     .pointerInput(watek.address) {
                         // Krótkie kliknięcie (bez przeciągania) otwiera czat.
@@ -976,6 +993,15 @@ fun SmsScreen(
                         )
                     }
             ) {
+                // Mgła tylko przy nieprzeczytanych (jak kafelek główny historii)
+                if (wiedzmin && nieprzeczytana) {
+                    MglaNaPrzycisku(
+                        Modifier.matchParentSize(),
+                        sila = 0.55f,
+                        seed = watek.address.hashCode(),
+                        lekka = true
+                    )
+                }
                 Column(
                 modifier = Modifier
                     .padding(16.dp)
@@ -1009,8 +1035,8 @@ fun SmsScreen(
                                                             .background(
                                                                 Brush.radialGradient(
                                                                     listOf(
-                                                                        ZielonyMorski.copy(alpha = 0.55f),
-                                                                        ZielonyMorski.copy(alpha = 0.18f)
+                                                                        akcentMorski.copy(alpha = 0.55f),
+                                                                        akcentMorski.copy(alpha = 0.18f)
                                                                     )
                                                                 )
                                                             ),
@@ -1030,7 +1056,10 @@ fun SmsScreen(
                                                         fotoUri = watek.fotoUri,
                                                         inicial = inicjal,
                                                         context = context,
-                                                        rozmiar = 44.dp
+                                                        rozmiar = 44.dp,
+                                                        wariant = if (wiedzmin) AwatarWariant.Wiedzmin else AwatarWariant.Domyslny,
+                                                        kolorWiedzmina = if (wiedzmin) kolorZnakuWiedzmina(watek.address.hashCode()) else null,
+                                                        indeksUlubionego = watek.address.hashCode()
                                                     )
                                                 } else {
                                                     // Brak zdjęcia → inicjał na zielonym radialnym tle.
@@ -1041,8 +1070,8 @@ fun SmsScreen(
                                                             .background(
                                                                 Brush.radialGradient(
                                                                     listOf(
-                                                                        ZielonyMorski.copy(alpha = if (nieprzeczytana) 0.55f else 0.4f),
-                                                                        ZielonyMorski.copy(alpha = 0.18f)
+                                                                        akcentMorski.copy(alpha = if (nieprzeczytana) 0.55f else 0.4f),
+                                                                        akcentMorski.copy(alpha = 0.18f)
                                                                     )
                                                                 )
                                                             ),
@@ -1050,7 +1079,7 @@ fun SmsScreen(
                                                     ) {
                                                         Text(
                                                             text = inicjal,
-                                                            color = if (nieprzeczytana) paletaSms.naTle else ZielonyNeon,
+                                                            color = if (nieprzeczytana) paletaSms.naTle else akcent,
                                                             fontSize = 19.sp,
                                                             fontWeight = FontWeight.Bold
                                                         )
@@ -1062,7 +1091,7 @@ fun SmsScreen(
                             modifier = Modifier
                                 .size(9.dp)
                                 .clip(CircleShape)
-                                .background(ZielonyNeon)
+                                .background(akcent)
                         )
                     }
                     // Nagłówek wiersza: pseudonim (pierwszeństwo) → imię/nazwisko, a pod
@@ -1091,7 +1120,7 @@ fun SmsScreen(
                 }
                 Text(
                     text = dataTekst,
-                    color = if (nieprzeczytana) ZielonyNeon.copy(alpha = 0.88f)
+                    color = if (nieprzeczytana) akcent.copy(alpha = 0.88f)
                     else paletaSms.naTle.copy(alpha = 0.4f),
                     fontSize = 11.sp,
                     fontWeight = if (nieprzeczytana) FontWeight.Medium else FontWeight.Normal
@@ -1103,7 +1132,7 @@ fun SmsScreen(
                                             watek.lastMessage == "📷 [MMS]" -> "MMS"
                                             else -> watek.lastMessage
                                         },
-                                        color = if (roboczy) ZielonyNeon
+                                        color = if (roboczy) akcent
                                                 else if (nieprzeczytana) paletaSms.naTle.copy(alpha = 0.85f)
                                                 else paletaSms.naTle.copy(alpha = 0.7f),
                                         fontSize = 14.sp,
@@ -1119,7 +1148,7 @@ fun SmsScreen(
                             .padding(8.dp)
                             .size(22.dp)
                             .clip(CircleShape)
-                            .background(ZielonyNeon),
+                            .background(akcent),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(

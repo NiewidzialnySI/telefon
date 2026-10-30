@@ -57,7 +57,7 @@ data class MotywPaleta(
             auroraWlaczona = true,
             animacjaTla = AnimacjaTla.Aurora,
             ikona = Color(0xFF69F0AE),
-            blad = Color(0xFFE53935),
+            blad = Krew.Akcent,
             promienKafla = 16f
         )
 
@@ -97,6 +97,11 @@ data class MotywPaleta(
                     Color(0xFF18FF6D),
                     accent
                 )
+                "wiedzmin" -> Triple(
+                    MotywPaletyPresety.AkcentSrebrnyWiedzmin.copy(alpha = 0.32f),
+                    MotywPaletyPresety.AkcentSrebrnyWiedzmin,
+                    accent
+                )
                 else -> Triple(
                     scheme.outlineVariant.copy(alpha = if (ciemny) 0.55f else 0.85f),
                     accent,
@@ -120,7 +125,8 @@ data class MotywPaleta(
                 auroraWlaczona = stan.auroraWlaczona && stan.animacjaTla != AnimacjaTla.Wylaczona,
                 animacjaTla = stan.animacjaTla,
                 ikona = ikona,
-                blad = scheme.error,
+                // Destrukcja: realistyczna krew (#8A0303), nie pastelowy Material error.
+                blad = Krew.Akcent,
                 promienKafla = 16f
             )
         }

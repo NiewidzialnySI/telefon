@@ -374,6 +374,17 @@ class TelefonInCallService : InCallService() {
         ZarzadcaDzwonka.zatrzymaj()
         PowiadomieniaPolaczen.anuluj(this)
         PowiadomieniaTrwajacejRozmowy.anuluj(this)
+
+        val czyPrzychodzace = StanPolaczenia.czyPrzychodzace
+        val czasStartu = StanPolaczenia.czasStartu
+        val rozmowca = StanPolaczenia.rozmowca
+        val numer = StanPolaczenia.numerRozmowy
+
+        // Powiadomienie o nieodebranym połączeniu
+        if (czyPrzychodzace && czasStartu == 0L && numer.isNotBlank()) {
+            PowiadomieniaNieodebranych.dodajIPokaz(this, rozmowca, numer)
+        }
+
         // Zatrzymaj nagrywanie Shizuku przy końcu rozmowy.
         dialer.dominik.pl.nagranie.NagrywanieKontroler.stop()
         // Rozmowa się skończyła — zamknij własny dymek (nakładka), jeśli jest.

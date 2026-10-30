@@ -85,6 +85,8 @@ import dialer.dominik.pl.ui.theme.CzerwonyPolaczenia
 import dialer.dominik.pl.ui.theme.ZielonyMorski
 import dialer.dominik.pl.ui.theme.NaPrzycisku
 import dialer.dominik.pl.ui.theme.ZielonyNeon
+import dialer.dominik.pl.ui.theme.tloMokrejKrwi
+import androidx.compose.ui.graphics.Color as ComposeColor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -722,7 +724,7 @@ private fun PasekKontrolekRozmowy(
         modifier = Modifier
             .size(68.dp)
             .clip(CircleShape)
-            .background(CzerwonyPolaczenia)
+            .tloMokrejKrwi(CircleShape)
             .clickable {
                 rozlaczRozmowe(context, usunLog = fazaDialing)
             },
@@ -731,7 +733,7 @@ private fun PasekKontrolekRozmowy(
         if (odliczaniePozostale > 0) {
             Text(
                 text = odliczaniePozostale.toString(),
-                color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle,
+                color = ComposeColor(0xFFFFF5F3),
                 fontSize = 30.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -739,7 +741,7 @@ private fun PasekKontrolekRozmowy(
             Icon(
                 imageVector = IkonyAplikacji.Sluchawka,
                 contentDescription = if (fazaDialing) "Anuluj połączenie" else "Zakończ połączenie",
-                tint = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle,
+                tint = ComposeColor(0xFFFFF5F3),
                 modifier = Modifier.size(30.dp)
             )
         }

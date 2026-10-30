@@ -97,6 +97,8 @@ import dialer.dominik.pl.ui.theme.NadpisaniaEkranu
 import dialer.dominik.pl.ui.theme.TrybMotywu
 import dialer.dominik.pl.ui.theme.ZielonyMorski
 import dialer.dominik.pl.ui.theme.ZielonyNeon
+import dialer.dominik.pl.ui.theme.czyMotywWiedzmin
+import dialer.dominik.pl.ui.theme.motywAkcent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -114,6 +116,9 @@ private val MIESIAC_MS = TimeUnit.DAYS.toMillis(30)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UstawieniaScreen(context: Context, onBack: () -> Unit = {}) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
     val activity = context as? Activity
     val scope = rememberCoroutineScope()
     val stan by BackupStan.stan.collectAsState()
@@ -264,7 +269,7 @@ fun UstawieniaScreen(context: Context, onBack: () -> Unit = {}) {
             item {
                 Text(
                     text = "NAGRYWANIE",
-                    color = ZielonyNeon.copy(alpha = 0.55f),
+                    color = akcent.copy(alpha = 0.55f),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
                     letterSpacing = 1.4.sp,
@@ -278,7 +283,7 @@ fun UstawieniaScreen(context: Context, onBack: () -> Unit = {}) {
             item {
                 Text(
                     text = "AKTUALIZACJA",
-                    color = ZielonyNeon.copy(alpha = 0.55f),
+                    color = akcent.copy(alpha = 0.55f),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
                     letterSpacing = 1.4.sp,
@@ -292,7 +297,7 @@ fun UstawieniaScreen(context: Context, onBack: () -> Unit = {}) {
             item {
                 Text(
                     text = "MOTYW",
-                    color = ZielonyNeon.copy(alpha = 0.55f),
+                    color = akcent.copy(alpha = 0.55f),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
                     letterSpacing = 1.4.sp,
@@ -308,6 +313,10 @@ fun UstawieniaScreen(context: Context, onBack: () -> Unit = {}) {
 
 @Composable
 private fun SekcjaMotywu(context: Context) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
+
     val motyw by MotywStan.stan.collectAsState()
     val paleta = LocalMotyw.current
 
@@ -337,13 +346,13 @@ private fun SekcjaMotywu(context: Context) {
                     label = "skalaTryb"
                 )
                 val tlo by animateColorAsState(
-                    targetValue = if (aktywny) ZielonyNeon else Color.Transparent,
+                    targetValue = if (aktywny) akcent else Color.Transparent,
                     animationSpec = tween(280),
                     label = "tloTryb"
                 )
                 val tekst by animateColorAsState(
                     targetValue = when {
-                        aktywny && ZielonyNeon.luminance() > 0.45f -> NaPrzycisku
+                        aktywny && akcent.luminance() > 0.45f -> NaPrzycisku
                         aktywny -> Color.White
                         else -> Color.White.copy(alpha = 0.55f).let {
                             if (!paleta.ciemny) Color.Black.copy(alpha = 0.55f) else it
@@ -398,7 +407,7 @@ private fun SekcjaMotywu(context: Context) {
                                 .background(paleta.kafelek)
                                 .border(
                                     width = if (wybrany) 2.dp else 1.dp,
-                                    color = if (wybrany) ZielonyNeon else paleta.kafelekRamka,
+                                    color = if (wybrany) akcent else paleta.kafelekRamka,
                                     shape = RoundedCornerShape(14.dp)
                                 )
                                 .clickable { MotywStan.ustawPalete(context, preset) }
@@ -479,12 +488,12 @@ private fun SekcjaMotywu(context: Context) {
                                         .weight(1f)
                                         .clip(RoundedCornerShape(14.dp))
                                         .background(
-                                            if (wybrany) ZielonyNeon.copy(alpha = 0.16f)
+                                            if (wybrany) akcent.copy(alpha = 0.16f)
                                             else paleta.kafelek
                                         )
                                         .border(
                                             width = if (wybrany) 2.dp else 1.dp,
-                                            color = if (wybrany) ZielonyNeon else paleta.kafelekRamka,
+                                            color = if (wybrany) akcent else paleta.kafelekRamka,
                                             shape = RoundedCornerShape(14.dp)
                                         )
                                         .clickable { MotywStan.ustawAnimacjeTla(context, anim) }
@@ -507,6 +516,15 @@ private fun SekcjaMotywu(context: Context) {
                             if (rzad.size == 1) Spacer(Modifier.weight(1f))
                         }
                     }
+                }
+
+                if (motyw.animacjaTla == AnimacjaTla.Wiedzmin || motyw.paletaId == "wiedzmin") {
+                    EtykietaMotywu("Tło Wiedźmin", paleta.tekstDrugorzedny)
+                    SekcjaTlaWiedzmina(
+                        motyw = motyw,
+                        paleta = paleta,
+                        context = context
+                    )
                 }
 
                 EtykietaMotywu("Kolor przycisków", paleta.tekstDrugorzedny)
@@ -576,12 +594,112 @@ private fun EtykietaMotywu(tekst: String, kolor: Color) {
 }
 
 @Composable
+private fun SekcjaTlaWiedzmina(
+    motyw: MotywStan.Stan,
+    paleta: dialer.dominik.pl.ui.theme.MotywPaleta,
+    context: Context
+) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
+
+    val maWlasne = !motyw.wiedzminTloWlasneSciezka.isNullOrBlank()
+    val wybierzObraz = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val ok = MotywStan.ustawWiedzminTloWlasne(context, uri)
+        Toast.makeText(
+            context,
+            if (ok) "Własne tło zapisane" else "Nie udało się wczytać obrazu",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(paleta.kafelek)
+            .border(1.dp, paleta.kafelekRamka, RoundedCornerShape(14.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Statyczny obraz",
+                    color = paleta.naTle,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "Wyłącza pętlę wideo — pokazuje kadr (lub własne tło)",
+                    color = paleta.tekstDrugorzedny,
+                    fontSize = 11.sp
+                )
+            }
+            Switch(
+                checked = motyw.wiedzminTloStatyczne,
+                onCheckedChange = { MotywStan.ustawWiedzminTloStatyczne(context, it) },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = akcent,
+                    checkedTrackColor = akcentMorski.copy(alpha = 0.55f)
+                )
+            )
+        }
+
+        TextButton(
+            onClick = {
+                wybierzObraz.launch(
+                    androidx.activity.result.PickVisualMediaRequest(
+                        ActivityResultContracts.PickVisualMedia.ImageOnly
+                    )
+                )
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = if (maWlasne) "Zmień własne tło" else "Wgraj własne tło",
+                color = akcent,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp
+            )
+        }
+
+        if (maWlasne) {
+            Text(
+                text = "Używane jest Twoje zdjęcie z galerii",
+                color = paleta.tekstDrugorzedny,
+                fontSize = 11.sp
+            )
+            TextButton(
+                onClick = {
+                    MotywStan.usunWiedzminTloWlasne(context)
+                    Toast.makeText(context, "Przywrócono domyślne tło", Toast.LENGTH_SHORT).show()
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Przywróć domyślne tło", color = CzerwonyPolaczenia, fontSize = 13.sp)
+            }
+        }
+    }
+}
+
+@Composable
 private fun RzedPresetowKoloru(
     aktualny: Color?,
     domyslnyOznaczaNull: Boolean,
     onWybierz: (Color?) -> Unit,
     dodatkowe: List<Color> = emptyList()
 ) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
+
     val kolory = MotywStan.PRESETY + dodatkowe
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -597,13 +715,13 @@ private fun RzedPresetowKoloru(
                     .background(Color.White.copy(alpha = 0.08f))
                     .border(
                         if (auto) 2.dp else 1.dp,
-                        if (auto) ZielonyNeon else Color.White.copy(alpha = 0.2f),
+                        if (auto) akcent else Color.White.copy(alpha = 0.2f),
                         CircleShape
                     )
                     .clickable { onWybierz(null) },
                 contentAlignment = Alignment.Center
             ) {
-                Text("A", color = ZielonyNeon, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text("A", color = akcent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
         }
         kolory.distinctBy { it.toArgb() }.take(8).forEach { kolor ->
@@ -630,6 +748,10 @@ private fun KafelekEkranuMotywu(
     ekran: EkranMotywu,
     motyw: MotywStan.Stan
 ) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
+
     val paleta = LocalMotyw.current
     val nad = motyw.ekrany[ekran]
     var rozwin by remember(ekran) { mutableStateOf(false) }
@@ -656,7 +778,7 @@ private fun KafelekEkranuMotywu(
             )
             Text(
                 text = if (nad != null) "własny" else "globalny",
-                color = if (nad != null) ZielonyNeon else paleta.tekstDrugorzedny,
+                color = if (nad != null) akcent else paleta.tekstDrugorzedny,
                 fontSize = 11.sp
             )
         }
@@ -712,6 +834,10 @@ private fun KafelekKontaIKopii(
     onBackup: () -> Unit,
     onPrzywroc: () -> Unit
 ) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
+
     val paleta = LocalMotyw.current
     val ksztalt = RoundedCornerShape(22.dp)
     val bitmap by produceState<androidx.compose.ui.graphics.ImageBitmap?>(
@@ -750,7 +876,7 @@ private fun KafelekKontaIKopii(
                     else listOf(paleta.kafelek, paleta.tlo)
                 )
             )
-            .border(1.dp, ZielonyNeon.copy(alpha = 0.22f), ksztalt)
+            .border(1.dp, akcent.copy(alpha = 0.22f), ksztalt)
     ) {
         // --- Nagłówek konta ---
         Row(
@@ -764,8 +890,8 @@ private fun KafelekKontaIKopii(
                 modifier = Modifier
                     .size(56.dp)
                     .clip(CircleShape)
-                    .background(ZielonyMorski.copy(alpha = 0.35f))
-                    .border(2.dp, ZielonyNeon.copy(alpha = 0.35f), CircleShape),
+                    .background(akcentMorski.copy(alpha = 0.35f))
+                    .border(2.dp, akcent.copy(alpha = 0.35f), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 val obraz = bitmap
@@ -779,7 +905,7 @@ private fun KafelekKontaIKopii(
                 } else {
                     Text(
                         text = (profil?.imie?.firstOrNull() ?: '?').uppercaseChar().toString(),
-                        color = ZielonyNeon,
+                        color = akcent,
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -829,7 +955,7 @@ private fun KafelekKontaIKopii(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
                 .height(1.dp)
-                .background(ZielonyNeon.copy(alpha = 0.12f))
+                .background(akcent.copy(alpha = 0.12f))
         )
 
         // --- Akcje kopii ---
@@ -884,6 +1010,10 @@ private fun PrzyciskPostepu(
     onKlik: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
+
     val paleta = LocalMotyw.current
     val ksztalt = RoundedCornerShape(14.dp)
     Box(
@@ -892,12 +1022,12 @@ private fun PrzyciskPostepu(
             .clip(ksztalt)
             .background(
                 if (wariantDrugorzędny) paleta.tlo.copy(alpha = if (paleta.ciemny) 0.35f else 0.55f)
-                else ZielonyNeon.copy(alpha = 0.10f)
+                else akcent.copy(alpha = 0.10f)
             )
             .border(
                 1.dp,
                 if (wariantDrugorzędny) paleta.kafelekRamka
-                else ZielonyNeon.copy(alpha = 0.28f),
+                else akcent.copy(alpha = 0.28f),
                 ksztalt
             )
             .clickable(enabled = enabled && !aktywnyPostep, onClick = onKlik)
@@ -908,13 +1038,13 @@ private fun PrzyciskPostepu(
                 .fillMaxWidth(postep.coerceIn(0f, 1f))
             Box(
                 modifier = if (wariantDrugorzędny) {
-                    wypelnienie.background(ZielonyNeon.copy(alpha = 0.20f))
+                    wypelnienie.background(akcent.copy(alpha = 0.20f))
                 } else {
                     wypelnienie.background(
                         Brush.horizontalGradient(
                             listOf(
-                                ZielonyMorski.copy(alpha = 0.65f),
-                                ZielonyNeon.copy(alpha = 0.40f)
+                                akcentMorski.copy(alpha = 0.65f),
+                                akcent.copy(alpha = 0.40f)
                             )
                         )
                     )
@@ -927,7 +1057,7 @@ private fun PrzyciskPostepu(
             } else {
                 tytul
             },
-            color = if (wariantDrugorzędny) paleta.naTle.copy(alpha = 0.85f) else ZielonyNeon,
+            color = if (wariantDrugorzędny) paleta.naTle.copy(alpha = 0.85f) else akcent,
             fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
@@ -942,6 +1072,10 @@ private fun DataOstatniegoBackupu(
     ostatniMs: Long,
     wewnatrzKarty: Boolean = false
 ) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
+
     val paleta = LocalMotyw.current
     val stary = ostatniMs <= 0L || System.currentTimeMillis() - ostatniMs > MIESIAC_MS
     val tekst = if (ostatniMs <= 0L) {
@@ -958,12 +1092,12 @@ private fun DataOstatniegoBackupu(
     }
     val tlo = when {
         stary -> CzerwonyPolaczenia.copy(alpha = 0.12f)
-        wewnatrzKarty -> ZielonyNeon.copy(alpha = 0.06f)
+        wewnatrzKarty -> akcent.copy(alpha = 0.06f)
         else -> paleta.naTle.copy(alpha = 0.04f)
     }
     val ramka = when {
         stary -> CzerwonyPolaczenia.copy(alpha = 0.35f)
-        wewnatrzKarty -> ZielonyNeon.copy(alpha = 0.10f)
+        wewnatrzKarty -> akcent.copy(alpha = 0.10f)
         else -> paleta.naTle.copy(alpha = 0.08f)
     }
     val ksztalt = RoundedCornerShape(if (wewnatrzKarty) 12.dp else 14.dp)
@@ -994,6 +1128,10 @@ private fun DataOstatniegoBackupu(
  */
 @Composable
 private fun SekcjaNagrywaniaRozmow(context: Context) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
+
     val paleta = LocalMotyw.current
     val scope = rememberCoroutineScope()
     val ksztalt = RoundedCornerShape(16.dp)
@@ -1152,8 +1290,8 @@ private fun SekcjaNagrywaniaRozmow(context: Context) {
                     NagrywanieUstawienia.ustawAuto(context, it)
                 },
                 colors = SwitchDefaults.colors(
-                    checkedThumbColor = ZielonyNeon,
-                    checkedTrackColor = ZielonyMorski.copy(alpha = 0.55f)
+                    checkedThumbColor = akcent,
+                    checkedTrackColor = akcentMorski.copy(alpha = 0.55f)
                 )
             )
             Spacer(Modifier.width(6.dp))
@@ -1161,8 +1299,8 @@ private fun SekcjaNagrywaniaRozmow(context: Context) {
                 checked = wlaczone,
                 onCheckedChange = { wlacNagrywanie(it) },
                 colors = SwitchDefaults.colors(
-                    checkedThumbColor = ZielonyNeon,
-                    checkedTrackColor = ZielonyMorski.copy(alpha = 0.55f)
+                    checkedThumbColor = akcent,
+                    checkedTrackColor = akcentMorski.copy(alpha = 0.55f)
                 )
             )
         }
@@ -1224,7 +1362,7 @@ private fun SekcjaNagrywaniaRozmow(context: Context) {
                 } else {
                     Text(
                         text = etykieta,
-                        color = ZielonyNeon,
+                        color = akcent,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
                     )
@@ -1268,10 +1406,14 @@ private fun StatusIkonaNagrywania(
     modifier: Modifier = Modifier,
     polowa: Boolean = false,
 ) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
+
     val paleta = LocalMotyw.current
     val kolor = when {
-        ok -> ZielonyNeon
-        polowa -> ZielonyMorski
+        ok -> akcent
+        polowa -> akcentMorski
         else -> paleta.tekstDrugorzedny.copy(alpha = 0.45f)
     }
     Column(
@@ -1305,6 +1447,10 @@ private fun StatusIkonaNagrywania(
  */
 @Composable
 private fun SekcjaAktualizacji(context: Context) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
+
     val paleta = LocalMotyw.current
     val scope = rememberCoroutineScope()
     val stan by AktualizacjaAplikacji.stan.collectAsState()
@@ -1366,7 +1512,7 @@ private fun SekcjaAktualizacji(context: Context) {
                         is AktualizacjaAplikacji.Stan.Blad -> CzerwonyPolaczenia
                         is AktualizacjaAplikacji.Stan.Dostepna,
                         is AktualizacjaAplikacji.Stan.GotowaDoInstalacji,
-                        is AktualizacjaAplikacji.Stan.Aktualna -> ZielonyNeon
+                        is AktualizacjaAplikacji.Stan.Aktualna -> akcent
                         else -> paleta.tekstDrugorzedny
                     },
                     fontSize = 12.sp,
@@ -1387,8 +1533,8 @@ private fun SekcjaAktualizacji(context: Context) {
                     AktualizacjaAplikacji.ustawAutoSprawdzaj(context, it)
                 },
                 colors = SwitchDefaults.colors(
-                    checkedThumbColor = ZielonyNeon,
-                    checkedTrackColor = ZielonyMorski.copy(alpha = 0.55f)
+                    checkedThumbColor = akcent,
+                    checkedTrackColor = akcentMorski.copy(alpha = 0.55f)
                 )
             )
         }

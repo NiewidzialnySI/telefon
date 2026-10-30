@@ -72,6 +72,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -110,10 +111,13 @@ import dialer.dominik.pl.data.BazaSpamu
 import dialer.dominik.pl.ui.components.IkonyAplikacji
 import dialer.dominik.pl.ui.theme.CzerwonyPolaczenia
 import dialer.dominik.pl.ui.theme.LocalMotyw
+import dialer.dominik.pl.ui.theme.MotywStan
 import dialer.dominik.pl.ui.theme.ZielonyGleboki
 import dialer.dominik.pl.ui.theme.ZielonyMorski
 import dialer.dominik.pl.ui.theme.ZielonyNeon
 import dialer.dominik.pl.ui.theme.gradientKafelka
+import dialer.dominik.pl.ui.theme.tloSrebrnyPolysk
+import androidx.compose.ui.graphics.Color
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -132,14 +136,22 @@ internal fun PasekUlubionych(
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
     val context = LocalContext.current
+    val motywStan by MotywStan.stan.collectAsState()
+    val wariantAwataru = if (motywStan.paletaId == "wiedzmin") {
+        AwatarWariant.Wiedzmin
+    } else {
+        AwatarWariant.Domyslny
+    }
 
     LazyRow(
             modifier = modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(18.dp),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp)
     ) {
-        items(kontakty, key = { it.name }) { kontakt ->
+        items(kontakty.size, key = { kontakty[it].name }) { indeks ->
+            val kontakt = kontakty[indeks]
             val inicial = kontakt.nazwaWyswietlana.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+            val kolorZnaku = kolorZnakuWiedzmina(indeks)
             var centerX by remember { mutableFloatStateOf(0f) }
             var centerY by remember { mutableFloatStateOf(0f) }
 
@@ -165,7 +177,10 @@ internal fun PasekUlubionych(
                     fotoUri = kontakt.fotoUri,
                     inicial = inicial,
                     context = context,
-                    rozmiar = 56.dp
+                    rozmiar = 56.dp,
+                    wariant = wariantAwataru,
+                    kolorWiedzmina = if (wariantAwataru == AwatarWariant.Wiedzmin) kolorZnaku else null,
+                    indeksUlubionego = indeks
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
@@ -190,6 +205,8 @@ internal fun KafelekAkcjiUlubionego(
     modifier: Modifier = Modifier
 ) {
     val motyw = LocalMotyw.current
+    val motywStan by MotywStan.stan.collectAsState()
+    val wiedzmin = motywStan.paletaId == "wiedzmin"
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(22.dp))
@@ -200,19 +217,25 @@ internal fun KafelekAkcjiUlubionego(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        // Okrągłe gniazdo ikony z poświatą (Glowing Icon Badge)
         Box(
             modifier = Modifier
                 .size(48.dp)
                 .clip(CircleShape)
-                .background(ZielonyNeon.copy(alpha = 0.14f))
-                .border(1.dp, ZielonyNeon.copy(alpha = 0.35f), CircleShape),
+                .then(
+                    if (wiedzmin) {
+                        Modifier.tloSrebrnyPolysk(CircleShape, animuj = false)
+                    } else {
+                        Modifier
+                            .background(ZielonyNeon.copy(alpha = 0.14f))
+                            .border(1.dp, ZielonyNeon.copy(alpha = 0.35f), CircleShape)
+                    }
+                ),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = ikona,
                 contentDescription = etykieta,
-                tint = ZielonyNeon,
+                tint = if (wiedzmin) Color(0xFF1A1C1E) else ZielonyNeon,
                 modifier = Modifier.size(24.dp)
             )
         }

@@ -1,5 +1,17 @@
 ﻿package dialer.dominik.pl.ui.components
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.graphics.SurfaceTexture
+import android.media.MediaMetadataRetriever
+import android.media.MediaPlayer
+import android.media.PlaybackParams
+import android.os.Handler
+import android.os.Looper
+import android.view.Surface
+import android.view.TextureView
+import android.widget.FrameLayout
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -7,11 +19,15 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -24,14 +40,20 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.viewinterop.AndroidView
 import dialer.dominik.pl.R
 import dialer.dominik.pl.ui.theme.AnimacjaTla
 import dialer.dominik.pl.ui.theme.LocalMotyw
+import dialer.dominik.pl.ui.theme.MotywStan
+import java.io.File
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -68,11 +90,312 @@ fun TloAmoled(
         Box(modifier = modifier.fillMaxSize().background(motyw.tlo))
         return
     }
+    if (styl == AnimacjaTla.Wiedzmin) {
+        TloWiedzmin(modifier = modifier, animuj = animuj, tlo = motyw.tlo)
+        return
+    }
     if (animuj) {
         TloAmoledAnimowane(modifier, styl)
     } else {
         TloAmoledStatyczne(modifier, styl)
     }
+}
+
+/**
+ * Tło motywu Wiedźmin:
+ * - własne zdjęcie (ustawienia),
+ * - albo statyczny kadr z filmu,
+ * - albo pętla wideo z `res/raw/wiedzmin_tlo`.
+ */
+@Composable
+private fun TloWiedzmin(
+    modifier: Modifier,
+    animuj: Boolean,
+    tlo: Color
+) {
+    val context = LocalContext.current
+    val stan by MotywStan.stan.collectAsState()
+    val wlasne = stan.wiedzminTloWlasneSciezka
+    val statyczne = stan.wiedzminTloStatyczne || !animuj
+
+    Box(modifier = modifier.fillMaxSize().background(tlo)) {
+        when {
+            !wlasne.isNullOrBlank() && File(wlasne).isFile -> {
+                val bmp = remember(wlasne) {
+                    runCatching {
+                        BitmapFactory.decodeFile(wlasne)?.asImageBitmap()
+                    }.getOrNull()
+                }
+                if (bmp != null) {
+                    Image(
+                        bitmap = bmp,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+            }
+            statyczne -> {
+                val kadr = remember(context) {
+                    runCatching {
+                        kadrZWiedzminTlo(context)?.asImageBitmap()
+                    }.getOrNull()
+                }
+                if (kadr != null) {
+                    Image(
+                        bitmap = kadr,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+            }
+            else -> {
+                val kontroler = remember { WiedzminTloKontroler(context) }
+                DisposableEffect(Unit) {
+                    onDispose { kontroler.zwolnij() }
+                }
+                DisposableEffect(animuj) {
+                    kontroler.ustawAnimacje(animuj)
+                    onDispose { }
+                }
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { ctx -> kontroler.utworzWidok(ctx) },
+                    update = { kontroler.odswiezCrop() }
+                )
+            }
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.42f))
+        )
+    }
+}
+
+private fun kadrZWiedzminTlo(context: android.content.Context): Bitmap? {
+    val retriever = MediaMetadataRetriever()
+    return try {
+        val afd = context.resources.openRawResourceFd(R.raw.wiedzmin_tlo)
+        retriever.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+        afd.close()
+        retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+    } catch (_: Exception) {
+        null
+    } finally {
+        runCatching { retriever.release() }
+    }
+}
+
+/** Crossfade pętli: aktywny film + zapasowy startujący od 0 przed końcem. */
+private class WiedzminTloKontroler(context: android.content.Context) {
+    private val appCtx = context.applicationContext
+    private val handler = Handler(Looper.getMainLooper())
+    /** Fade przy pętli — film jest już wolniejszy w pliku (bez setSpeed). */
+    private val fadeMs = 2800L
+    private val tickMs = 32L
+    /** 1.0 — płynne klatki; spowolnienie jest w encode (setpts), nie w playerze. */
+    private val predkoscOdtwarzania = 1.0f
+
+    private val players: Array<MediaPlayer?> = arrayOf(
+        MediaPlayer.create(appCtx, R.raw.wiedzmin_tlo),
+        MediaPlayer.create(appCtx, R.raw.wiedzmin_tlo)
+    )
+    private val textures = arrayOfNulls<TextureView>(2)
+    private var aktywny = 0
+    private var wTrakcieFade = false
+    private var animuj = true
+    private var root: FrameLayout? = null
+
+    private val ticker = object : Runnable {
+        override fun run() {
+            if (!animuj) return
+            val p = players[aktywny] ?: return
+            val dur = runCatching { p.duration.toLong() }.getOrDefault(0L)
+            val pos = runCatching { p.currentPosition.toLong() }.getOrDefault(0L)
+            if (dur > fadeMs && !wTrakcieFade && pos >= dur - fadeMs) {
+                startFade()
+            }
+            handler.postDelayed(this, tickMs)
+        }
+    }
+
+    init {
+        players.forEach { mp ->
+            mp?.apply {
+                isLooping = false
+                setVolume(0f, 0f)
+                ustawPredkosc(this)
+            }
+        }
+    }
+
+    private fun ustawPredkosc(mp: MediaPlayer) {
+        runCatching {
+            mp.playbackParams = PlaybackParams().setSpeed(predkoscOdtwarzania)
+        }
+    }
+
+    fun utworzWidok(ctx: android.content.Context): FrameLayout {
+        val fl = FrameLayout(ctx)
+        root = fl
+        repeat(2) { i ->
+            val tv = TextureView(ctx)
+            tv.alpha = if (i == aktywny) 1f else 0f
+            textures[i] = tv
+            podlacz(i, tv)
+            fl.addView(
+                tv,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            )
+        }
+        handler.post(ticker)
+        return fl
+    }
+
+    private fun podlacz(indeks: Int, tv: TextureView) {
+        val player = players[indeks] ?: return
+        player.setOnVideoSizeChangedListener { _, _, _ ->
+            tv.post { dopasujCenterCrop(tv, player.videoWidth, player.videoHeight) }
+        }
+        tv.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(surface: SurfaceTexture, w: Int, h: Int) {
+                player.setSurface(Surface(surface))
+                dopasujCenterCrop(tv, player.videoWidth, player.videoHeight)
+                if (indeks == aktywny && animuj) {
+                    runCatching {
+                        ustawPredkosc(player)
+                        if (!player.isPlaying) player.start()
+                    }
+                }
+            }
+
+            override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, w: Int, h: Int) {
+                dopasujCenterCrop(tv, player.videoWidth, player.videoHeight)
+            }
+
+            override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
+                player.setSurface(null)
+                return true
+            }
+
+            override fun onSurfaceTextureUpdated(surface: SurfaceTexture) = Unit
+        }
+    }
+
+    fun odswiezCrop() {
+        textures.forEachIndexed { i, tv ->
+            val p = players[i] ?: return@forEachIndexed
+            if (tv != null) dopasujCenterCrop(tv, p.videoWidth, p.videoHeight)
+        }
+    }
+
+    fun ustawAnimacje(wlacz: Boolean) {
+        animuj = wlacz
+        handler.removeCallbacks(ticker)
+        if (wlacz) {
+            runCatching {
+                val p = players[aktywny]
+                if (p != null) {
+                    ustawPredkosc(p)
+                    if (!p.isPlaying) p.start()
+                }
+            }
+            handler.post(ticker)
+        } else {
+            players.forEach { runCatching { if (it?.isPlaying == true) it.pause() } }
+        }
+    }
+
+    private fun startFade() {
+        val z = aktywny
+        val na = 1 - z
+        val pZ = players[z] ?: return
+        val pNa = players[na] ?: return
+        val tvZ = textures[z] ?: return
+        val tvNa = textures[na] ?: return
+        wTrakcieFade = true
+        runCatching {
+            pNa.seekTo(0)
+            ustawPredkosc(pNa)
+            if (!pNa.isPlaying) pNa.start()
+            // po start() niektóre OEM resetują speed — ustaw jeszcze raz
+            ustawPredkosc(pNa)
+        }
+        tvNa.alpha = 0f
+        val t0 = android.os.SystemClock.uptimeMillis()
+        val krok = object : Runnable {
+            override fun run() {
+                val t = ((android.os.SystemClock.uptimeMillis() - t0).toFloat() / fadeMs)
+                    .coerceIn(0f, 1f)
+                // smoothstep — mniej „ostro” niż liniowo
+                val s = t * t * (3f - 2f * t)
+                tvZ.alpha = 1f - s
+                tvNa.alpha = s
+                if (t < 1f) {
+                    handler.postDelayed(this, tickMs)
+                } else {
+                    tvZ.alpha = 0f
+                    tvNa.alpha = 1f
+                    runCatching { pZ.pause(); pZ.seekTo(0) }
+                    aktywny = na
+                    wTrakcieFade = false
+                }
+            }
+        }
+        handler.post(krok)
+    }
+
+    fun zwolnij() {
+        handler.removeCallbacksAndMessages(null)
+        players.forEach { mp ->
+            runCatching {
+                mp?.stop()
+                mp?.release()
+            }
+        }
+        players[0] = null
+        players[1] = null
+        textures[0] = null
+        textures[1] = null
+        root = null
+    }
+}
+
+/**
+ * TextureView najpierw rozciąga klatkę na cały widok — transformacja
+ * skaluje od środka tak, by zachować proporcje i wykropkować (center-crop),
+ * bez widocznej krawędzi / pasków.
+ */
+private fun dopasujCenterCrop(
+    textureView: TextureView,
+    videoW: Int,
+    videoH: Int
+) {
+    val viewW = textureView.width
+    val viewH = textureView.height
+    if (viewW <= 0 || viewH <= 0 || videoW <= 0 || videoH <= 0) return
+    val viewRatio = viewW.toFloat() / viewH.toFloat()
+    val videoRatio = videoW.toFloat() / videoH.toFloat()
+    var scaleX = 1f
+    var scaleY = 1f
+    if (videoRatio > viewRatio) {
+        // film szerszy niż ekran → przytnij boki
+        scaleX = videoRatio / viewRatio
+    } else {
+        // film wyższy / węższy → przytnij górę/dół
+        scaleY = viewRatio / videoRatio
+    }
+    // lekki zapas, żeby nie było 1px szwu na krawędziach
+    scaleX *= 1.02f
+    scaleY *= 1.02f
+    val m = Matrix()
+    m.setScale(scaleX, scaleY, viewW / 2f, viewH / 2f)
+    textureView.setTransform(m)
 }
 
 @Composable
@@ -88,6 +411,7 @@ private fun TloAmoledAnimowane(modifier: Modifier, styl: AnimacjaTla) {
                     AnimacjaTla.Fale -> 16_000
                     AnimacjaTla.Siatka -> 12_000
                     AnimacjaTla.PipBoy -> 10_000
+                    AnimacjaTla.Wiedzmin -> 10_000
                     AnimacjaTla.Orbity -> 36_000
                     else -> 48_000
                 },
@@ -106,6 +430,7 @@ private fun TloAmoledAnimowane(modifier: Modifier, styl: AnimacjaTla) {
                     AnimacjaTla.Siatka -> 6_000
                     AnimacjaTla.Iskry -> 4_500
                     AnimacjaTla.PipBoy -> 900
+                    AnimacjaTla.Wiedzmin -> 900
                     else -> 14_000
                 },
                 easing = LinearEasing
@@ -169,6 +494,9 @@ private fun TloAmoledCanvas(
                     vaultBoy = vaultBoy,
                     pipBoy = pipBoy
                 )
+
+                // Obsługiwane osobno w [TloWiedzminWideo].
+                AnimacjaTla.Wiedzmin -> Unit
             }
         }
     }

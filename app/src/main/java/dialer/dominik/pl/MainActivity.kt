@@ -79,11 +79,22 @@ import dialer.dominik.pl.ui.screens.UstawieniaScreen
 import dialer.dominik.pl.ui.screens.PermissionsScreen
 import dialer.dominik.pl.ui.screens.SmsScreen
 import dialer.dominik.pl.ui.screens.WelcomeScreen
+import dialer.dominik.pl.ui.screens.KoloryZnakowWiedzmina
 import dialer.dominik.pl.ui.theme.CzarnyAmoled
 import dialer.dominik.pl.ui.theme.EkranMotywu
 import dialer.dominik.pl.ui.theme.LocalMotyw
+import dialer.dominik.pl.ui.theme.MotywPaletyPresety
 import dialer.dominik.pl.ui.theme.MotywEkranu
+import dialer.dominik.pl.ui.theme.MotywStan
 import dialer.dominik.pl.ui.theme.TelefonTheme
+import dialer.dominik.pl.ui.theme.aureolaSwiecaca
+import dialer.dominik.pl.ui.theme.tloCzarnaStal
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.ui.graphics.lerp
 import dialer.dominik.pl.update.AktualizacjaAplikacji
 import dialer.dominik.pl.ui.theme.IkonaUruchamiacza
 import androidx.lifecycle.lifecycleScope
@@ -96,6 +107,7 @@ class MainActivity : ComponentActivity() {
         // Treść rysowana pod paskami systemowymi (edge-to-edge)
         enableEdgeToEdge()
         dialer.dominik.pl.nagranie.TranskrypcjaForegroundService.obsluzIntent(intent)
+        obsluzNieodebraneSmsIntent(intent)
         // Debug / automatyka testów:
         // am start -n …/.MainActivity -a dialer.dominik.pl.adb.TEST_PAIR
         // am start -n …/.MainActivity -a dialer.dominik.pl.adb.TEST_PAIR_CODE --es kod 123456 --ei port 37123
@@ -163,6 +175,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         dialer.dominik.pl.nagranie.TranskrypcjaForegroundService.obsluzIntent(intent)
+        obsluzNieodebraneSmsIntent(intent)
         when (intent.action) {
             "dialer.dominik.pl.adb.TEST_PAIR" ->
                 dialer.dominik.pl.nagranie.adb.AdbParowanieService.startujIOtworzUstawienia(this)
@@ -181,6 +194,17 @@ class MainActivity : ComponentActivity() {
         // niszczy bieżące MainActivity (SecurityException / wyrzut do launchera).
         IkonaUruchamiacza.zastosujPoWyjsciu(this)
         super.onStop()
+    }
+
+    private fun obsluzNieodebraneSmsIntent(intencja: Intent?) {
+        if (intencja?.action == dialer.dominik.pl.call.PowiadomieniaNieodebranych.ACTION_OTWORZ_SMS) {
+            val numer = intencja.getStringExtra(dialer.dominik.pl.call.PowiadomieniaNieodebranych.EXTRA_NUMER).orEmpty()
+            if (numer.isNotBlank()) {
+                AppNavigationState.docelowaZakladka = Zakladka.Wiadomosci
+                AppNavigationState.numerStartowySms = numer
+                dialer.dominik.pl.call.PowiadomieniaNieodebranych.wyczysc(this)
+            }
+        }
     }
 }
 
@@ -243,6 +267,7 @@ private enum class EtapStartowy { Powitanie, Uprawnienia, Gotowa }
 object AppNavigationState {
     var docelowaZakladka: Zakladka? by mutableStateOf(null)
     var numerDoWybrania: String? by mutableStateOf(null)
+    var numerStartowySms: String? by mutableStateOf(null)
 }
 
 /**
@@ -265,7 +290,12 @@ private fun EkranZZakladkami(context: Context) {
         }
     }
 
-    LaunchedEffect(AppNavigationState.docelowaZakladka, AppNavigationState.numerDoWybrania, nagrywanieWlaczone) {
+    LaunchedEffect(
+        AppNavigationState.docelowaZakladka,
+        AppNavigationState.numerDoWybrania,
+        AppNavigationState.numerStartowySms,
+        nagrywanieWlaczone
+    ) {
         AppNavigationState.docelowaZakladka?.let { z ->
             zakladka = if (z == Zakladka.Nagrania && !nagrywanieWlaczone) Zakladka.Ustawienia else z
             AppNavigationState.docelowaZakladka = null
@@ -273,6 +303,13 @@ private fun EkranZZakladkami(context: Context) {
         AppNavigationState.numerDoWybrania?.let { num ->
             numerDoWybraniaNaMain = num
             AppNavigationState.numerDoWybrania = null
+        }
+        AppNavigationState.numerStartowySms?.let { num ->
+            if (num.isNotBlank()) {
+                numerStartowySms = num
+                zakladka = Zakladka.Wiadomosci
+            }
+            AppNavigationState.numerStartowySms = null
         }
     }
     // Czy na Wiadomościach jest otwarty czat (chowamy wtedy dolny pasek nawigacji).
@@ -452,7 +489,10 @@ private fun DolnyPasekZakladek(
     onWybierz: (Zakladka) -> Unit
 ) {
     val paleta = LocalMotyw.current
+    val motywStan by MotywStan.stan.collectAsState()
+    val wiedzmin = motywStan.paletaId == "wiedzmin"
     val ksztalt = RoundedCornerShape(paleta.promienKafla.dp + 4.dp)
+    val srebro = MotywPaletyPresety.AkcentSrebrnyWiedzmin
     // Bez navigationBarsPadding — dodaje je nakładka w EkranZZakladkami,
     // żeby padding treści i slide paska były zsynchronizowane.
     Box(
@@ -464,8 +504,27 @@ private fun DolnyPasekZakladek(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(ksztalt)
-                .background(paleta.kafelek.copy(alpha = if (paleta.ciemny) 0.92f else 0.96f))
-                .border(1.dp, paleta.kafelekRamka, ksztalt)
+                .then(
+                    if (wiedzmin) {
+                        Modifier
+                            .tloCzarnaStal(ksztalt, durationMs = 7800)
+                            .border(
+                                width = 1.dp,
+                                brush = Brush.verticalGradient(
+                                    listOf(
+                                        Color.White.copy(alpha = 0.35f),
+                                        srebro.copy(alpha = 0.55f),
+                                        Color.Black.copy(alpha = 0.65f)
+                                    )
+                                ),
+                                shape = ksztalt
+                            )
+                    } else {
+                        Modifier
+                            .background(paleta.kafelek.copy(alpha = if (paleta.ciemny) 0.92f else 0.96f))
+                            .border(1.dp, paleta.kafelekRamka, ksztalt)
+                    }
+                )
                 .padding(horizontal = 6.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -474,6 +533,8 @@ private fun DolnyPasekZakladek(
                 tytul = "Telefon",
                 zaznaczona = wybrana == Zakladka.Glowny,
                 ikona = IkonyAplikacji.TelefonLogo,
+                indeksZnaku = 0,
+                wiedzmin = wiedzmin,
                 modifier = Modifier.weight(1f),
                 onClick = { onWybierz(Zakladka.Glowny) }
             )
@@ -481,6 +542,8 @@ private fun DolnyPasekZakladek(
                 tytul = "Kontakty",
                 zaznaczona = wybrana == Zakladka.Kontakty,
                 ikona = IkonyAplikacji.NowyKontakt,
+                indeksZnaku = 1,
+                wiedzmin = wiedzmin,
                 modifier = Modifier.weight(1f),
                 onClick = { onWybierz(Zakladka.Kontakty) }
             )
@@ -488,6 +551,8 @@ private fun DolnyPasekZakladek(
                 tytul = "Wiadomości",
                 zaznaczona = wybrana == Zakladka.Wiadomosci,
                 ikona = IkonyAplikacji.Wiadomosc,
+                indeksZnaku = 2,
+                wiedzmin = wiedzmin,
                 modifier = Modifier.weight(1f),
                 onClick = { onWybierz(Zakladka.Wiadomosci) }
             )
@@ -496,6 +561,8 @@ private fun DolnyPasekZakladek(
                     tytul = "Nagrania",
                     zaznaczona = wybrana == Zakladka.Nagrania,
                     ikona = IkonyAplikacji.Nagrywanie,
+                    indeksZnaku = 3,
+                    wiedzmin = wiedzmin,
                     modifier = Modifier.weight(1f),
                     onClick = { onWybierz(Zakladka.Nagrania) }
                 )
@@ -504,6 +571,8 @@ private fun DolnyPasekZakladek(
                 tytul = "Ustawienia",
                 zaznaczona = wybrana == Zakladka.Ustawienia,
                 ikona = IkonyAplikacji.Ustawienia,
+                indeksZnaku = 4,
+                wiedzmin = wiedzmin,
                 modifier = Modifier.weight(1f),
                 onClick = { onWybierz(Zakladka.Ustawienia) }
             )
@@ -511,16 +580,45 @@ private fun DolnyPasekZakladek(
     }
 }
 
+/** Puls koloru znaku — montowany tylko na aktywnej zakładce. */
+@Composable
+private fun KolorZakladkiPulsujacy(bazowyZnak: Color, indeksZnaku: Int): Color {
+    val tPuls = rememberInfiniteTransition(label = "pulsZnaku$indeksZnaku")
+    val puls by tPuls.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2800 + indeksZnaku * 220, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "p"
+    )
+    return lerp(bazowyZnak, Color.White, 0.18f + puls * 0.35f)
+}
+
 @Composable
 private fun ElementZakladki(
     tytul: String,
     zaznaczona: Boolean,
     ikona: ImageVector,
+    indeksZnaku: Int,
+    wiedzmin: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val paleta = LocalMotyw.current
-    val kolorZawartosci by animateColorAsState(
+    // Każda zakładka = inny znak (Yrden, Quen, Igni, Axii, Aard)
+    val bazowyZnak = KoloryZnakowWiedzmina[indeksZnaku % KoloryZnakowWiedzmina.size]
+    // Puls tylko w osobnym composable gdy zaznaczona — inaczej 5× clock na idle.
+    val kolorZnaku = if (wiedzmin) {
+        if (zaznaczona) {
+            KolorZakladkiPulsujacy(bazowyZnak = bazowyZnak, indeksZnaku = indeksZnaku)
+        } else {
+            lerp(bazowyZnak, Color.White, 0.12f).copy(alpha = 0.78f)
+        }
+    } else null
+    val intensywnoscSwiatla = if (zaznaczona) 1.05f else 0.55f
+    val kolorZawartosciAnim by animateColorAsState(
         targetValue = when {
             zaznaczona -> paleta.naPrzycisku
             paleta.ciemny -> Color.White.copy(alpha = 0.48f)
@@ -529,30 +627,57 @@ private fun ElementZakladki(
         animationSpec = tween(200, easing = FastOutSlowInEasing),
         label = "kolorZakladki"
     )
+    val kolorZawartosci = kolorZnaku ?: kolorZawartosciAnim
     val alfaTla by animateFloatAsState(
         targetValue = if (zaznaczona) 1f else 0f,
         animationSpec = tween(200, easing = FastOutSlowInEasing),
         label = "alfaTlaZakladki"
     )
-    val baza = paleta.kafelek.copy(alpha = 0f)
-    val tlo = Brush.horizontalGradient(
-        colors = listOf(
-            androidx.compose.ui.graphics.lerp(baza, paleta.accentMorski, alfaTla),
-            androidx.compose.ui.graphics.lerp(baza, paleta.przycisk, alfaTla)
+    val baza = if (wiedzmin) Color(0xFF0A0B0D).copy(alpha = 0f) else paleta.kafelek.copy(alpha = 0f)
+    val tlo = if (wiedzmin) {
+        Brush.horizontalGradient(
+            colors = listOf(
+                lerp(baza, Color(0xFF1A1C20), alfaTla * 0.95f),
+                lerp(baza, Color(0xFF2A2E34), alfaTla)
+            )
         )
-    )
+    } else {
+        Brush.horizontalGradient(
+            colors = listOf(
+                lerp(baza, paleta.accentMorski, alfaTla),
+                lerp(baza, paleta.przycisk, alfaTla)
+            )
+        )
+    }
     val ksztalt = RoundedCornerShape(paleta.promienKafla.dp)
+    val ramkaZaznaczenia = when {
+        wiedzmin -> null // neonowaRamka poniżej
+        zaznaczona -> paleta.przycisk.copy(alpha = 0.45f)
+        else -> null
+    }
 
     Box(
         modifier = modifier
             .height(48.dp)
+            .then(
+                if (wiedzmin && zaznaczona) {
+                    // Aureola + neon tylko na aktywnej — bez setShadowLayer na 5 zakładkach.
+                    Modifier.aureolaSwiecaca(
+                        kolor = bazowyZnak,
+                        intensywnosc = intensywnoscSwiatla,
+                        rozmiar = 26.dp
+                    )
+                } else Modifier
+            )
             .clip(ksztalt)
             .background(tlo)
             .then(
-                if (zaznaczona) {
-                    Modifier.border(1.dp, paleta.przycisk.copy(alpha = 0.45f), ksztalt)
-                } else {
-                    Modifier
+                when {
+                    wiedzmin && zaznaczona ->
+                        Modifier.border(1.dp, bazowyZnak.copy(alpha = 0.75f), ksztalt)
+                    ramkaZaznaczenia != null ->
+                        Modifier.border(1.dp, ramkaZaznaczenia, ksztalt)
+                    else -> Modifier
                 }
             )
             .clickable(

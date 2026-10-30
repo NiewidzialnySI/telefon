@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import dialer.dominik.pl.ui.screens.rozlaczRozmowe
+import dialer.dominik.pl.ui.screens.wykonajPolaczenie
 
 class AkcjaPolaczeniaReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -23,6 +24,16 @@ class AkcjaPolaczeniaReceiver : BroadcastReceiver() {
             "AKCJA_ROZLACZ" -> {
                 // Niezawodne rozłączenie (disconnect + fallback endCall).
                 rozlaczRozmowe(context, usunLog = false)
+            }
+            "AKCJA_ODDZWON" -> {
+                PowiadomieniaNieodebranych.wyczysc(context)
+                val numer = intent.getStringExtra(PowiadomieniaNieodebranych.EXTRA_NUMER).orEmpty()
+                if (numer.isNotBlank()) {
+                    wykonajPolaczenie(context, numer)
+                }
+            }
+            "AKCJA_ANULUJ_NIEODEBRANE" -> {
+                PowiadomieniaNieodebranych.wyczysc(context)
             }
         }
     }

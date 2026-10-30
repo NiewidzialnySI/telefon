@@ -59,14 +59,18 @@ enum class AnimacjaTla(val klucz: String, val etykieta: String, val opis: String
     Fale("fale", "Fale", "Poziome fale światła"),
     Siatka("siatka", "Siatka", "Delikatna siatka z pulsem"),
     Iskry("iskry", "Iskry", "Rozproszone punkty światła"),
-    PipBoy("pipboy", "Pip-Boy", "CRT STATUS — sweep, fosfor, wireframe");
+    PipBoy("pipboy", "Pip-Boy", "CRT STATUS — sweep, fosfor, wireframe"),
+    Wiedzmin("wiedzmin", "Wiedźmin", "Film znaków — Leszy, Quen, pętla");
 
     companion object {
         fun zKlucza(klucz: String?): AnimacjaTla =
             entries.firstOrNull { it.klucz == klucz } ?: Aurora
 
         /** Animacje „tematyczne” — przy zmianie na zwykłą paletę wracamy do Aurory. */
-        val Tematyczne: Set<AnimacjaTla> = setOf(PipBoy)
+        val Tematyczne: Set<AnimacjaTla> = setOf(PipBoy, Wiedzmin)
+
+        /** Palety, przy których trzymamy odpowiadającą animację tematyczną. */
+        val PaletyTematyczne: Set<String> = setOf("fallout", "wiedzmin")
     }
 }
 
@@ -89,6 +93,11 @@ object MotywStan {
     private const val K_AURORA1 = "aurora1_argb"
     private const val K_AURORA2 = "aurora2_argb"
     private const val K_EKRANY = "ekrany_json"
+    private const val K_WIEDZMIN_TLO_STATYCZNE = "wiedzmin_tlo_statyczne"
+    private const val K_WIEDZMIN_TLO_WLASNE = "wiedzmin_tlo_wlasne"
+
+    /** Plik własnego tła w filesDir. */
+    const val PLIK_TLO_WLASNE = "tlo_wiedzmin_wlasne.jpg"
 
     val SEED_DOMYSLNY: Color = Color(0xFF69F0AE)
 
@@ -113,7 +122,11 @@ object MotywStan {
         /** null = wylicz z seeda */
         val aurora1: Color? = null,
         val aurora2: Color? = null,
-        val ekrany: Map<EkranMotywu, NadpisaniaEkranu> = emptyMap()
+        val ekrany: Map<EkranMotywu, NadpisaniaEkranu> = emptyMap(),
+        /** Wiedźmin: kadr zamiast pętli wideo. */
+        val wiedzminTloStatyczne: Boolean = false,
+        /** Absolute path własnego obrazu tła (null = domyślny film/kadr). */
+        val wiedzminTloWlasneSciezka: String? = null
     )
 
     private val _stan = MutableStateFlow(Stan())
@@ -150,8 +163,12 @@ object MotywStan {
                 else -> AnimacjaTla.Aurora
             }
         }.let { a ->
-            // Po usunięciu motywu tematycznego nie trzymaj PipBoy przy domyślnej palecie.
-            if (a in AnimacjaTla.Tematyczne && paletaId != "fallout") AnimacjaTla.Aurora else a
+            // Po usunięciu motywu tematycznego nie trzymaj PipBoy/Wiedźmin przy zwykłej palecie.
+            if (a in AnimacjaTla.Tematyczne && paletaId !in AnimacjaTla.PaletyTematyczne) {
+                AnimacjaTla.Aurora
+            } else {
+                a
+            }
         }
         _stan.value = Stan(
             tryb = tryb,
@@ -170,7 +187,10 @@ object MotywStan {
             animacjaTla = animacja,
             aurora1 = if (paletaUsunieta) null else kolorLubNull(K_AURORA1),
             aurora2 = if (paletaUsunieta) null else kolorLubNull(K_AURORA2),
-            ekrany = odczytajEkrany(p.getString(K_EKRANY, null))
+            ekrany = odczytajEkrany(p.getString(K_EKRANY, null)),
+            wiedzminTloStatyczne = p.getBoolean(K_WIEDZMIN_TLO_STATYCZNE, false),
+            wiedzminTloWlasneSciezka = p.getString(K_WIEDZMIN_TLO_WLASNE, null)
+                ?.takeIf { it.isNotBlank() && java.io.File(it).isFile }
         )
         zaladowane = true
         IkonaUruchamiacza.synchronizuj(context, _stan.value.paletaId)
@@ -198,6 +218,12 @@ object MotywStan {
         putKolor(K_AURORA1, nowy.aurora1)
         putKolor(K_AURORA2, nowy.aurora2)
         ed.putString(K_EKRANY, zapiszEkrany(nowy.ekrany))
+        ed.putBoolean(K_WIEDZMIN_TLO_STATYCZNE, nowy.wiedzminTloStatyczne)
+        if (nowy.wiedzminTloWlasneSciezka.isNullOrBlank()) {
+            ed.remove(K_WIEDZMIN_TLO_WLASNE)
+        } else {
+            ed.putString(K_WIEDZMIN_TLO_WLASNE, nowy.wiedzminTloWlasneSciezka)
+        }
         ed.apply()
         _stan.value = nowy
     }
@@ -209,14 +235,17 @@ object MotywStan {
     /** Wybór nazwanej palety (seed + secondary + tertiary + styl). */
     fun ustawPalete(context: Context, paleta: MotywPaletaNazwana) {
         val vault = paleta.id == "fallout"
+        val wiedzmin = paleta.id == "wiedzmin"
+        val tematyczny = vault || wiedzmin
         val poprzednia = _stan.value.animacjaTla
         val animacja = when {
             vault -> AnimacjaTla.PipBoy
+            wiedzmin -> AnimacjaTla.Wiedzmin
             poprzednia in AnimacjaTla.Tematyczne -> AnimacjaTla.Aurora
             else -> poprzednia
         }
         val tryb = when {
-            vault -> TrybMotywu.Ciemny
+            tematyczny -> TrybMotywu.Ciemny
             else -> _stan.value.tryb
         }
         zapisz(
@@ -230,10 +259,25 @@ object MotywStan {
                 paletaId = paleta.id,
                 animacjaTla = animacja,
                 auroraWlaczona = animacja != AnimacjaTla.Wylaczona,
-                kolorPrzycisku = if (vault) paleta.seed else null,
-                kolorKafelka = if (vault) Color(0xFF0A1A12) else null,
-                aurora1 = if (vault) Color(0xFF003E7E) else null,
-                aurora2 = if (vault) Color(0xFF18FF6D) else null
+                kolorPrzycisku = when {
+                    vault || wiedzmin -> paleta.seed
+                    else -> null
+                },
+                kolorKafelka = when {
+                    vault -> Color(0xFF0A1A12)
+                    wiedzmin -> Color(0xFF12100C)
+                    else -> null
+                },
+                aurora1 = when {
+                    vault -> Color(0xFF003E7E)
+                    wiedzmin -> Color(0xFF8B4DFF)
+                    else -> null
+                },
+                aurora2 = when {
+                    vault -> Color(0xFF18FF6D)
+                    wiedzmin -> MotywPaletyPresety.AkcentSrebrnyWiedzmin
+                    else -> null
+                }
             )
         )
         IkonaUruchamiacza.synchronizuj(context, paleta.id)
@@ -290,6 +334,38 @@ object MotywStan {
         )
     }
 
+    fun ustawWiedzminTloStatyczne(context: Context, statyczne: Boolean) {
+        zapisz(context, _stan.value.copy(wiedzminTloStatyczne = statyczne))
+    }
+
+    /**
+     * Kopiuje wybrany obraz do filesDir i zapisuje ścieżkę.
+     * @return true gdy się udało
+     */
+    fun ustawWiedzminTloWlasne(context: Context, uri: android.net.Uri): Boolean {
+        return try {
+            val dest = java.io.File(context.filesDir, PLIK_TLO_WLASNE)
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                dest.outputStream().use { output -> input.copyTo(output) }
+            } ?: return false
+            if (!dest.isFile || dest.length() < 64L) {
+                dest.delete()
+                return false
+            }
+            zapisz(context, _stan.value.copy(wiedzminTloWlasneSciezka = dest.absolutePath))
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun usunWiedzminTloWlasne(context: Context) {
+        runCatching {
+            java.io.File(context.filesDir, PLIK_TLO_WLASNE).delete()
+        }
+        zapisz(context, _stan.value.copy(wiedzminTloWlasneSciezka = null))
+    }
+
     fun ustawAuroraKolory(context: Context, a1: Color?, a2: Color?) {
         zapisz(context, _stan.value.copy(aurora1 = a1, aurora2 = a2))
     }
@@ -305,6 +381,9 @@ object MotywStan {
     }
 
     fun resetZaawansowane(context: Context) {
+        runCatching {
+            java.io.File(context.filesDir, PLIK_TLO_WLASNE).delete()
+        }
         zapisz(
             context,
             _stan.value.copy(
@@ -313,7 +392,9 @@ object MotywStan {
                 auroraWlaczona = true,
                 animacjaTla = AnimacjaTla.Aurora,
                 aurora1 = null,
-                aurora2 = null
+                aurora2 = null,
+                wiedzminTloStatyczne = false,
+                wiedzminTloWlasneSciezka = null
             )
         )
     }

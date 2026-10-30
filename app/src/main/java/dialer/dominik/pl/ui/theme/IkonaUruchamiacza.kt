@@ -17,6 +17,12 @@ object IkonaUruchamiacza {
 
     private const val DOMYSLNY = "neon_zielony"
 
+    /**
+     * Na razie ikona launchera NIE przełącza się przy zmianie motywu
+     * (Wiedźmin budujemy bez aliasów). Włącz z powrotem gdy ikony będą gotowe.
+     */
+    private const val ZMIANA_Z_MOTYWEM = false
+
     @Volatile
     private var oczekujacaPaletaId: String? = null
 
@@ -45,6 +51,7 @@ object IkonaUruchamiacza {
      * Synchronizacja z UI / startu. W foreground nie wyłącza komponentu bieżącej aktywności.
      */
     fun synchronizuj(context: Context, paletaId: String?) {
+        if (!ZMIANA_Z_MOTYWEM) return
         val docelowy = znormalizuj(paletaId)
         oczekujacaPaletaId = docelowy
         val chroniony = activityZ(context)
@@ -58,6 +65,7 @@ object IkonaUruchamiacza {
      * gdy użytkownik już wyszedł z aplikacji.
      */
     fun zastosujPoWyjsciu(context: Context) {
+        if (!ZMIANA_Z_MOTYWEM) return
         val docelowy = oczekujacaPaletaId ?: return
         zastosuj(context, docelowy, nieWylaczaj = null)
     }

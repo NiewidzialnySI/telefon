@@ -77,6 +77,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -166,6 +167,8 @@ fun MainDialerScreen(
     onNumerSkonsumowany: () -> Unit = {}
 ) {
     val paletaDialer = dialer.dominik.pl.ui.theme.LocalMotyw.current
+    val motywStan by dialer.dominik.pl.ui.theme.MotywStan.stan.collectAsState()
+    val wiedzminDialer = motywStan.paletaId == "wiedzmin"
     var wprowadzonyNumer by remember { mutableStateOf(poczatkowyNumer) }
     var pokazKlawiaturę by remember { mutableStateOf(poczatkowyNumer.isNotBlank()) }
 
@@ -687,26 +690,35 @@ fun MainDialerScreen(
                     ) {
                         Spacer(modifier = Modifier.width(48.dp))
 
-                        Text(
-                            text = wprowadzonyNumer.ifEmpty { "Wpisz numer…" },
-                            color = if (wprowadzonyNumer.isEmpty()) {
-                                paletaDialer.naTle.copy(alpha = 0.3f)
-                            } else {
-                                paletaDialer.naTle
-                            },
-                            fontSize = if (wprowadzonyNumer.isEmpty()) 22.sp else 32.sp,
-                            fontWeight = FontWeight.Medium,
-                            letterSpacing = 1.5.sp,
-                            maxLines = 1,
-                            modifier = Modifier
-                                .weight(1f)
-                                .combinedClickable(
-                                    onClick = { /* kliknięcie pola nic nie robi — klawiatura już widoczna */ },
-                                    // Długie przytrzymanie pola → wklej ze schowka
-                                    onLongClick = { pokazMenuWklejania = true }
-                                ),
-                            textAlign = TextAlign.Center
-                        )
+                        if (wiedzminDialer) {
+                            WyswietlaczNumeruWiedzmin(
+                                numer = wprowadzonyNumer,
+                                placeholder = "Wpisz numer…",
+                                modifier = Modifier.weight(1f),
+                                onLongClick = { pokazMenuWklejania = true }
+                            )
+                        } else {
+                            Text(
+                                text = wprowadzonyNumer.ifEmpty { "Wpisz numer…" },
+                                color = if (wprowadzonyNumer.isEmpty()) {
+                                    paletaDialer.naTle.copy(alpha = 0.3f)
+                                } else {
+                                    paletaDialer.naTle
+                                },
+                                fontSize = if (wprowadzonyNumer.isEmpty()) 22.sp else 32.sp,
+                                fontWeight = FontWeight.Medium,
+                                letterSpacing = 1.5.sp,
+                                maxLines = 1,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .combinedClickable(
+                                        onClick = { /* kliknięcie pola nic nie robi — klawiatura już widoczna */ },
+                                        // Długie przytrzymanie pola → wklej ze schowka
+                                        onLongClick = { pokazMenuWklejania = true }
+                                    ),
+                                textAlign = TextAlign.Center
+                            )
+                        }
 
                         // Prostoliniowy przycisk cofania — sama ikona, bez tła koła
                         Box(
@@ -722,7 +734,11 @@ fun MainDialerScreen(
                                 Icon(
                                     imageVector = IkonyAplikacji.Cofnij,
                                     contentDescription = "Usuń cyfrę",
-                                    tint = ZielonyNeon,
+                                    tint = if (wiedzminDialer) {
+                                        dialer.dominik.pl.ui.theme.MotywPaletyPresety.AkcentSrebrnyWiedzmin
+                                    } else {
+                                        ZielonyNeon
+                                    },
                                     modifier = Modifier.size(26.dp)
                                 )
                             }
@@ -749,7 +765,13 @@ fun MainDialerScreen(
                         onCyfraKliknieta = { cyfra -> wprowadzonyNumer += cyfra },
                         onZadzwon = {
                             if (wprowadzonyNumer.isNotBlank()) {
-                                wykonajPolaczenie(context, wprowadzonyNumer)
+                                val numer = wprowadzonyNumer
+                                if (dialer.dominik.pl.call.FejkowePolaczenieJp2.czyNumer(numer) ||
+                                    dialer.dominik.pl.call.FejkowePolaczenie420.czyNumer(numer)
+                                ) {
+                                    wprowadzonyNumer = ""
+                                }
+                                wykonajPolaczenie(context, numer)
                             }
                         },
                         onWiadomosc = { onOpenSms(wprowadzonyNumer) },
@@ -781,7 +803,11 @@ fun MainDialerScreen(
                         )
                         Text(
                             text = "︿",
-                            color = ZielonyNeon.copy(alpha = 0.75f),
+                            color = if (wiedzminDialer) {
+                                dialer.dominik.pl.ui.theme.MotywPaletyPresety.AkcentSrebrnyWiedzmin.copy(alpha = 0.9f)
+                            } else {
+                                ZielonyNeon.copy(alpha = 0.75f)
+                            },
                             fontSize = 30.sp,
                             lineHeight = 30.sp,
                             modifier = Modifier.padding(vertical = 2.dp)

@@ -89,8 +89,14 @@ import dialer.dominik.pl.sms.zapamietajKanal
 import dialer.dominik.pl.sms.zapamietajKontoKomunikatora
 import dialer.dominik.pl.ui.components.IkonyAplikacji
 import dialer.dominik.pl.ui.theme.CzarnyAmoled
+import dialer.dominik.pl.ui.theme.CzcionkiWiedzmina
 import dialer.dominik.pl.ui.theme.ZielonyMorski
 import dialer.dominik.pl.ui.theme.ZielonyNeon
+import dialer.dominik.pl.ui.theme.czyMotywWiedzmin
+import dialer.dominik.pl.ui.theme.motywAkcent
+import dialer.dominik.pl.ui.theme.tloSrebrnyPolysk
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.text.font.FontFamily
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
@@ -114,6 +120,8 @@ fun KontaktyScreen(
     pokazPasekWyszukiwania: Boolean = true
 ) {
     val paletaKontakty = dialer.dominik.pl.ui.theme.LocalMotyw.current
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
     var kontakty by remember { mutableStateOf<List<KontaktItem>>(emptyList()) }
         var zapytanie by remember { mutableStateOf("") }
         // Debounce szukania — bez tego każde literowanie filtruje całą książkę na Main.
@@ -199,7 +207,8 @@ fun KontaktyScreen(
                             color = paletaKontakty.naTle.copy(alpha = 0.42f),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Medium,
-                            letterSpacing = 2.2.sp
+                            letterSpacing = 2.2.sp,
+                            fontFamily = if (wiedzmin) CzcionkiWiedzmina.HelveticaNeue else FontFamily.Default
                         )
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
@@ -217,7 +226,7 @@ fun KontaktyScreen(
                                                     .padding(horizontal = 16.dp, vertical = 8.dp)
                                                     .clip(RoundedCornerShape(16.dp))
                                                     .background(dialer.dominik.pl.ui.theme.LocalMotyw.current.kafelek)
-                                                    .border(1.dp, ZielonyNeon.copy(alpha = 0.14f), RoundedCornerShape(16.dp))
+                                                    .border(1.dp, akcent.copy(alpha = 0.14f), RoundedCornerShape(16.dp))
                                                     .padding(start = 12.dp),
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
@@ -228,7 +237,7 @@ fun KontaktyScreen(
                                                     onValueChange = { zapytanie = it },
                                                     singleLine = true,
                                                     textStyle = TextStyle(color = kolorTekstuSzukaj, fontSize = 15.sp),
-                                                    cursorBrush = SolidColor(ZielonyNeon),
+                                                    cursorBrush = SolidColor(akcent),
                                                     modifier = Modifier
                                                         .weight(1f)
                                                         .padding(vertical = 12.dp),
@@ -250,13 +259,16 @@ fun KontaktyScreen(
                                                     modifier = Modifier
                                                         .size(48.dp)
                                                         .clip(RoundedCornerShape(0.dp))
-                                                        .background(ZielonyNeon.copy(alpha = 0.18f))
+                                                        .then(
+                                                            if (wiedzmin) Modifier.tloSrebrnyPolysk(RoundedCornerShape(0.dp))
+                                                            else Modifier.background(akcent.copy(alpha = 0.18f))
+                                                        )
                                                         .clickable { pokazNowyKontakt = true },
                                                     contentAlignment = Alignment.Center
                                                 ) {
                                                     Text(
                                                         text = "+",
-                                                        color = ZielonyNeon,
+                                                        color = if (wiedzmin) Color(0xFF1A1C1E) else akcent,
                                                         fontSize = 22.sp,
                                                         fontWeight = FontWeight.Bold
                                                     )
@@ -318,6 +330,7 @@ fun KontaktyScreen(
                                         context = context,
                                         rozwinieta = id in rozwiniete,
                                         ulubiony = kontakt.name in ulubione,
+                                        indeksZnaku = (kontakt.contactId % 5L).toInt().let { if (it < 0) -it else it },
                                         onToggleUlubione = {
                                             val nowe = if (kontakt.name in ulubione) {
                                                 ulubione - kontakt.name
@@ -427,7 +440,7 @@ fun KontaktyScreen(
                                 Text(
                                     text = litera.toString(),
                                     color = if (literaGestu == litera)
-                                        ZielonyMorski else ZielonyNeon,
+                                        akcent.copy(alpha = 0.55f) else akcent,
                                     fontSize = 11.sp,
                                     fontWeight = if (literaGestu == litera)
                                         FontWeight.Bold else FontWeight.SemiBold,
@@ -458,19 +471,22 @@ fun KontaktyScreen(
                                 .clip(RoundedCornerShape(24.dp))
                                 .background(
                                     Brush.linearGradient(
-                                        listOf(ZielonyMorski.copy(alpha = 0.9f), Color(0xFF0D1611))
+                                        listOf(
+                                            akcent.copy(alpha = 0.9f),
+                                            if (wiedzmin) Color(0xFF0A0B0D) else Color(0xFF0D1611)
+                                        )
                                     )
                                 )
                                 .border(
                                     1.dp,
-                                    ZielonyNeon.copy(alpha = 0.5f),
+                                    akcent.copy(alpha = 0.5f),
                                     RoundedCornerShape(24.dp)
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = (literaGestu ?: '?').toString(),
-                                color = ZielonyNeon,
+                                color = if (wiedzmin) Color(0xFF1A1C1E) else akcent,
                                 fontSize = 40.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -516,16 +532,19 @@ fun KontaktyScreen(
 
 @Composable
 private fun NaglowekSekcji(litera: Char) {
-                    Text(
-                        text = litera.toString(),
-                        color = ZielonyNeon.copy(alpha = 0.85f),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 12.dp, bottom = 2.dp)
-                    )
-                }
+    val akcent = motywAkcent()
+    val wiedzmin = czyMotywWiedzmin()
+    Text(
+        text = litera.toString(),
+        color = if (wiedzmin) dialer.dominik.pl.ui.theme.Pergamin.Zloto else akcent.copy(alpha = 0.85f),
+        fontSize = 13.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 1.sp,
+        fontFamily = if (wiedzmin) CzcionkiWiedzmina.HelveticaNeue else FontFamily.Default,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp, bottom = 2.dp)
+    )
+}
 
                 /** Karta pojedynczego kontaktu — rozwija się do wyboru kanału wiadomości. */

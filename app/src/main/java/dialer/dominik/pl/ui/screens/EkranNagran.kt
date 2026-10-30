@@ -91,6 +91,9 @@ import dialer.dominik.pl.ui.components.IkonyAplikacji
 import dialer.dominik.pl.ui.theme.CzerwonyPolaczenia
 import dialer.dominik.pl.ui.theme.LocalMotyw
 import dialer.dominik.pl.ui.theme.ZielonyNeon
+import dialer.dominik.pl.ui.theme.tloSrebrnyPolysk
+import dialer.dominik.pl.ui.theme.czyMotywWiedzmin
+import dialer.dominik.pl.ui.theme.motywAkcent
 import dialer.dominik.pl.ui.theme.gradientKafelka
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -355,6 +358,10 @@ fun EkranNagran(context: Context) {
 
 @Composable
 private fun PasekStatusuTranskrypcji(stan: TranskrypcjaRozmow.Stan) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
+
     val paleta = LocalMotyw.current
     when (stan) {
         is TranskrypcjaRozmow.Stan.Pobieranie -> {
@@ -371,7 +378,7 @@ private fun PasekStatusuTranskrypcji(stan: TranskrypcjaRozmow.Stan) {
                         .fillMaxWidth()
                         .height(3.dp)
                         .clip(RoundedCornerShape(2.dp)),
-                    color = ZielonyNeon,
+                    color = akcent,
                     trackColor = paleta.kafelekRamka
                 )
             }
@@ -387,7 +394,7 @@ private fun PasekStatusuTranskrypcji(stan: TranskrypcjaRozmow.Stan) {
         is TranskrypcjaRozmow.Stan.Transkrybuje -> {
             Text(
                 "Transkrypcja…",
-                color = ZielonyNeon,
+                color = akcent,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.padding(bottom = 4.dp)
@@ -422,6 +429,10 @@ private fun KartaNagrania(
     onUsun: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
+
     val paleta = LocalMotyw.current
     val context = androidx.compose.ui.platform.LocalContext.current
     val ksztalt = RoundedCornerShape(paleta.promienKafla.dp)
@@ -469,12 +480,12 @@ private fun KartaNagrania(
     }
 
     val tloPlay by animateColorAsState(
-        targetValue = if (gra) ZielonyNeon else ZielonyNeon.copy(alpha = 0.14f),
+        targetValue = if (gra) akcent else akcent.copy(alpha = 0.14f),
         animationSpec = tween(220),
         label = "tloPlay"
     )
     val tintPlay by animateColorAsState(
-        targetValue = if (gra) Color.Black else ZielonyNeon,
+        targetValue = if (gra) Color.Black else akcent,
         animationSpec = tween(220),
         label = "tintPlay"
     )
@@ -544,7 +555,7 @@ private fun KartaNagrania(
                 .background(paleta.gradientKafelka())
                 .border(
                     1.dp,
-                    if (gra) ZielonyNeon.copy(alpha = 0.35f) else paleta.kafelekRamka,
+                    if (gra) akcent.copy(alpha = 0.35f) else paleta.kafelekRamka,
                     ksztalt
                 )
                 .pointerInput(poz.plik.absolutePath, prog, otwartyUsun) {
@@ -615,7 +626,10 @@ private fun KartaNagrania(
                             scaleY = skalaPlay
                         }
                         .clip(CircleShape)
-                        .background(tloPlay)
+                        .then(
+                            if (wiedzmin && !gra) Modifier.tloSrebrnyPolysk(CircleShape)
+                            else Modifier.background(tloPlay)
+                        )
                         .clickable(onClick = onPlay),
                     contentAlignment = Alignment.Center
                 ) {
@@ -629,7 +643,7 @@ private fun KartaNagrania(
                         Icon(
                             imageVector = if (graj) IkonyAplikacji.Wciszenie else IkonyAplikacji.Nagrywanie,
                             contentDescription = if (graj) "Stop" else "Odtwórz",
-                            tint = tintPlay,
+                            tint = if (wiedzmin && !graj) Color(0xFF1A1C1E) else tintPlay,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -649,8 +663,8 @@ private fun KartaNagrania(
                         valueRange = 0f..maxMs,
                         modifier = Modifier.fillMaxWidth(),
                         colors = SliderDefaults.colors(
-                            thumbColor = ZielonyNeon,
-                            activeTrackColor = ZielonyNeon,
+                            thumbColor = akcent,
+                            activeTrackColor = akcent,
                             inactiveTrackColor = paleta.kafelekRamka
                         )
                     )
@@ -739,9 +753,13 @@ private fun KartaNagrania(
 
 @Composable
 private fun AwatarNagrania(bitmap: Bitmap?, inicial: String, aktywny: Boolean) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
+
     val paleta = LocalMotyw.current
     val ramka by animateColorAsState(
-        targetValue = if (aktywny) ZielonyNeon.copy(alpha = 0.55f) else Color.Transparent,
+        targetValue = if (aktywny) akcent.copy(alpha = 0.55f) else Color.Transparent,
         animationSpec = tween(220),
         label = "ramkaAwatar"
     )
@@ -751,7 +769,7 @@ private fun AwatarNagrania(bitmap: Bitmap?, inicial: String, aktywny: Boolean) {
             .border(1.5.dp, ramka, CircleShape)
             .padding(1.dp)
             .clip(CircleShape)
-            .background(ZielonyNeon.copy(alpha = 0.12f)),
+            .background(akcent.copy(alpha = 0.12f)),
         contentAlignment = Alignment.Center
     ) {
         if (bitmap != null) {
@@ -764,7 +782,7 @@ private fun AwatarNagrania(bitmap: Bitmap?, inicial: String, aktywny: Boolean) {
         } else {
             Text(
                 inicial,
-                color = ZielonyNeon,
+                color = akcent,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 16.sp
             )
@@ -780,16 +798,20 @@ private fun PrzyciskAkcjiNagrania(
     niebezpieczny: Boolean = false,
     onClick: () -> Unit,
 ) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
+
     val paleta = LocalMotyw.current
     val kolor = when {
         niebezpieczny -> CzerwonyPolaczenia
-        aktywny -> ZielonyNeon
+        aktywny -> akcent
         else -> paleta.tekstDrugorzedny
     }
     val tlo by animateColorAsState(
         targetValue = when {
             niebezpieczny -> CzerwonyPolaczenia.copy(alpha = 0.12f)
-            aktywny -> ZielonyNeon.copy(alpha = 0.14f)
+            aktywny -> akcent.copy(alpha = 0.14f)
             else -> paleta.naTle.copy(alpha = 0.06f)
         },
         animationSpec = tween(200),

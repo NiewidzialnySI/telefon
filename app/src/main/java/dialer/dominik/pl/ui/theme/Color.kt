@@ -46,7 +46,10 @@ val NaPrzycisku: Color get() = MotywAktualny.naPrzycisku
 /** @deprecated Używaj [NaPrzycisku] — zostawione pod stare wywołania. */
 val TekstNaZielonym: Color get() = MotywAktualny.naPrzycisku
 
-/** Czerwień połączenia / błędu — może iść z schematu. */
+/**
+ * Czerwień destrukcji (rozłącz, kosz, nieodebrane) — realistyczna krew,
+ * nie Material #E53935. W motywie idzie z [MotywAktualny.blad] (nadpisane na krew).
+ */
 val CzerwonyPolaczenia: Color get() = MotywAktualny.blad
 
 // --- Stan uprawnień (statyczne, mało zależne od motywu) ---

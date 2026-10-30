@@ -78,6 +78,8 @@ import dialer.dominik.pl.ui.theme.CzerwonyPolaczenia
 import dialer.dominik.pl.ui.theme.ZielonyMorski
 import dialer.dominik.pl.ui.theme.NaPrzycisku
 import dialer.dominik.pl.ui.theme.ZielonyNeon
+import dialer.dominik.pl.ui.theme.czyMotywWiedzmin
+import dialer.dominik.pl.ui.theme.motywAkcent
 import dialer.dominik.pl.ui.theme.gradientKafelka
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -104,6 +106,10 @@ internal fun EkranCzatuSzczegoly(
     /** Wywołane po animacji wyjścia (Wstecz) — rodzic przełącza na skrzynkę. */
     onWyjscie: (() -> Unit)? = null
 ) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
+
     val adres = watek.address
     val wybranaPlatforma = pobierzKanal(context, adres)
     val density = LocalDensity.current
@@ -399,7 +405,7 @@ internal fun EkranCzatuSzczegoly(
                         .size(40.dp)
                         .clip(CircleShape)
                         .background(
-                            Brush.horizontalGradient(listOf(ZielonyMorski, ZielonyNeon))
+                            Brush.horizontalGradient(listOf(akcentMorski, akcent))
                         )
                         .clickable { zadzwonDoKontaktu(context, adres) },
                     contentAlignment = Alignment.Center
@@ -549,7 +555,7 @@ internal fun EkranCzatuSzczegoly(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
                 .clip(RoundedCornerShape(14.dp))
                 .background(dialer.dominik.pl.ui.theme.LocalMotyw.current.gradientKafelka())
-                .border(1.dp, ZielonyNeon.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
+                .border(1.dp, akcent.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
                 .clickable {
                     val idx = wiadomosci.indexOfFirst { it.id == pinWpis.id }
                     if (idx != -1) {
@@ -563,13 +569,13 @@ internal fun EkranCzatuSzczegoly(
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(IkonyAplikacji.Gwiazda, contentDescription = "Przypięta", tint = ZielonyNeon, modifier = Modifier.size(18.dp))
+            Icon(IkonyAplikacji.Gwiazda, contentDescription = "Przypięta", tint = akcent, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Przypięta wiadomość", color = ZielonyNeon, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text("Przypięta wiadomość", color = akcent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     if (przypisaneWpisy.size > 1) {
-                        Text("(${bezpiecznyIndeks + 1}/${przypisaneWpisy.size})", color = ZielonyNeon.copy(alpha = 0.7f), fontSize = 10.sp)
+                        Text("(${bezpiecznyIndeks + 1}/${przypisaneWpisy.size})", color = akcent.copy(alpha = 0.7f), fontSize = 10.sp)
                     }
                 }
                 Text(
@@ -585,7 +591,7 @@ internal fun EkranCzatuSzczegoly(
                     onClick = { aktualnyPinIndeks = (aktualnyPinIndeks + 1) % przypisaneWpisy.size },
                     modifier = Modifier.size(28.dp)
                 ) {
-                    Icon(IkonyAplikacji.Strzalka, contentDescription = "Następna", tint = ZielonyNeon, modifier = Modifier.size(14.dp))
+                    Icon(IkonyAplikacji.Strzalka, contentDescription = "Następna", tint = akcent, modifier = Modifier.size(14.dp))
                 }
             }
             IconButton(
@@ -611,17 +617,17 @@ internal fun EkranCzatuSzczegoly(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
                 .clip(RoundedCornerShape(14.dp))
                 .background(dialer.dominik.pl.ui.theme.LocalMotyw.current.kafelek)
-                .border(1.dp, ZielonyNeon.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
+                .border(1.dp, akcent.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
                 .padding(start = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(IkonyAplikacji.Lupa, contentDescription = null, tint = ZielonyNeon, modifier = Modifier.size(18.dp))
+            Icon(IkonyAplikacji.Lupa, contentDescription = null, tint = akcent, modifier = Modifier.size(18.dp))
             BasicTextField(
                 value = szukaneWCzacie,
                 onValueChange = { szukaneWCzacie = it },
                 singleLine = true,
                 textStyle = TextStyle(color = kolorTekstuSzukaj, fontSize = 15.sp),
-                cursorBrush = SolidColor(ZielonyNeon),
+                cursorBrush = SolidColor(akcent),
                 modifier = Modifier.weight(1f).padding(horizontal = 10.dp, vertical = 12.dp).focusRequester(poleSzukaniaFocus),
                 decorationBox = { inner ->
                     if (szukaneWCzacie.isEmpty()) Text("Szukaj w tej rozmowie…", color = kolorTekstuSzukaj.copy(alpha = 0.35f), fontSize = 15.sp)
@@ -675,12 +681,12 @@ internal fun EkranCzatuSzczegoly(
             // Planowane (na górze, wyróżnione).
             items(planowane, key = { "pl_" + it.second }) { (_, czas, trescPl) ->
                 val podgladCzasu = java.text.SimpleDateFormat("dd.MM, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(czas))
-                Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(dialer.dominik.pl.ui.theme.LocalMotyw.current.kafelek).border(1.dp, ZielonyNeon.copy(alpha = 0.2f), RoundedCornerShape(14.dp)).padding(10.dp)) {
+                Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(dialer.dominik.pl.ui.theme.LocalMotyw.current.kafelek).border(1.dp, akcent.copy(alpha = 0.2f), RoundedCornerShape(14.dp)).padding(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        dialer.dominik.pl.ui.components.icons.IkonaZegaraCzasu(czasMs = czas, modifier = Modifier.size(18.dp), kolor = ZielonyNeon)
+                        dialer.dominik.pl.ui.components.icons.IkonaZegaraCzasu(czasMs = czas, modifier = Modifier.size(18.dp), kolor = akcent)
                         Spacer(Modifier.width(8.dp))
                         Column {
-                            Text("Zaplanowano: $podgladCzasu", color = ZielonyNeon, fontSize = 11.sp)
+                            Text("Zaplanowano: $podgladCzasu", color = akcent, fontSize = 11.sp)
                             Text(trescPl, color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle.copy(alpha = 0.85f), fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
                     }
@@ -752,12 +758,12 @@ internal fun EkranCzatuSzczegoly(
                     },
                     modifier = Modifier.size(48.dp).background(Color.Black.copy(alpha = 0.45f), CircleShape)
                 ) {
-                    Icon(IkonyAplikacji.Strzalka, contentDescription = "Poprzednie", tint = ZielonyNeon, modifier = Modifier.size(22.dp).graphicsLayer { rotationZ = -90f })
+                    Icon(IkonyAplikacji.Strzalka, contentDescription = "Poprzednie", tint = akcent, modifier = Modifier.size(22.dp).graphicsLayer { rotationZ = -90f })
                 }
                 // Licznik trafień.
                 Text(
                     text = "${aktualneTrafienie + 1}/${trafNakl.size}",
-                    color = ZielonyNeon,
+                    color = akcent,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(vertical = 4.dp).background(Color.Black.copy(alpha = 0.45f), CircleShape).padding(horizontal = 6.dp, vertical = 2.dp)
@@ -777,7 +783,7 @@ internal fun EkranCzatuSzczegoly(
                     },
                     modifier = Modifier.size(48.dp).background(Color.Black.copy(alpha = 0.45f), CircleShape)
                 ) {
-                    Icon(IkonyAplikacji.Strzalka, contentDescription = "Następne", tint = ZielonyNeon, modifier = Modifier.size(22.dp).graphicsLayer { rotationZ = 90f })
+                    Icon(IkonyAplikacji.Strzalka, contentDescription = "Następne", tint = akcent, modifier = Modifier.size(22.dp).graphicsLayer { rotationZ = 90f })
                 }
                 // ✕ — wyłącza tryb wyszukiwania (na dole).
                 IconButton(
@@ -811,7 +817,7 @@ internal fun EkranCzatuSzczegoly(
         ) {
             Column {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).clip(RoundedCornerShape(12.dp)).background(dialer.dominik.pl.ui.theme.LocalMotyw.current.gradientKafelka()).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    dialer.dominik.pl.ui.components.icons.IkonaZegaraCzasu(czasMs = planCzasMs ?: 0L, modifier = Modifier.size(16.dp), kolor = ZielonyNeon)
+                    dialer.dominik.pl.ui.components.icons.IkonaZegaraCzasu(czasMs = planCzasMs ?: 0L, modifier = Modifier.size(16.dp), kolor = akcent)
                     Spacer(Modifier.width(8.dp))
                     Text("Wiadomość zostanie wysłana: $planPodglad — kliknij wyślij, aby potwierdzić", color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle.copy(alpha = 0.9f), fontSize = 12.sp, modifier = Modifier.weight(1f))
                     IconButton(onClick = { planCzasMs = null; planPodglad = null }, modifier = Modifier.size(28.dp)) {
@@ -833,12 +839,12 @@ internal fun EkranCzatuSzczegoly(
                 Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)
                     .clip(RoundedCornerShape(14.dp))
                     .background(dialer.dominik.pl.ui.theme.LocalMotyw.current.kafelek)
-                    .border(1.dp, ZielonyNeon.copy(alpha = 0.2f), RoundedCornerShape(14.dp))
+                    .border(1.dp, akcent.copy(alpha = 0.2f), RoundedCornerShape(14.dp))
                     .padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(Modifier.weight(1f).padding(start = 4.dp)) {
-                    Text("Odpowiadasz na:", color = ZielonyNeon, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text("Odpowiadasz na:", color = akcent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     Text(cytat.body, color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle.copy(alpha = 0.85f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 IconButton(onClick = { cytowanaWiadomosc = null }, modifier = Modifier.size(30.dp)) {
@@ -851,7 +857,7 @@ internal fun EkranCzatuSzczegoly(
             val licznik = obliczLicznikSms(tresc)
             Text(
                 text = licznik,
-                color = ZielonyNeon.copy(alpha = 0.7f),
+                color = akcent.copy(alpha = 0.7f),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.align(Alignment.End).padding(end = 16.dp, bottom = 2.dp)
@@ -916,7 +922,7 @@ internal fun EkranCzatuSzczegoly(
                                 .fillMaxWidth()
                                 .padding(horizontal = 14.dp, vertical = 4.dp)
                                 .height(1.dp)
-                                .background(ZielonyNeon.copy(alpha = 0.12f))
+                                .background(akcent.copy(alpha = 0.12f))
                         )
                     }
                 }
@@ -947,7 +953,7 @@ internal fun EkranCzatuSzczegoly(
                                 in 2..4 -> "${zalaczniki.size} zdjęcia · MMS"
                                 else -> "${zalaczniki.size} zdjęć · MMS"
                             },
-                            color = ZielonyNeon.copy(alpha = 0.75f),
+                            color = akcent.copy(alpha = 0.75f),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Medium,
                             modifier = Modifier.weight(1f)
@@ -987,7 +993,7 @@ internal fun EkranCzatuSzczegoly(
                             .fillMaxWidth()
                             .padding(horizontal = 14.dp, vertical = 2.dp)
                             .height(1.dp)
-                            .background(ZielonyNeon.copy(alpha = 0.12f))
+                            .background(akcent.copy(alpha = 0.12f))
                     )
                 }
             }
@@ -1004,8 +1010,8 @@ internal fun EkranCzatuSzczegoly(
                         )
                         .then(
                             if (maZalaczniki) Modifier.background(
-                                Brush.horizontalGradient(listOf(ZielonyMorski, ZielonyNeon))
-                            ) else Modifier.background(ZielonyNeon.copy(alpha = 0.16f))
+                                Brush.horizontalGradient(listOf(akcentMorski, akcent))
+                            ) else Modifier.background(akcent.copy(alpha = 0.16f))
                         )
                         .combinedClickable(
                             onClick = { pokazWyborZalacznika = !pokazWyborZalacznika },
@@ -1016,7 +1022,7 @@ internal fun EkranCzatuSzczegoly(
                     Icon(
                         imageVector = IkonyAplikacji.Zlacznik,
                         contentDescription = "Dodaj załącznik",
-                        tint = if (maZalaczniki) NaPrzycisku else ZielonyNeon,
+                        tint = if (maZalaczniki) NaPrzycisku else akcent,
                         modifier = Modifier.size(28.dp)
                     )
                 }
@@ -1028,7 +1034,7 @@ internal fun EkranCzatuSzczegoly(
                         zapiszDraftCzatu(context, adres, tresc)
                     },
                     textStyle = TextStyle(color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle, fontSize = 15.sp),
-                    cursorBrush = SolidColor(ZielonyNeon),
+                    cursorBrush = SolidColor(akcent),
                     maxLines = 6,
                     modifier = Modifier
                         .align(Alignment.CenterStart)
@@ -1053,8 +1059,8 @@ internal fun EkranCzatuSzczegoly(
                         )
                         .then(
                             if (tresc.isNotBlank() || maZalaczniki) Modifier.background(
-                                Brush.horizontalGradient(listOf(ZielonyMorski, ZielonyNeon))
-                            ) else Modifier.background(ZielonyNeon.copy(alpha = 0.18f))
+                                Brush.horizontalGradient(listOf(akcentMorski, akcent))
+                            ) else Modifier.background(akcent.copy(alpha = 0.18f))
                         )
                         .combinedClickable(
                             onClick = {
@@ -1147,7 +1153,7 @@ internal fun EkranCzatuSzczegoly(
                         Icon(
                             IkonyAplikacji.Strzalka,
                             contentDescription = "Wyślij",
-                            tint = if (tresc.isNotBlank() || maZalaczniki) NaPrzycisku else ZielonyNeon,
+                            tint = if (tresc.isNotBlank() || maZalaczniki) NaPrzycisku else akcent,
                             modifier = Modifier.size(26.dp)
                         )
                     }
@@ -1306,7 +1312,7 @@ internal fun EkranCzatuSzczegoly(
                         .size(48.dp)
                         .background(Color.Black.copy(alpha = 0.5f), CircleShape)
                 ) {
-                    Icon(IkonyAplikacji.Galeria, contentDescription = "Zapisz", tint = ZielonyNeon, modifier = Modifier.size(24.dp))
+                    Icon(IkonyAplikacji.Galeria, contentDescription = "Zapisz", tint = akcent, modifier = Modifier.size(24.dp))
                 }
                 // Przycisk Zamknij (X)
                 IconButton(
@@ -1352,18 +1358,22 @@ private fun dekodujPodgladZdjecia(
 
 @Composable
 private fun PrzyciskDodajZalacznik(onClick: () -> Unit) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
+
     Box(
         modifier = Modifier
             .size(72.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(ZielonyNeon.copy(alpha = 0.10f))
-            .border(1.dp, ZielonyNeon.copy(alpha = 0.28f), RoundedCornerShape(12.dp))
+            .background(akcent.copy(alpha = 0.10f))
+            .border(1.dp, akcent.copy(alpha = 0.28f), RoundedCornerShape(12.dp))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = "+",
-            color = ZielonyNeon,
+            color = akcent,
             fontSize = 32.sp,
             fontWeight = FontWeight.Light,
             modifier = Modifier.offset(y = (-2).dp)
@@ -1377,6 +1387,10 @@ private fun MiniaturaZalacznika(
     onKlik: () -> Unit,
     onUsun: () -> Unit
 ) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
+
     var widoczna by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { widoczna = true }
     val skala by animateFloatAsState(
@@ -1405,7 +1419,7 @@ private fun MiniaturaZalacznika(
             contentDescription = "Edytuj zdjęcie",
             modifier = Modifier
                 .fillMaxSize()
-                .border(1.dp, ZielonyNeon.copy(alpha = 0.22f), RoundedCornerShape(12.dp)),
+                .border(1.dp, akcent.copy(alpha = 0.22f), RoundedCornerShape(12.dp)),
             contentScale = ContentScale.Crop
         )
         Box(
@@ -1431,6 +1445,10 @@ private fun MiniaturaZalacznika(
 
 @Composable
 private fun OpcjaZalacznika(tekst: String, ikona: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
+
     Row(
         Modifier
             .fillMaxWidth()
@@ -1438,7 +1456,7 @@ private fun OpcjaZalacznika(tekst: String, ikona: androidx.compose.ui.graphics.v
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(ikona, contentDescription = null, tint = ZielonyNeon, modifier = Modifier.size(22.dp))
+        Icon(ikona, contentDescription = null, tint = akcent, modifier = Modifier.size(22.dp))
         Spacer(Modifier.width(12.dp))
         Text(tekst, color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle, fontSize = 15.sp, fontWeight = FontWeight.Medium)
     }

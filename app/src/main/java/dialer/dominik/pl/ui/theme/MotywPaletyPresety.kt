@@ -27,6 +27,9 @@ data class MotywPaletaNazwana(
 
 object MotywPaletyPresety {
 
+    /** Domyślny akcent chrome UI motywu Wiedźmin (medaliony / stal — nie złoto Quen). */
+    val AkcentSrebrnyWiedzmin: Color = Color(0xFFC5CAD3)
+
     val Wszystkie: List<MotywPaletaNazwana> = listOf(
         MotywPaletaNazwana(
             id = "neon_zielony",
@@ -84,6 +87,15 @@ object MotywPaletyPresety {
             seed = Color(0xFFF5D76E),       // Vault-Tec yellow
             secondary = Color(0xFF003E7E),  // Vault-Tec navy
             tertiary = Color(0xFF18FF6D),   // Pip-Boy phosphor green
+            styl = PaletteStyle.Vibrant
+        ),
+        // Wiedźmin — srebrny akcent UI; znaki (Yrden/Quen/…) osobno w animacjach
+        MotywPaletaNazwana(
+            id = "wiedzmin",
+            nazwa = "Wiedźmin",
+            seed = AkcentSrebrnyWiedzmin,
+            secondary = Color(0xFF8B4DFF),  // Yrden
+            tertiary = Krew.Tetnicza,       // Igni / krew
             styl = PaletteStyle.Vibrant
         ),
     )
