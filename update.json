@@ -1,6 +1,6 @@
 {
-  "versionCode": 3,
-  "versionName": "1.2-test",
-  "apkUrl": "https://github.com/NiewidzialnySI/telefon/releases/download/v1.2-test/telefon-v1.2-test.apk",
-  "changelog": "Kafelek aktualizacji + chooser instalacji."
+  "versionCode": 5,
+  "versionName": "1.3",
+  "apkUrl": "https://github.com/NiewidzialnySI/telefon/releases/download/v1.3/telefon-v1.3.apk",
+  "changelog": "Backup v2 (ADB, nagrania, ochrona przed pustą kopią), nagrywanie hybryda MIC+downlink, pełniejsze uprawnienia, auto-powrót po dostępności, motywy."
 }

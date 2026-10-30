@@ -140,12 +140,21 @@ object BackupDyskGoogle {
             BackupStan.postep(0.22f, "Pakowanie danych…")
             val nazwa = nazwaPlikuBackup()
             val json = zbudujJsonBackup(context)
+            val ocena = ocenBackupJson(json)
+            // Nie wysyłaj pustej / prawie pustej kopii — nie zaśmiecaj Drive i nie
+            // ryzykuj, że „najnowsza” przywróci pustkę.
+            if (ocena.pusty) {
+                return Wynik.Blad(
+                    "Backup odrzucony: lokalne dane wyglądają na puste " +
+                        "(${ocena.opis}). Nie nadpisuję dobrej kopii na Dysku.",
+                )
+            }
             BackupStan.postep(0.45f, "Wysyłanie na Dysk…")
             wgrajPlik(token, folderId, nazwa, json)
             BackupStan.postep(0.95f, "Kończenie…")
             val teraz = System.currentTimeMillis()
             BackupStan.zapiszOstatniBackup(context, teraz)
-            Wynik.Sukces("Zapisano: $NAZWA_FOLDERU/$nazwa")
+            Wynik.Sukces("Zapisano: $NAZWA_FOLDERU/$nazwa (${ocena.opis})")
         } catch (e: Exception) {
             Log.e(TAG, "backup", e)
             Wynik.Blad(e.message?.takeIf { it.isNotBlank() } ?: "Błąd backupu")
@@ -156,17 +165,94 @@ object BackupDyskGoogle {
         return try {
             BackupStan.postep(0.1f, "Szukanie kopii…")
             val folderId = znajdzLubUtworzFolder(token)
-            val plik = znajdzNajnowszyBackupMeta(token, folderId)
-                ?: return Wynik.Blad("Brak kopii w folderze $NAZWA_FOLDERU")
-            BackupStan.postep(0.35f, "Pobieranie…")
-            val json = pobierzTrescPliku(token, plik.id)
-            BackupStan.postep(0.75f, "Przywracanie…")
-            przywrocZJson(context, json)
+            // Nie bierz ślepo najnowszego pliku — może być pusty; wybierz najlepszy.
+            val kandydaci = znajdzKandydatowBackup(token, folderId)
+                .ifEmpty { return Wynik.Blad("Brak kopii w folderze $NAZWA_FOLDERU") }
+
+            var najlepszy: Pair<PlikMeta, String>? = null
+            var najlepszaOcena = OcenaBackup(0, 0, 0, maAdb = false, pusty = true, opis = "brak")
+            for (meta in kandydaci) {
+                BackupStan.postep(0.25f, "Sprawdzam ${meta.name}…")
+                val json = runCatching { pobierzTrescPliku(token, meta.id) }.getOrNull()
+                    ?: continue
+                val ocena = ocenBackupJson(json)
+                if (ocena.pusty) {
+                    Log.w(TAG, "pomijam pusty backup ${meta.name}")
+                    continue
+                }
+                if (ocena.wynik > najlepszaOcena.wynik) {
+                    najlepszaOcena = ocena
+                    najlepszy = meta to json
+                }
+            }
+            val wybrany = najlepszy
+                ?: return Wynik.Blad(
+                    "Na Dysku są tylko puste/uszkodzone kopie — lokalnych danych nie ruszam.",
+                )
+
+            val lokalnyJson = zbudujJsonBackup(context)
+            val lokalna = ocenBackupJson(lokalnyJson)
+            // Lokalnie dużo danych, a kopia chudsza → nie pozwalaj na „przywróć pustkę”.
+            if (!lokalna.pusty && najlepszaOcena.wynik * 2 < lokalna.wynik) {
+                return Wynik.Blad(
+                    "Odmowa przywracania: lokalnie masz bogatsze dane (${lokalna.opis}) " +
+                        "niż wybrana kopia (${najlepszaOcena.opis}). " +
+                        "Najpierw zrób świeży backup albo wyczyść dane aplikacji.",
+                )
+            }
+
+            BackupStan.postep(0.75f, "Przywracanie ${wybrany.first.name}…")
+            przywrocZJson(context, wybrany.second)
             BackupStan.postep(0.95f, "Kończenie…")
-            Wynik.Sukces("Przywrócono: ${plik.name}")
+            Wynik.Sukces("Przywrócono: ${wybrany.first.name} (${najlepszaOcena.opis})")
         } catch (e: Exception) {
             Log.e(TAG, "przywroc", e)
             Wynik.Blad(e.message?.takeIf { it.isNotBlank() } ?: "Błąd przywracania")
+        }
+    }
+
+    /** Jakość kopii — do odrzucania pustych uploadów / restore. */
+    data class OcenaBackup(
+        val wynik: Int,
+        val prefsKlucze: Int,
+        val nagrania: Int,
+        val maAdb: Boolean,
+        val pusty: Boolean,
+        val opis: String,
+    )
+
+    fun ocenBackupJson(json: String): OcenaBackup {
+        return try {
+            val root = JSONObject(json)
+            if (root.optString("aplikacja").isBlank() && !root.has("prefs")) {
+                return OcenaBackup(0, 0, 0, false, true, "brak struktury")
+            }
+            val prefs = root.optJSONObject("prefs") ?: JSONObject()
+            var klucze = 0
+            val pk = prefs.keys()
+            while (pk.hasNext()) {
+                val nazwa = pk.next()
+                if (nazwa == "backup_meta") continue
+                klucze += prefs.optJSONObject(nazwa)?.length() ?: 0
+            }
+            val pliki = root.optJSONObject("pliki") ?: JSONObject()
+            val nagrania = pliki.optJSONObject("nagrania")?.length() ?: 0
+            val metaN = pliki.optJSONArray("nagrania_meta")?.length() ?: 0
+            val tr = pliki.optJSONObject("transkrypcje")?.length() ?: 0
+            val maAdb = pliki.optJSONObject("adb")?.optString("adbkey").orEmpty().isNotBlank()
+            val wynik = klucze * 3 + nagrania * 20 + metaN * 2 + tr * 5 + if (maAdb) 50 else 0
+            // Pusty = praktycznie zero ustawień użytkownika i zero plików.
+            val pusty = klucze < 2 && nagrania == 0 && !maAdb && tr == 0
+            OcenaBackup(
+                wynik = wynik,
+                prefsKlucze = klucze,
+                nagrania = nagrania,
+                maAdb = maAdb,
+                pusty = pusty,
+                opis = "prefs=$klucze nagrania=$nagrania adb=$maAdb wynik=$wynik",
+            )
+        } catch (e: Exception) {
+            OcenaBackup(0, 0, 0, false, true, "uszkodzony JSON: ${e.message}")
         }
     }
 
@@ -195,23 +281,33 @@ object BackupDyskGoogle {
         return postJson(token, "$DRIVE/files?fields=id,name", meta.toString()).getString("id")
     }
 
-    private fun znajdzNajnowszyBackupMeta(token: String, folderId: String): PlikMeta? {
+    private fun znajdzNajnowszyBackupMeta(token: String, folderId: String): PlikMeta? =
+        znajdzKandydatowBackup(token, folderId).firstOrNull()
+
+    /** Ostatnie kopie (nowe → stare) — restore wybierze najlepszą niepustą. */
+    private fun znajdzKandydatowBackup(token: String, folderId: String, limit: Int = 8): List<PlikMeta> {
         val q = URLEncoder.encode(
             "'$folderId' in parents and mimeType='$MIME_JSON' and trashed=false",
             "UTF-8"
         )
         val lista = getJson(
             token,
-            "$DRIVE/files?q=$q&orderBy=createdTime desc&pageSize=1&fields=files(id,name,createdTime)"
+            "$DRIVE/files?q=$q&orderBy=createdTime desc&pageSize=$limit&fields=files(id,name,createdTime,size)"
         )
-        val files = lista.optJSONArray("files") ?: return null
-        if (files.length() == 0) return null
-        val f = files.getJSONObject(0)
-        return PlikMeta(
-            id = f.getString("id"),
-            name = f.getString("name"),
-            createdMs = parsujIso(f.optString("createdTime"))
-        )
+        val files = lista.optJSONArray("files") ?: return emptyList()
+        val out = ArrayList<PlikMeta>(files.length())
+        for (i in 0 until files.length()) {
+            val f = files.getJSONObject(i)
+            // Pomiń podejrzanie małe pliki (< ~80 B = prawie pusty JSON).
+            val size = f.optString("size").toLongOrNull() ?: -1L
+            if (size in 0 until 80L) continue
+            out += PlikMeta(
+                id = f.getString("id"),
+                name = f.getString("name"),
+                createdMs = parsujIso(f.optString("createdTime")),
+            )
+        }
+        return out
     }
 
     private fun parsujIso(iso: String): Long {
@@ -411,7 +507,23 @@ object BackupDyskGoogle {
             .put("pomija", pomija)
             .put("prefs", prefsObj)
             .put("pliki", pliki)
+            .put(
+                "ocena",
+                JSONObject()
+                    .put("prefs_plikow", prefsNazwy.size)
+                    .put("nagrania_w_kopii", wavB64.length())
+                    .put("ma_adb", pliki.has("adb")),
+            )
             .toString(2)
+    }
+
+    /**
+     * Przy restore: nie czyść lokalnego pliku prefs, jeśli w kopii ta sekcja jest pusta,
+     * a lokalnie ma wpisy (ochrona przed częściowo pustym JSON).
+     */
+    private fun prefsLokalnieMaDane(context: Context, nazwa: String): Boolean {
+        val all = context.getSharedPreferences(nazwa, Context.MODE_PRIVATE).all
+        return all.isNotEmpty()
     }
 
     private fun serializujPrefs(sp: SharedPreferences): JSONObject {
@@ -440,11 +552,21 @@ object BackupDyskGoogle {
             throw IllegalStateException("Nieobsługiwana wersja kopii")
         }
         val prefs = root.optJSONObject("prefs") ?: throw IllegalStateException("Brak sekcji prefs")
+        // Druga bariera: nie przywracaj, jeśli cała kopia jest pusta.
+        val ocena = ocenBackupJson(json)
+        if (ocena.pusty) {
+            throw IllegalStateException("Kopia jest pusta — lokalnych danych nie nadpisuję")
+        }
         val klucze = prefs.keys()
         while (klucze.hasNext()) {
             val nazwa = klucze.next()
             if (nazwa == "backup_meta") continue
             val wpisy = prefs.getJSONObject(nazwa)
+            // Pusta sekcja w JSON + lokalne dane → zostaw lokalne (nie clear()).
+            if (wpisy.length() == 0 && prefsLokalnieMaDane(context, nazwa)) {
+                Log.w(TAG, "pomijam pustą sekcję prefs '$nazwa' — lokalnie są dane")
+                continue
+            }
             val ed = context.getSharedPreferences(nazwa, Context.MODE_PRIVATE).edit().clear()
             val ik = wpisy.keys()
             while (ik.hasNext()) {
