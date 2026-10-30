@@ -170,10 +170,9 @@ object ShizukuKlient {
             odswiez(force = true)
             return true
         }
-        // „Nie pytaj ponownie” — dialog API nie wystartuje; otwórz Shizuku.
-        if (runCatching { Shizuku.shouldShowRequestPermissionRationale() }.getOrDefault(false)) {
-            return false
-        }
+        // shouldShowRequestPermissionRationale()==true → user odmówił raz, wolno pytać ponownie.
+        // false + brak zgody → pierwsze pytanie ALBO „nie pytaj ponownie” (dialog może nie wejść;
+        // wtedy [napraw] otworzy aplikację Shizuku).
         return suspendCancellableCoroutine { cont ->
             permissionCont?.resume(false)
             permissionCont = cont

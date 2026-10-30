@@ -53,7 +53,13 @@ class AkcjaSmsReceiver : BroadcastReceiver() {
                 @Suppress("DEPRECATION")
                 SmsManager.getDefault()
             }
-            smsManager.sendTextMessage(numer, null, tresc, null, null)
+            val czesci = smsManager.divideMessage(tresc)
+            if (czesci.isNullOrEmpty()) return
+            if (czesci.size == 1) {
+                smsManager.sendTextMessage(numer, null, czesci[0], null, null)
+            } else {
+                smsManager.sendMultipartTextMessage(numer, null, czesci, null, null)
+            }
 
             // Dodaj wysłaną wiadomość do systemowej skrzynki nadawczej (Sent),
             // żeby aplikacja SMS zachowywała się jak prawdziwa domyślna apka.

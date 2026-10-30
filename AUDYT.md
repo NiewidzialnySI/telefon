@@ -2,6 +2,16 @@
 
 Kod źródłowy był już na GitHub (`657a46d`). Lokalnie dopisano **backup v2** + ten raport.
 
+## Poprawki po audycie kodu → **v1.4**
+- `NagrywanieKontroler` — race soft-switch/`stop()` (flaga + `isActive` w drabince)
+- `ShellAdbBootstrap` — wielu waitów na binder (start/republish/restart)
+- `ShizukuKlient.poprosUprawnienie` — naprawiona logika rationale po odmowie
+- SMS: multipart w planowanym / szybkiej odpowiedzi / Chrome; prefs kasowane dopiero po sukcesie
+- `AkcjaTrwajacejRozmowyReceiver` — rozłączanie przez `rozlaczRozmowe`
+- `MotywStan` — usunięte palety → domyślne kolory bez „zawieszonej” animacji
+
+Celowo nietknięte: `BackupDyskGoogle.kt` (już w v1.3), pełne PendingIntent SENT/DELIVERED dla planowanych SMS.
+
 ## 1. Backup (Google Drive) — PRIORYTET
 
 ### Było (v1)

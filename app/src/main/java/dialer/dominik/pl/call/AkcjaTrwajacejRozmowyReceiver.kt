@@ -3,6 +3,7 @@ package dialer.dominik.pl.call
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import dialer.dominik.pl.ui.screens.rozlaczRozmowe
 
 class AkcjaTrwajacejRozmowyReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -13,7 +14,8 @@ class AkcjaTrwajacejRozmowyReceiver : BroadcastReceiver() {
                 PowiadomieniaTrwajacejRozmowy.pokazPowiadomienie(context, stan.rozmowca, stan.wyciszony)
             }
             "AKCJA_ROZLACZ" -> {
-                StanPolaczenia.polaczenie?.disconnect()
+                // Jak AkcjaPolaczeniaReceiver — reject przy RINGING, disconnect + fallback.
+                rozlaczRozmowe(context, usunLog = false)
                 PowiadomieniaTrwajacejRozmowy.anuluj(context)
             }
         }

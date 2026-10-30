@@ -134,32 +134,42 @@ object MotywStan {
 
         val domyslna = MotywPaletyPresety.Wszystkie.first()
         val surowyPaletaId = p.getString(K_PALETA_ID, domyslna.id) ?: domyslna.id
+        val znanaPaleta = MotywPaletyPresety.poId(surowyPaletaId)
         // Usunięte motywy (gow / wiedźmin / cyber / igrzyska / pokemon) → domyślna paleta.
+        val paletaUsunieta = znanaPaleta == null && surowyPaletaId != "custom"
         val paletaId = when {
-            MotywPaletyPresety.poId(surowyPaletaId) != null -> surowyPaletaId
+            znanaPaleta != null -> surowyPaletaId
             surowyPaletaId == "custom" -> surowyPaletaId
             else -> domyslna.id
         }
+        val animacja = run {
+            val zapisana = p.getString(K_ANIMACJA_TLA, null)
+            when {
+                zapisana != null -> AnimacjaTla.zKlucza(zapisana)
+                !p.getBoolean(K_AURORA_ON, true) -> AnimacjaTla.Wylaczona
+                else -> AnimacjaTla.Aurora
+            }
+        }.let { a ->
+            // Po usunięciu motywu tematycznego nie trzymaj PipBoy przy domyślnej palecie.
+            if (a in AnimacjaTla.Tematyczne && paletaId != "fallout") AnimacjaTla.Aurora else a
+        }
         _stan.value = Stan(
             tryb = tryb,
-            seed = Color(p.getInt(K_SEED, SEED_DOMYSLNY.toArgb())),
-            secondary = kolorLubNull(K_SECONDARY) ?: domyslna.secondary,
-            tertiary = kolorLubNull(K_TERTIARY) ?: domyslna.tertiary,
-            stylPalety = p.getString(K_STYL, PaletteStyleName.TonalSpot) ?: PaletteStyleName.TonalSpot,
+            seed = if (paletaUsunieta) domyslna.seed
+            else Color(p.getInt(K_SEED, SEED_DOMYSLNY.toArgb())),
+            secondary = if (paletaUsunieta) domyslna.secondary
+            else kolorLubNull(K_SECONDARY) ?: domyslna.secondary,
+            tertiary = if (paletaUsunieta) domyslna.tertiary
+            else kolorLubNull(K_TERTIARY) ?: domyslna.tertiary,
+            stylPalety = if (paletaUsunieta) PaletteStyleName.zMaterial(domyslna.styl)
+            else p.getString(K_STYL, PaletteStyleName.TonalSpot) ?: PaletteStyleName.TonalSpot,
             paletaId = paletaId,
-            kolorPrzycisku = kolorLubNull(K_PRZYCISK),
-            kolorKafelka = kolorLubNull(K_KAFELEK),
-            auroraWlaczona = p.getBoolean(K_AURORA_ON, true),
-            animacjaTla = run {
-                val zapisana = p.getString(K_ANIMACJA_TLA, null)
-                when {
-                    zapisana != null -> AnimacjaTla.zKlucza(zapisana)
-                    !p.getBoolean(K_AURORA_ON, true) -> AnimacjaTla.Wylaczona
-                    else -> AnimacjaTla.Aurora
-                }
-            },
-            aurora1 = kolorLubNull(K_AURORA1),
-            aurora2 = kolorLubNull(K_AURORA2),
+            kolorPrzycisku = if (paletaUsunieta) null else kolorLubNull(K_PRZYCISK),
+            kolorKafelka = if (paletaUsunieta) null else kolorLubNull(K_KAFELEK),
+            auroraWlaczona = animacja != AnimacjaTla.Wylaczona,
+            animacjaTla = animacja,
+            aurora1 = if (paletaUsunieta) null else kolorLubNull(K_AURORA1),
+            aurora2 = if (paletaUsunieta) null else kolorLubNull(K_AURORA2),
             ekrany = odczytajEkrany(p.getString(K_EKRANY, null))
         )
         zaladowane = true

@@ -206,7 +206,8 @@ object NagrywanieKontroler {
         keepalive = KeepaliveAudio(tryb = KeepaliveAudio.Tryb.Ultradzwiek).also { it.start() }
 
         for (silnik in ladder) {
-            if (zatrzymajFlaga.get()) return
+            // stop() kasuje Job — sprawdzaj isActive, nie tylko flagę (soft-switch ją czyści).
+            if (zatrzymajFlaga.get() || !currentCoroutineContext().isActive) return
             if (silnik == SilnikNagrywania.PlaybackPolicy &&
                 Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE
             ) {
@@ -254,7 +255,7 @@ object NagrywanieKontroler {
                     } else {
                         czekajNaAudioZGrace(wynik.miernik)
                     }
-                    if (zatrzymajFlaga.get()) return
+                    if (zatrzymajFlaga.get() || !currentCoroutineContext().isActive) return
                     // Wymaga obu stron, a jest tylko downlink (oni) / tylko uplink (ja)
                     // → NIE zostawiaj (user: „słyszę drugą osobę, siebie nie”). Soft-switch.
                     if (!slychac && silnik != SilnikNagrywania.MicOnly) {
@@ -292,7 +293,7 @@ object NagrywanieKontroler {
                             ostatniSilnik = SilnikNagrywania.HybrydaMicDownlink.etykieta
                             stan = StanNagrywania.Aktywne(hyb.plik, ostatniSilnik)
                             val obie = czekajNaObieStrony(hyb.miernik)
-                            if (zatrzymajFlaga.get()) return
+                            if (zatrzymajFlaga.get() || !currentCoroutineContext().isActive) return
                             if (obie) {
                                 zachowanyPreroll = ByteArray(0)
                                 ZdolnosciCache.zapiszSukces(ctx, SilnikNagrywania.HybrydaMicDownlink)
@@ -337,24 +338,31 @@ object NagrywanieKontroler {
      * Soft-switch: zachowaj PCM z POCZĄTKU pliku (do [STASH_MAX_MS]), nie tylko ring.
      * Dzięki temu failover 2–3 silników nie wycina pierwszych sekund rozmowy.
      */
-    private fun softSwitchZachowajPreroll() {
+    private suspend fun softSwitchZachowajPreroll() {
         zatrzymajFlaga.set(true)
-        runCatching { ShellKlient.usluga()?.stop() }
-        runCatching { lokalnyRecord?.stop(); lokalnyRecord?.release() }
-        lokalnyRecord = null
-        pumpWatki.forEach { runCatching { it.join(600) } }
-        pumpWatki = emptyList()
+        try {
+            runCatching { ShellKlient.usluga()?.stop() }
+            runCatching { lokalnyRecord?.stop(); lokalnyRecord?.release() }
+            lokalnyRecord = null
+            pumpWatki.forEach { runCatching { it.join(600) } }
+            pumpWatki = emptyList()
 
-        val plik = aktywnyPlik
-        zachowanyPreroll = pcmZPoczatkuWav(plik)
-            ?.takeIf { it.isNotEmpty() }
-            ?: (preroll?.zrzut() ?: ByteArray(0))
+            val plik = aktywnyPlik
+            zachowanyPreroll = pcmZPoczatkuWav(plik)
+                ?.takeIf { it.isNotEmpty() }
+                ?: (preroll?.zrzut() ?: ByteArray(0))
 
-        plik?.let { if (it.exists()) it.delete() }
-        aktywnyPlik = null
-        nagrywa = false
-        preroll = null
-        zatrzymajFlaga.set(false)
+            plik?.let { if (it.exists()) it.delete() }
+            aktywnyPlik = null
+            nagrywa = false
+            preroll = null
+        } finally {
+            // Nie kasuj flagi, jeśli stop()/cancel w trakcie soft-switch —
+            // inaczej drabinka leci dalej po końcu rozmowy.
+            if (currentCoroutineContext().isActive) {
+                zatrzymajFlaga.set(false)
+            }
+        }
         Log.i(TAG, "soft-switch zachowano ${zachowanyPreroll.size} B (~${zachowanyPreroll.size / (SAMPLE_RATE * 2)} s)")
     }
 

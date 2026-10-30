@@ -288,7 +288,16 @@ private fun wyslijSmsIReaguj(context: Context, numer: String, tresc: String) {
             @Suppress("DEPRECATION")
             SmsManager.getDefault()
         }
-        smsManager.sendTextMessage(numer, null, tresc, null, null)
+        val czesci = smsManager.divideMessage(tresc)
+        if (czesci.isNullOrEmpty()) {
+            Toast.makeText(context, "Nie udało się wysłać SMS", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (czesci.size == 1) {
+            smsManager.sendTextMessage(numer, null, czesci[0], null, null)
+        } else {
+            smsManager.sendMultipartTextMessage(numer, null, czesci, null, null)
+        }
         Toast.makeText(context, "Wysłano SMS", Toast.LENGTH_SHORT).show()
     } catch (e: Exception) {
         e.printStackTrace()

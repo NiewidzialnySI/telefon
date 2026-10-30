@@ -39,7 +39,8 @@ object ShellAdbBootstrap {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val binderRef = AtomicReference<INagrywanieShell?>(null)
     private val restartWToku = AtomicBoolean(false)
-    @Volatile private var czekajacy: ((INagrywanieShell) -> Unit)? = null
+    /** Wielu oczekujących (uruchom + republish + ponowPoUtracie) — jeden slot gubił callback. */
+    private val czekajacy = java.util.concurrent.CopyOnWriteArrayList<(INagrywanieShell) -> Unit>()
     @Volatile private var appCtx: Context? = null
     private val deathRecipient = IBinder.DeathRecipient {
         Log.w(TAG, "binder telefon_nagranie martwy")
@@ -115,8 +116,11 @@ object ShellAdbBootstrap {
         runCatching { poprzedni?.asBinder()?.unlinkToDeath(deathRecipient, 0) }
         runCatching { svc.asBinder().linkToDeath(deathRecipient, 0) }
             .onFailure { Log.w(TAG, "linkToDeath", it) }
-        czekajacy?.invoke(svc)
-        czekajacy = null
+        val waiters = ArrayList(czekajacy)
+        czekajacy.clear()
+        for (cb in waiters) {
+            runCatching { cb(svc) }
+        }
     }
 
     /** Po śmierci bindera — najpierw czekaj na republish, adb_wifi tylko gdy trzeba. */
@@ -255,10 +259,11 @@ object ShellAdbBootstrap {
                     cont.resume(true)
                     return@suspendCancellableCoroutine
                 }
-                czekajacy = { _ ->
+                val cb: (INagrywanieShell) -> Unit = { _ ->
                     if (cont.isActive) cont.resume(true)
                 }
-                cont.invokeOnCancellation { czekajacy = null }
+                czekajacy.add(cb)
+                cont.invokeOnCancellation { czekajacy.remove(cb) }
             }
         } == true || usluga() != null
     }
@@ -417,10 +422,11 @@ object ShellAdbBootstrap {
                         cont.resume(juz)
                         return@suspendCancellableCoroutine
                     }
-                    czekajacy = { svc ->
+                    val cb: (INagrywanieShell) -> Unit = { svc ->
                         if (cont.isActive) cont.resume(svc)
                     }
-                    cont.invokeOnCancellation { czekajacy = null }
+                    czekajacy.add(cb)
+                    cont.invokeOnCancellation { czekajacy.remove(cb) }
                 }
             }
             if (got != null) {
