@@ -40,7 +40,10 @@ object BackupDyskGoogle {
     private const val DRIVE = "https://www.googleapis.com/drive/v3"
     private const val UPLOAD = "https://www.googleapis.com/upload/drive/v3"
     private const val USERINFO = "https://www.googleapis.com/oauth2/v3/userinfo"
-    private const val WERSJA_FORMATU = 1
+    /** v2: prefs + klucze ADB + transkrypcje + meta nagrań. */
+    private const val WERSJA_FORMATU = 2
+    /** Limit łączny WAV w backupie (Drive multipart). */
+    private const val MAX_NAGRANIA_BAJTÓW = 40L * 1024L * 1024L
 
     sealed class AuthWynik {
         data class Token(val accessToken: String) : AuthWynik()
@@ -329,18 +332,85 @@ object BackupDyskGoogle {
 
     fun zbudujJsonBackup(context: Context): String {
         val prefsObj = JSONObject()
+        val prefsNazwy = mutableListOf<String>()
         val dir = File(context.applicationInfo.dataDir, "shared_prefs")
         dir.listFiles()?.filter { it.name.endsWith(".xml") }?.forEach { plik ->
             val nazwa = plik.name.removeSuffix(".xml")
             if (nazwa == "backup_meta") return@forEach
             val sp = context.getSharedPreferences(nazwa, Context.MODE_PRIVATE)
             prefsObj.put(nazwa, serializujPrefs(sp))
+            prefsNazwy += nazwa
         }
+
+        val pliki = JSONObject()
+        // Klucz ADB — bez niego po reinstalacji trzeba parować od zera.
+        val adbDir = File(context.filesDir, "adb")
+        val adbKey = File(adbDir, "adbkey")
+        val adbCrt = File(adbDir, "adbkey.crt")
+        if (adbKey.isFile && adbCrt.isFile) {
+            pliki.put(
+                "adb",
+                JSONObject()
+                    .put("adbkey", android.util.Base64.encodeToString(adbKey.readBytes(), android.util.Base64.NO_WRAP))
+                    .put("adbkey_crt", android.util.Base64.encodeToString(adbCrt.readBytes(), android.util.Base64.NO_WRAP)),
+            )
+        }
+
+        val nagrDir = dialer.dominik.pl.nagranie.NagrywaniePliki.katalog(context)
+        val metaNagran = JSONArray()
+        val wavB64 = JSONObject()
+        var sumaWav = 0L
+        var pominieteWav = 0
+        nagrDir.listFiles()
+            ?.filter { it.isFile && (it.extension == "wav" || it.extension == "m4a") }
+            ?.sortedByDescending { it.lastModified() }
+            ?.forEach { f ->
+                metaNagran.put(
+                    JSONObject()
+                        .put("nazwa", f.name)
+                        .put("bajty", f.length())
+                        .put("mtime", f.lastModified()),
+                )
+                val txt = dialer.dominik.pl.nagranie.TranskrypcjaRozmow.plikTranskrypcji(f)
+                if (txt.isFile) {
+                    val tr = pliki.optJSONObject("transkrypcje")
+                        ?: JSONObject().also { pliki.put("transkrypcje", it) }
+                    tr.put(f.name, txt.readText())
+                }
+                if (sumaWav + f.length() <= MAX_NAGRANIA_BAJTÓW && f.length() < 15L * 1024L * 1024L) {
+                    wavB64.put(
+                        f.name,
+                        android.util.Base64.encodeToString(f.readBytes(), android.util.Base64.NO_WRAP),
+                    )
+                    sumaWav += f.length()
+                } else {
+                    pominieteWav++
+                }
+            }
+        if (wavB64.length() > 0) pliki.put("nagrania", wavB64)
+        pliki.put("nagrania_meta", metaNagran)
+
+        val zawiera = JSONArray()
+            .put("shared_prefs (${prefsNazwy.size})")
+            .put(if (pliki.has("adb")) "klucz ADB (pair)" else "brak klucza ADB")
+            .put("nagrania WAV/M4A: ${wavB64.length()} plików (~${sumaWav / 1024} KB)")
+            .put("transkrypcje: ${pliki.optJSONObject("transkrypcje")?.length() ?: 0}")
+        val pomija = JSONArray()
+            .put("SMS/MMS/CallLog/Kontakty (system Android — nie w sandboxie aplikacji)")
+            .put("model Whisper/Vosk (~GB) — pobierany ponownie")
+            .put("cache logo firm")
+        if (pominieteWav > 0) {
+            pomija.put("$pominieteWav nagrań powyżej limitu ${MAX_NAGRANIA_BAJTÓW / (1024 * 1024)} MB")
+        }
+
         return JSONObject()
             .put("wersja", WERSJA_FORMATU)
             .put("aplikacja", context.packageName)
             .put("utworzono", System.currentTimeMillis())
+            .put("zawiera", zawiera)
+            .put("pomija", pomija)
             .put("prefs", prefsObj)
+            .put("pliki", pliki)
             .toString(2)
     }
 
@@ -394,7 +464,48 @@ object BackupDyskGoogle {
                     }
                 }
             }
-            ed.apply()
+            // commit — od razu widoczne po restarcie / kolejnych odczytach.
+            ed.commit()
+        }
+
+        val pliki = root.optJSONObject("pliki") ?: return
+        // ADB keypair
+        pliki.optJSONObject("adb")?.let { adb ->
+            val dir = File(context.filesDir, "adb").also { it.mkdirs() }
+            val keyB64 = adb.optString("adbkey")
+            val crtB64 = adb.optString("adbkey_crt")
+            if (keyB64.isNotBlank() && crtB64.isNotBlank()) {
+                File(dir, "adbkey").writeBytes(
+                    android.util.Base64.decode(keyB64, android.util.Base64.DEFAULT),
+                )
+                File(dir, "adbkey.crt").writeBytes(
+                    android.util.Base64.decode(crtB64, android.util.Base64.DEFAULT),
+                )
+            }
+        }
+        // Nagrania WAV/M4A
+        val nagrDir = dialer.dominik.pl.nagranie.NagrywaniePliki.katalog(context)
+        pliki.optJSONObject("nagrania")?.let { nagr ->
+            val names = nagr.keys()
+            while (names.hasNext()) {
+                val nazwa = names.next()
+                val b64 = nagr.optString(nazwa)
+                if (b64.isBlank()) continue
+                File(nagrDir, nazwa).writeBytes(
+                    android.util.Base64.decode(b64, android.util.Base64.DEFAULT),
+                )
+            }
+        }
+        // Transkrypcje obok plików
+        pliki.optJSONObject("transkrypcje")?.let { tr ->
+            val names = tr.keys()
+            while (names.hasNext()) {
+                val nazwaWav = names.next()
+                val tekst = tr.optString(nazwaWav)
+                val wav = File(nagrDir, nazwaWav)
+                dialer.dominik.pl.nagranie.TranskrypcjaRozmow.plikTranskrypcji(wav)
+                    .writeText(tekst)
+            }
         }
     }
 }
