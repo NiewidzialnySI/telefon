@@ -28,8 +28,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -56,7 +54,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dialer.dominik.pl.ui.components.IkonyAplikacji
 import dialer.dominik.pl.ui.theme.CzerwonyPolaczenia
-import dialer.dominik.pl.ui.theme.ZielonyNeon
 import kotlin.math.roundToInt
 
 /**
@@ -69,58 +66,20 @@ internal fun ColumnScope.ChromePrzychodzace(
     wynikAnalizy: WynikWeryfikacjiNumeru?,
     onOdbierz: () -> Unit,
     onOdrzuc: () -> Unit,
-    onScisz: () -> Unit
+    onScisz: () -> Unit,
+    onWynikZmieniony: (WynikWeryfikacjiNumeru) -> Unit = {}
 ) {
     var pokazRozwinieteSms by remember { mutableStateOf(false) }
 
-    if (wynikAnalizy?.poziomZagrozenia == PoziomZagrozenia.SPAM_OSZUSTWO) {
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(50))
-                .background(CzerwonyPolaczenia.copy(alpha = 0.2f))
-                .border(1.dp, CzerwonyPolaczenia.copy(alpha = 0.4f), RoundedCornerShape(50))
-                .padding(horizontal = 14.dp, vertical = 5.dp)
-        ) {
-            Text(
-                text = "SPAM",
-                color = CzerwonyPolaczenia,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.5.sp
-            )
-        }
-        Spacer(Modifier.height(10.dp))
-    }
-
-    val prawdziweOpinie = wynikAnalizy?.opinie?.filter {
-        !it.tresc.contains("Numer nie figuruje", ignoreCase = true) &&
-            !it.tresc.contains("brak negatywnych", ignoreCase = true)
-    } ?: emptyList()
-
-    if (prawdziweOpinie.isNotEmpty()) {
-        Text(
-            text = "OPINIE Z INTERNETU:",
-            color = Color.White.copy(alpha = 0.45f),
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.sp,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 4.dp, top = 4.dp)
+    if (wynikAnalizy != null) {
+        KartaReputacjiNumeru(
+            context = context,
+            numer = numer,
+            wynik = wynikAnalizy,
+            kompakt = false,
+            onWynikZmieniony = onWynikZmieniony
         )
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(120.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(Color.White.copy(alpha = 0.04f))
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            items(prawdziweOpinie) { opinia ->
-                KartaOpiniiUzytkownika(opinia)
-            }
-        }
+        Spacer(Modifier.height(10.dp))
     }
 
     Spacer(Modifier.weight(1f))
@@ -143,6 +102,7 @@ internal fun ColumnScope.ChromePrzychodzace(
         enter = fadeIn(tween(150)),
         exit = fadeOut(tween(100))
     ) {
+        val paletaAkcje = dialer.dominik.pl.ui.theme.LocalMotyw.current
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly
@@ -150,8 +110,8 @@ internal fun ColumnScope.ChromePrzychodzace(
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(20.dp))
-                    .background(Color.White.copy(alpha = 0.08f))
-                    .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(20.dp))
+                    .background(paletaAkcje.naTle.copy(alpha = 0.08f))
+                    .border(1.dp, paletaAkcje.naTle.copy(alpha = 0.15f), RoundedCornerShape(20.dp))
                     .clickable { pokazRozwinieteSms = true }
                     .padding(horizontal = 20.dp, vertical = 10.dp)
             ) {
@@ -159,13 +119,13 @@ internal fun ColumnScope.ChromePrzychodzace(
                     Icon(
                         imageVector = IkonyAplikacji.Wiadomosc,
                         contentDescription = null,
-                        tint = ZielonyNeon,
+                        tint = paletaAkcje.accent,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
                         text = "Wiadomość",
-                        color = Color.White,
+                        color = paletaAkcje.naTle,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -174,22 +134,22 @@ internal fun ColumnScope.ChromePrzychodzace(
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(20.dp))
-                    .background(Color.White.copy(alpha = 0.08f))
-                    .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(20.dp))
+                    .background(paletaAkcje.naTle.copy(alpha = 0.08f))
+                    .border(1.dp, paletaAkcje.naTle.copy(alpha = 0.15f), RoundedCornerShape(20.dp))
                     .clickable(onClick = onScisz)
                     .padding(horizontal = 20.dp, vertical = 10.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = IkonyAplikacji.Wciszenie,
-                        contentDescription = null,
-                        tint = ZielonyNeon,
-                        modifier = Modifier.size(18.dp)
+                        contentDescription = "Ścisz dzwonek",
+                        tint = paletaAkcje.accent,
+                        modifier = Modifier.size(22.dp)
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
                         text = "Ścisz",
-                        color = Color.White,
+                        color = paletaAkcje.naTle,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -204,49 +164,13 @@ internal fun ColumnScope.ChromePrzychodzace(
 }
 
 @Composable
-private fun KartaOpiniiUzytkownika(opinia: OpiniaUzytkownika) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(Color(0xFF14201A))
-            .padding(8.dp)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "${opinia.autor} · ${opinia.data}",
-                color = ZielonyNeon.copy(alpha = 0.8f),
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = opinia.typOceny,
-                color = if (opinia.typOceny.contains("Spam", ignoreCase = true)) CzerwonyPolaczenia else ZielonyNeon,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-        Spacer(Modifier.height(2.dp))
-        Text(
-            text = opinia.tresc,
-            color = Color.White.copy(alpha = 0.85f),
-            fontSize = 11.sp,
-            lineHeight = 14.sp
-        )
-    }
-}
-
-@Composable
 private fun PanelRozwinietySms(
     context: Context,
     numer: String,
     onZamknij: () -> Unit,
     onWyslane: () -> Unit
 ) {
+    val paleta = dialer.dominik.pl.ui.theme.LocalMotyw.current
     val szablony = listOf(
         "Nie mogę teraz rozmawiać, oddzwonię później.",
         "Jestem w pracy, proszę napisać wiadomość SMS.",
@@ -258,8 +182,8 @@ private fun PanelRozwinietySms(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(22.dp))
-            .background(Color(0xFF14201A))
-            .border(1.dp, ZielonyNeon.copy(alpha = 0.3f), RoundedCornerShape(22.dp))
+            .background(paleta.kafelek)
+            .border(1.dp, paleta.accent.copy(alpha = 0.3f), RoundedCornerShape(22.dp))
             .padding(16.dp)
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -270,7 +194,7 @@ private fun PanelRozwinietySms(
             ) {
                 Text(
                     text = "Szybka odpowiedź SMS",
-                    color = Color.White,
+                    color = paleta.naTle,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -278,11 +202,11 @@ private fun PanelRozwinietySms(
                     modifier = Modifier
                         .size(32.dp)
                         .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.08f))
+                        .background(paleta.naTle.copy(alpha = 0.08f))
                         .clickable(onClick = onZamknij),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(text = "✕", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text(text = "✕", color = paleta.naTle, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 }
             }
 
@@ -293,15 +217,15 @@ private fun PanelRozwinietySms(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(10.dp))
-                        .background(ZielonyNeon.copy(alpha = 0.10f))
-                        .border(1.dp, ZielonyNeon.copy(alpha = 0.20f), RoundedCornerShape(10.dp))
+                        .background(paleta.accent.copy(alpha = 0.10f))
+                        .border(1.dp, paleta.accent.copy(alpha = 0.20f), RoundedCornerShape(10.dp))
                         .clickable {
                             wyslijSmsIReaguj(context, numer, tresc)
                             onWyslane()
                         }
                         .padding(10.dp)
                 ) {
-                    Text(text = tresc, color = Color.White, fontSize = 12.sp)
+                    Text(text = tresc, color = paleta.naTle, fontSize = 12.sp)
                 }
                 Spacer(Modifier.height(6.dp))
             }
@@ -311,16 +235,22 @@ private fun PanelRozwinietySms(
             OutlinedTextField(
                 value = wlasnyTekst,
                 onValueChange = { wlasnyTekst = it },
-                placeholder = { Text("Wpisz własną wiadomość…", fontSize = 11.sp) },
+                placeholder = {
+                    Text(
+                        "Wpisz własną wiadomość…",
+                        fontSize = 11.sp,
+                        color = paleta.tekstDrugorzedny
+                    )
+                },
                 singleLine = true,
                 shape = RoundedCornerShape(10.dp),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = Color(0xFF0F1813),
-                    unfocusedContainerColor = Color(0xFF0F1813),
-                    focusedBorderColor = ZielonyNeon,
-                    unfocusedBorderColor = ZielonyNeon.copy(alpha = 0.3f),
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White
+                    focusedContainerColor = paleta.tlo.copy(alpha = if (paleta.ciemny) 0.55f else 0.35f),
+                    unfocusedContainerColor = paleta.tlo.copy(alpha = if (paleta.ciemny) 0.45f else 0.25f),
+                    focusedBorderColor = paleta.accent,
+                    unfocusedBorderColor = paleta.accent.copy(alpha = 0.3f),
+                    focusedTextColor = paleta.naTle,
+                    unfocusedTextColor = paleta.naTle
                 ),
                 modifier = Modifier.fillMaxWidth()
             )
@@ -332,7 +262,7 @@ private fun PanelRozwinietySms(
                 horizontalArrangement = Arrangement.End
             ) {
                 TextButton(onClick = onZamknij) {
-                    Text("Anuluj", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+                    Text("Anuluj", color = paleta.naTle.copy(alpha = 0.6f), fontSize = 12.sp)
                 }
                 Spacer(Modifier.width(8.dp))
                 TextButton(
@@ -343,7 +273,7 @@ private fun PanelRozwinietySms(
                         }
                     }
                 ) {
-                    Text("Wyślij i odrzuć", color = ZielonyNeon, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Text("Wyślij i odrzuć", color = paleta.accent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
             }
         }
@@ -371,6 +301,7 @@ private fun SlajderOdbieraniaPolaczenia(
     onOdbierz: () -> Unit,
     onOdrzuc: () -> Unit
 ) {
+    val paleta = dialer.dominik.pl.ui.theme.LocalMotyw.current
     val density = LocalDensity.current
     val maxDragPx = remember { with(density) { 120.dp.toPx() } }
 
@@ -379,9 +310,9 @@ private fun SlajderOdbieraniaPolaczenia(
 
     val kolorTlaPrzyciku by animateColorAsState(
         targetValue = when {
-            postep < -0.2f -> ZielonyNeon
+            postep < -0.2f -> paleta.przycisk
             postep > 0.2f -> CzerwonyPolaczenia
-            else -> Color(0xFF384740)
+            else -> paleta.naTle.copy(alpha = if (paleta.ciemny) 0.22f else 0.18f)
         },
         label = "kolorTlaSlajdera"
     )
@@ -400,13 +331,13 @@ private fun SlajderOdbieraniaPolaczenia(
             .background(
                 brush = Brush.horizontalGradient(
                     colors = listOf(
-                        ZielonyNeon.copy(alpha = 0.20f),
-                        Color(0xFF16221C),
+                        paleta.accent.copy(alpha = 0.20f),
+                        paleta.kafelek,
                         CzerwonyPolaczenia.copy(alpha = 0.20f)
                     )
                 )
             )
-            .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(34.dp)),
+            .border(1.dp, paleta.naTle.copy(alpha = 0.15f), RoundedCornerShape(34.dp)),
         contentAlignment = Alignment.Center
     ) {
         Box(
@@ -415,7 +346,7 @@ private fun SlajderOdbieraniaPolaczenia(
                 .size(58.dp)
                 .clip(CircleShape)
                 .background(kolorTlaPrzyciku)
-                .border(1.5.dp, Color.White.copy(alpha = 0.5f), CircleShape)
+                .border(1.5.dp, paleta.naTle.copy(alpha = 0.5f), CircleShape)
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures(
                         onDragEnd = {
@@ -439,7 +370,11 @@ private fun SlajderOdbieraniaPolaczenia(
             Icon(
                 imageVector = ikonaPrzycisku,
                 contentDescription = null,
-                tint = if (postep == 0f) Color.White else Color.Black,
+                tint = when {
+                    postep < -0.2f -> paleta.naPrzycisku
+                    postep > 0.2f -> Color.White
+                    else -> paleta.naTle
+                },
                 modifier = Modifier.size(28.dp)
             )
         }

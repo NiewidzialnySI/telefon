@@ -1,8 +1,13 @@
 package dialer.dominik.pl.ui.screens
 
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,15 +20,19 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.Color
 import dialer.dominik.pl.ui.components.IkonyAplikacji
+import dialer.dominik.pl.ui.theme.LocalMotyw
 import dialer.dominik.pl.ui.theme.ZielonyMorski
 import dialer.dominik.pl.ui.theme.ZielonyNeon
 
@@ -42,6 +51,8 @@ internal fun KlawiaturaNumeryczna(
         listOf("*", "0", "#")
     )
 
+    val motyw = LocalMotyw.current
+
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -53,31 +64,11 @@ internal fun KlawiaturaNumeryczna(
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
                 for (znak in rzad) {
-                    // Długie przytrzymanie „*" wpisuje „+" (jak w standardowym dialerze).
-                    val klikniety = if (znak == "*") {
-                        Modifier.combinedClickable(
-                            onClick = { onCyfraKliknieta("*") },
-                            onLongClick = { onCyfraKliknieta("+") }
-                        )
-                    } else {
-                        Modifier.clickable { onCyfraKliknieta(znak) }
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .size(62.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.06f))
-                            .then(klikniety),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = znak,
-                            color = Color.White,
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
+                    PrzyciskCyfryKlawiatury(
+                        znak = znak,
+                        onKlik = { onCyfraKliknieta(znak) },
+                        onDlugie = if (znak == "*") ({ onCyfraKliknieta("+") }) else null
+                    )
                 }
             }
         }
@@ -89,19 +80,18 @@ internal fun KlawiaturaNumeryczna(
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Wiadomość — otwiera czat z wpisanym numerem
             Box(
                 modifier = Modifier
                     .size(52.dp)
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.07f))
+                    .background(motyw.kafelek)
                     .clickable(onClick = onWiadomosc),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = IkonyAplikacji.Wiadomosc,
                     contentDescription = "Wiadomość",
-                    tint = Color.White.copy(alpha = 0.7f),
+                    tint = motyw.naTle.copy(alpha = 0.7f),
                     modifier = Modifier.size(22.dp)
                 )
             }
@@ -122,22 +112,75 @@ internal fun KlawiaturaNumeryczna(
                 )
             }
 
-            // Dodaj kontakt — ludzik z plusem
             Box(
                 modifier = Modifier
                     .size(52.dp)
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.07f))
+                    .background(motyw.kafelek)
                     .clickable(onClick = onNowyKontakt),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = IkonyAplikacji.DodajKontakt,
                     contentDescription = "Utwórz kontakt",
-                    tint = Color.White.copy(alpha = 0.7f),
+                    tint = motyw.naTle.copy(alpha = 0.7f),
                     modifier = Modifier.size(22.dp)
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun PrzyciskCyfryKlawiatury(
+    znak: String,
+    onKlik: () -> Unit,
+    onDlugie: (() -> Unit)?
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val skala by animateFloatAsState(
+        targetValue = if (pressed) 0.94f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessHigh
+        ),
+        label = "skalaCyfry"
+    )
+    val klikniety = if (onDlugie != null) {
+        Modifier.combinedClickable(
+            interactionSource = interaction,
+            indication = null,
+            onClick = onKlik,
+            onLongClick = onDlugie
+        )
+    } else {
+        Modifier.clickable(
+            interactionSource = interaction,
+            indication = null,
+            onClick = onKlik
+        )
+    }
+
+    val motyw = LocalMotyw.current
+
+    Box(
+        modifier = Modifier
+            .size(62.dp)
+            .graphicsLayer {
+                scaleX = skala
+                scaleY = skala
+            }
+            .clip(CircleShape)
+            .background(motyw.kafelek)
+            .then(klikniety),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = znak,
+            color = motyw.naTle,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Medium
+        )
     }
 }

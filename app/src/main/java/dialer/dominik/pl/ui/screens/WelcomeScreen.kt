@@ -11,12 +11,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -27,9 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import dialer.dominik.pl.R
 import dialer.dominik.pl.ui.components.LogoAnimowane
@@ -37,13 +32,9 @@ import dialer.dominik.pl.ui.components.PrzyciskRozpocznij
 import dialer.dominik.pl.ui.components.TloAmoled
 import kotlinx.coroutines.delay
 
-// Przycisk wchodzi chwilę po logo
 private const val OPOZNIENIE_PRZYCISKU_MS = 340L
 
-/**
- * Ekran powitalny — tło AMOLED + animowane logo + duży przycisk CTA.
- * Bez tekstów: zostaje sam symbol i przycisk.
- */
+/** Ekran powitalny — tylko logo i „Rozpocznij”. */
 @Composable
 fun WelcomeScreen(onStart: () -> Unit) {
     var startLogo by remember { mutableStateOf(false) }
@@ -55,7 +46,6 @@ fun WelcomeScreen(onStart: () -> Unit) {
         pokazPrzycisk = true
     }
 
-    // Wejście logo — sprężyste, delikatnie odbijające
     val wejscieLogo by animateFloatAsState(
         targetValue = if (startLogo) 1f else 0f,
         animationSpec = spring(
@@ -71,7 +61,6 @@ fun WelcomeScreen(onStart: () -> Unit) {
     )
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Animowane tło: czysta czerń + dryfujące poświaty w zieleniach marki
         TloAmoled()
 
         Column(
@@ -85,9 +74,6 @@ fun WelcomeScreen(onStart: () -> Unit) {
         ) {
             Spacer(modifier = Modifier.weight(1f))
 
-            // --- Logo: sam symbol, bez napisu ---
-            // Rozmiar zależny od szerokości ekranu (55%, ale nie więcej niż 220 dp) —
-            // na małych telefonach logo nie gubi proporcji względem przycisku.
             BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
                 val bok = minOf(maxWidth * 0.55f, 220.dp)
                 LogoAnimowane(
@@ -102,7 +88,6 @@ fun WelcomeScreen(onStart: () -> Unit) {
 
             Spacer(modifier = Modifier.weight(1f))
 
-            // --- Duży przycisk CTA ---
             PrzyciskRozpocznij(
                 tekst = stringResource(R.string.welcome_start),
                 modifier = Modifier
@@ -114,4 +99,3 @@ fun WelcomeScreen(onStart: () -> Unit) {
         }
     }
 }
-

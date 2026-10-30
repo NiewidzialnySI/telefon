@@ -139,11 +139,15 @@ class EkranRozmowyActivity : ComponentActivity() {
         val menedzerBlokady = getSystemService(KeyguardManager::class.java)
 
         setContent {
-            TelefonTheme(dynamicColor = false) {
-                EkranRozmowy(
-                    context = LocalContext.current,
-                    onZakoncz = { finish() }
-                )
+            TelefonTheme {
+                dialer.dominik.pl.ui.theme.MotywEkranu(
+                    dialer.dominik.pl.ui.theme.EkranMotywu.Rozmowa
+                ) {
+                    EkranRozmowy(
+                        context = LocalContext.current,
+                        onZakoncz = { finish() }
+                    )
+                }
             }
         }
     }

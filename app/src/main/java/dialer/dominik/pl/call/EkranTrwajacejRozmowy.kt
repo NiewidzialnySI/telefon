@@ -20,9 +20,12 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -51,6 +54,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -79,11 +83,14 @@ import dialer.dominik.pl.ui.screens.rozlaczRozmowe
 import dialer.dominik.pl.ui.theme.CzarnyAmoled
 import dialer.dominik.pl.ui.theme.CzerwonyPolaczenia
 import dialer.dominik.pl.ui.theme.ZielonyMorski
+import dialer.dominik.pl.ui.theme.NaPrzycisku
 import dialer.dominik.pl.ui.theme.ZielonyNeon
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private enum class FazaRozmowy {
     Incoming,
@@ -99,7 +106,8 @@ private enum class FazaRozmowy {
 internal fun EkranTrwajacejRozmowy(
     context: Context,
     onZakoncz: () -> Unit,
-    wynikAnalizy: WynikWeryfikacjiNumeru? = null
+    wynikAnalizy: WynikWeryfikacjiNumeru? = null,
+    onWynikZmieniony: (WynikWeryfikacjiNumeru) -> Unit = {}
 ) {
     val stan = StanPolaczenia
     val usluga = TelefonInCallService.instancja
@@ -123,19 +131,12 @@ internal fun EkranTrwajacejRozmowy(
 
     var zdjecieKontaktu by remember(stan.numerRozmowy) { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(stan.numerRozmowy) {
-        zdjecieKontaktu = WeryfikacjaNumeru.pobierzZdjecieKontaktu(context, stan.numerRozmowy)
+        zdjecieKontaktu = withContext(Dispatchers.IO) {
+            val full = WeryfikacjaNumeru.pobierzZdjecieKontaktu(context, stan.numerRozmowy)
+                ?: return@withContext null
+            skalujBitmapDoMax(full, 256)
+        }
     }
-
-    val animacja = rememberInfiniteTransition(label = "pulsRozmowy")
-    val puls by animacja.animateFloat(
-        initialValue = 0.94f,
-        targetValue = 1.06f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1800, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulsAwatara"
-    )
 
     val density = LocalDensity.current
     val config = LocalConfiguration.current
@@ -194,9 +195,24 @@ internal fun EkranTrwajacejRozmowy(
     }
 
     fun przygotujDaneDymka() {
-        DymekDane.zdjecie = zdjecieKontaktu
+        DymekDane.zdjecie = zdjecieKontaktu?.let { skalujBitmapDoMax(it, 128) }
         DymekDane.inicjaly = inicjaly(stan.rozmowca)
     }
+
+    // Live wartości podczas przeciągania — bez scope.launch na każdą klatkę.
+    var trzymaMinimize by remember { mutableStateOf(false) }
+    var liveAy by remember { mutableFloatStateOf(0f) }
+    var liveSkala by remember { mutableFloatStateOf(1f) }
+    var liveKrycie by remember { mutableFloatStateOf(1f) }
+    val ayDraw = if (trzymaMinimize) liveAy else ay.value
+    val skalaDraw = if (trzymaMinimize) liveSkala else skala.value
+    val krycieDraw = if (trzymaMinimize) liveKrycie else krycie.value
+
+    val pulsAktywny = !trzymaMinimize && (
+        faza == FazaRozmowy.Dialing ||
+            (faza == FazaRozmowy.Active && stan.stan == StanPolaczenia.Stan.Rozmowa)
+        )
+    val puls = PulsHaloAwatara(pulsAktywny)
 
     suspend fun wroc() {
         coroutineScope {
@@ -249,7 +265,7 @@ internal fun EkranTrwajacejRozmowy(
     val statusKolor = when {
         faza == FazaRozmowy.Active && stan.stan == StanPolaczenia.Stan.Rozmowa -> ZielonyNeon
         faza == FazaRozmowy.Dialing -> ZielonyNeon
-        else -> Color.White.copy(alpha = 0.55f)
+        else -> dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle.copy(alpha = 0.55f)
     }
 
     val gestMinimalizacji = faza == FazaRozmowy.Active
@@ -278,6 +294,10 @@ internal fun EkranTrwajacejRozmowy(
                         detectVerticalDragGestures(
                             onDragStart = {
                                 dy = 0f
+                                trzymaMinimize = true
+                                liveAy = ay.value
+                                liveSkala = skala.value
+                                liveKrycie = krycie.value
                                 scope.launch {
                                     ax.stop(); ay.stop(); skala.stop(); krycie.stop()
                                 }
@@ -289,22 +309,30 @@ internal fun EkranTrwajacejRozmowy(
                                 val h = (if (wysokoscPx > 0) wysokoscPx else 2400) * 0.5f
                                 val visY = gumowy(dy, h).coerceAtMost(h)
                                 val p = (visY / h).coerceIn(0f, 1f)
-                                scope.launch {
-                                    ay.snapTo(visY)
-                                    skala.snapTo(1f - (1f - skalaDymka) * p)
-                                    krycie.snapTo(1f - p)
-                                }
+                                liveAy = visY
+                                liveSkala = 1f - (1f - skalaDymka) * p
+                                liveKrycie = 1f - p
                             },
                             onDragEnd = {
                                 // Do połowy ekranu (p>=0.5) = handoff do dymka; poniżej = wróć.
                                 val h = (if (wysokoscPx > 0) wysokoscPx else 2400) * 0.5f
                                 val p = (gumowy(dy, h) / h).coerceIn(0f, 1f)
                                 scope.launch {
+                                    ay.snapTo(liveAy)
+                                    skala.snapTo(liveSkala)
+                                    krycie.snapTo(liveKrycie)
+                                    trzymaMinimize = false
                                     if (p >= 0.5f) zwin() else wroc()
                                 }
                             },
                             onDragCancel = {
-                                scope.launch { wroc() }
+                                scope.launch {
+                                    ay.snapTo(liveAy)
+                                    skala.snapTo(liveSkala)
+                                    krycie.snapTo(liveKrycie)
+                                    trzymaMinimize = false
+                                    wroc()
+                                }
                             }
                         )
                     }
@@ -316,7 +344,7 @@ internal fun EkranTrwajacejRozmowy(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .graphicsLayer { alpha = krycie.value }
+                .graphicsLayer { alpha = krycieDraw }
                 .background(CzarnyAmoled)
         ) {
             dialer.dominik.pl.ui.components.TloAmoled()
@@ -328,19 +356,30 @@ internal fun EkranTrwajacejRozmowy(
                 .safeDrawingPadding()
                 .padding(horizontal = 24.dp)
                 .padding(top = paddingGora, bottom = paddingDol)
-                .graphicsLayer { alpha = krycie.value },
+                .graphicsLayer { alpha = krycieDraw },
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Spacer(modifier = Modifier.height(spacerAwatara))
 
             Text(
                 text = stan.rozmowca.ifBlank { "Nieznany numer" },
-                color = Color.White,
+                color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle,
                 fontSize = if (wysokoscEkranuDp < 700) 22.sp else 26.sp,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center
             )
             Spacer(modifier = Modifier.height(8.dp))
+
+            if (faza != FazaRozmowy.Incoming && wynikAnalizy != null) {
+                KartaReputacjiNumeru(
+                    context = context,
+                    numer = stan.numerRozmowy.ifBlank { stan.rozmowca },
+                    wynik = wynikAnalizy,
+                    kompakt = true,
+                    onWynikZmieniony = onWynikZmieniony
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
 
             AnimatedContent(
                 targetState = statusText,
@@ -385,27 +424,30 @@ internal fun EkranTrwajacejRozmowy(
                                 },
                                 onOdrzuc = {
                                     ZarzadcaDzwonka.zatrzymaj()
-                                    stan.polaczenie?.reject(false, null)
+                                    // REJECTED (decline), nie disconnect→BUSY u dzwoniącego.
+                                    odrzucPrzychodzace(stan.polaczenie)
                                     onZakoncz()
                                 },
-                                onScisz = { ZarzadcaDzwonka.scisz() }
+                                onScisz = { ZarzadcaDzwonka.scisz() },
+                                onWynikZmieniony = onWynikZmieniony
                             )
                         }
                         FazaRozmowy.Dialing, FazaRozmowy.Active -> {
                             if (biezacaFaza == FazaRozmowy.Active && !stan.klawiatura) {
+                                PrzyciskNagrywaniaRozmowy(context = context)
+                                Spacer(modifier = Modifier.height(10.dp))
                                 OutlinedTextField(
                                     value = stan.notatkaRozmowy,
                                     onValueChange = { nowa ->
+                                        // Tylko w pamięci sesji — trwały zapis po zakończeniu
+                                        // rozmowy przypina notatkę do wpisu CallLog.
                                         stan.notatkaRozmowy = nowa
-                                        if (stan.numerRozmowy.isNotBlank()) {
-                                            NotatkiRozmow.zapiszNotatke(context, stan.numerRozmowy, nowa)
-                                        }
                                     },
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                                     placeholder = {
                                         Text(
                                             "Notatka do tej rozmowy…",
-                                            color = Color.White.copy(alpha = 0.35f),
+                                            color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle.copy(alpha = 0.35f),
                                             fontSize = 14.sp
                                         )
                                     },
@@ -413,14 +455,14 @@ internal fun EkranTrwajacejRozmowy(
                                     minLines = 1,
                                     maxLines = 2,
                                     textStyle = androidx.compose.ui.text.TextStyle(
-                                        color = Color.White,
+                                        color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle,
                                         fontSize = 14.sp
                                     ),
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedBorderColor = ZielonyNeon.copy(alpha = 0.6f),
-                                        unfocusedBorderColor = Color.White.copy(alpha = 0.15f),
-                                        focusedContainerColor = Color.White.copy(alpha = 0.04f),
-                                        unfocusedContainerColor = Color.White.copy(alpha = 0.04f),
+                                        unfocusedBorderColor = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle.copy(alpha = 0.15f),
+                                        focusedContainerColor = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle.copy(alpha = 0.04f),
+                                        unfocusedContainerColor = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle.copy(alpha = 0.04f),
                                         cursorColor = ZielonyNeon
                                     ),
                                     shape = RoundedCornerShape(14.dp)
@@ -446,9 +488,9 @@ internal fun EkranTrwajacejRozmowy(
                 .size(124.dp)
                 .graphicsLayer {
                     translationX = ax.value
-                    translationY = ay.value
-                    scaleX = skala.value
-                    scaleY = skala.value
+                    translationY = ayDraw
+                    scaleX = skalaDraw
+                    scaleY = skalaDraw
                 }
         ) {
             Box(
@@ -481,11 +523,15 @@ internal fun EkranTrwajacejRozmowy(
                         .size(124.dp)
                         .background(
                             brush = Brush.radialGradient(
-                                listOf(Color(0xFF12362A), Color(0xFF081A14))
+                                listOf(
+                                    ZielonyMorski.copy(alpha = 0.55f),
+                                    ZielonyMorski.copy(alpha = 0.18f),
+                                    Color.Black.copy(alpha = 0.55f)
+                                )
                             ),
                             shape = CircleShape
                         )
-                        .border(1.dp, ZielonyNeon.copy(alpha = 0.25f), CircleShape),
+                        .border(1.dp, ZielonyNeon.copy(alpha = 0.45f), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -515,7 +561,11 @@ private fun PasekKontrolekRozmowy(
     val usluga = TelefonInCallService.instancja
     val scope = rememberCoroutineScope()
 
-    AnimatedVisibility(visible = stan.klawiatura) {
+    AnimatedVisibility(
+        visible = stan.klawiatura,
+        enter = slideInVertically(tween(200, easing = FastOutSlowInEasing)) { it / 4 } + fadeIn(tween(180)),
+        exit = slideOutVertically(tween(160, easing = FastOutSlowInEasing)) { it / 4 } + fadeOut(tween(140))
+    ) {
         KlawiaturaDtmf(onCyfra = { usluga?.wyslijTon(it) })
     }
 
@@ -561,22 +611,16 @@ private fun PasekKontrolekRozmowy(
             etykieta = "Bluetooth",
             aktywny = stan.bluetoothAktywny,
             onKlik = {
-                if (fazaDialing) {
-                    stan.bluetoothAktywny = !stan.bluetoothAktywny
-                    if (stan.bluetoothAktywny) stan.glosnik = false
-                    stan.zadanaTrasa = if (stan.bluetoothAktywny) {
-                        CallAudioState.ROUTE_BLUETOOTH
-                    } else {
-                        CallAudioState.ROUTE_WIRED_OR_EARPIECE
-                    }
+                val wlacz = !stan.bluetoothAktywny
+                stan.bluetoothAktywny = wlacz
+                if (wlacz) stan.glosnik = false
+                val trasa = if (wlacz) {
+                    CallAudioState.ROUTE_BLUETOOTH
                 } else {
-                    val nowaTrasa = if (stan.bluetoothAktywny) {
-                        CallAudioState.ROUTE_WIRED_OR_EARPIECE
-                    } else {
-                        CallAudioState.ROUTE_BLUETOOTH
-                    }
-                    usluga?.ustawTrase(nowaTrasa)
+                    CallAudioState.ROUTE_WIRED_OR_EARPIECE
                 }
+                stan.zadanaTrasa = trasa
+                if (!fazaDialing) usluga?.ustawTrase(trasa)
             },
             onDlugieKlikniecie = { otworzWybiorce() }
         )
@@ -585,22 +629,16 @@ private fun PasekKontrolekRozmowy(
             etykieta = "Głośnik",
             aktywny = stan.glosnik,
             onKlik = {
-                if (fazaDialing) {
-                    stan.glosnik = !stan.glosnik
-                    if (stan.glosnik) stan.bluetoothAktywny = false
-                    stan.zadanaTrasa = if (stan.glosnik) {
-                        CallAudioState.ROUTE_SPEAKER
-                    } else {
-                        CallAudioState.ROUTE_WIRED_OR_EARPIECE
-                    }
+                val wlacz = !stan.glosnik
+                stan.glosnik = wlacz
+                if (wlacz) stan.bluetoothAktywny = false
+                val trasa = if (wlacz) {
+                    CallAudioState.ROUTE_SPEAKER
                 } else {
-                    val nowaTrasa = if (stan.glosnik) {
-                        CallAudioState.ROUTE_WIRED_OR_EARPIECE
-                    } else {
-                        CallAudioState.ROUTE_SPEAKER
-                    }
-                    usluga?.ustawTrase(nowaTrasa)
+                    CallAudioState.ROUTE_WIRED_OR_EARPIECE
                 }
+                stan.zadanaTrasa = trasa
+                if (!fazaDialing) usluga?.ustawTrase(trasa)
             }
         )
         PrzyciskOpcjiZLongClick(
@@ -612,19 +650,20 @@ private fun PasekKontrolekRozmowy(
     }
 
     if (pokazWybiorceBluetooth) {
+        val paletaBt = dialer.dominik.pl.ui.theme.LocalMotyw.current
         androidx.compose.ui.window.Dialog(onDismissRequest = { pokazWybiorceBluetooth = false }) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth(0.9f)
                     .clip(RoundedCornerShape(24.dp))
-                    .background(Color(0xFF14201A))
-                    .border(1.dp, ZielonyNeon.copy(alpha = 0.3f), RoundedCornerShape(24.dp))
+                    .background(paletaBt.kafelek)
+                    .border(1.dp, paletaBt.kafelekRamka, RoundedCornerShape(24.dp))
                     .padding(20.dp)
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         "Wybierz urządzenie Bluetooth",
-                        color = Color.White,
+                        color = paletaBt.naTle,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -633,7 +672,7 @@ private fun PasekKontrolekRozmowy(
                     if (urzadzenia.isEmpty()) {
                         Text(
                             "Brak sparowanych/podłączonych urządzeń audio Bluetooth",
-                            color = Color.White.copy(alpha = 0.6f),
+                            color = paletaBt.tekstDrugorzedny,
                             fontSize = 13.sp,
                             textAlign = TextAlign.Center
                         )
@@ -658,7 +697,7 @@ private fun PasekKontrolekRozmowy(
                             ) {
                                 Text(
                                     text = bezpiecznaNazwaBluetooth(dev),
-                                    color = Color.White,
+                                    color = paletaBt.naTle,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Medium
                                 )
@@ -668,7 +707,7 @@ private fun PasekKontrolekRozmowy(
                     }
                     Spacer(Modifier.height(10.dp))
                     TextButton(onClick = { pokazWybiorceBluetooth = false }) {
-                        Text("Zamknij", color = Color.White.copy(alpha = 0.6f))
+                        Text("Zamknij", color = paletaBt.tekstDrugorzedny)
                     }
                 }
             }
@@ -692,7 +731,7 @@ private fun PasekKontrolekRozmowy(
         if (odliczaniePozostale > 0) {
             Text(
                 text = odliczaniePozostale.toString(),
-                color = Color.White,
+                color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle,
                 fontSize = 30.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -700,13 +739,43 @@ private fun PasekKontrolekRozmowy(
             Icon(
                 imageVector = IkonyAplikacji.Sluchawka,
                 contentDescription = if (fazaDialing) "Anuluj połączenie" else "Zakończ połączenie",
-                tint = Color.White,
+                tint = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle,
                 modifier = Modifier.size(30.dp)
             )
         }
     }
 
     Spacer(modifier = Modifier.height(4.dp))
+}
+
+@Composable
+private fun PrzyciskNagrywaniaRozmowy(context: android.content.Context) {
+    val nagrywa = dialer.dominik.pl.nagranie.NagrywanieKontroler.nagrywa
+    PrzyciskOpcjiZLongClick(
+        ikona = IkonyAplikacji.Nagrywanie,
+        etykieta = "Nagrywaj",
+        aktywny = nagrywa,
+        onKlik = {
+            val ctrl = dialer.dominik.pl.nagranie.NagrywanieKontroler
+            if (ctrl.nagrywa) {
+                ctrl.stop()
+            } else {
+                dialer.dominik.pl.nagranie.ShizukuKlient.dolacz(context)
+                dialer.dominik.pl.nagranie.ShizukuKlient.odswiez()
+                if (!dialer.dominik.pl.nagranie.NagrywanieUstawienia.czyZgodaPrawna(context) ||
+                    !dialer.dominik.pl.nagranie.NagrywanieUstawienia.czyWlaczone(context)
+                ) {
+                    Toast.makeText(
+                        context,
+                        "Włącz nagrywanie w Ustawieniach",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    return@PrzyciskOpcjiZLongClick
+                }
+                ctrl.start(context, StanPolaczenia.numerRozmowy)
+            }
+        }
+    )
 }
 
 @Composable
@@ -718,12 +787,12 @@ internal fun PrzyciskOpcjiZLongClick(
     onDlugieKlikniecie: (() -> Unit)? = null
 ) {
     val tlo by animateColorAsState(
-        targetValue = if (aktywny) ZielonyNeon else Color.White.copy(alpha = 0.08f),
+        targetValue = if (aktywny) ZielonyNeon else dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle.copy(alpha = 0.08f),
         animationSpec = tween(220),
         label = "tloOpcji"
     )
     val kolorIkony by animateColorAsState(
-        targetValue = if (aktywny) Color(0xFF06231A) else Color.White,
+        targetValue = if (aktywny) NaPrzycisku else dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle,
         animationSpec = tween(220),
         label = "kolorIkony"
     )
@@ -766,4 +835,29 @@ internal fun PrzyciskOpcjiZLongClick(
             )
         }
     }
+}
+
+@Composable
+private fun PulsHaloAwatara(aktywny: Boolean): Float {
+    if (!aktywny) return 1f
+    val animacja = rememberInfiniteTransition(label = "pulsRozmowy")
+    val puls by animacja.animateFloat(
+        initialValue = 0.94f,
+        targetValue = 1.06f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1800, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulsAwatara"
+    )
+    return puls
+}
+
+/** Skaluje bitmapę do max. boku (np. awatar / dymek) — mniej pamięci niż pełne zdjęcie kontaktu. */
+private fun skalujBitmapDoMax(bmp: Bitmap, maxBok: Int): Bitmap {
+    val skala = minOf(1f, maxBok.toFloat() / maxOf(bmp.width, bmp.height).coerceAtLeast(1))
+    if (skala >= 1f) return bmp
+    val w = (bmp.width * skala).toInt().coerceAtLeast(1)
+    val h = (bmp.height * skala).toInt().coerceAtLeast(1)
+    return Bitmap.createScaledBitmap(bmp, w, h, true)
 }

@@ -113,9 +113,12 @@ fun KontaktyScreen(
     onOpenSms: ((String) -> Unit)? = null,
     pokazPasekWyszukiwania: Boolean = true
 ) {
+    val paletaKontakty = dialer.dominik.pl.ui.theme.LocalMotyw.current
     var kontakty by remember { mutableStateOf<List<KontaktItem>>(emptyList()) }
         var zapytanie by remember { mutableStateOf("") }
-        var rozwiniete by remember { mutableStateOf(setOf<String>()) }
+        // Debounce szukania — bez tego każde literowanie filtruje całą książkę na Main.
+        var zapytanieDebounced by remember { mutableStateOf("") }
+        var rozwiniete by remember { mutableStateOf(setOf<Long>()) }
         var odswiezenie by remember { mutableIntStateOf(0) }
         var edytowanyKontakt by remember { mutableStateOf<KontaktItem?>(null) }
         // Czy pokazać okno dodawania nowego kontaktu (przycisk „+" obok szukania).
@@ -128,25 +131,36 @@ fun KontaktyScreen(
         val maKontakty = context.checkSelfPermission(Manifest.permission.READ_CONTACTS) ==
             PackageManager.PERMISSION_GRANTED
 
+        LaunchedEffect(zapytanie) {
+            kotlinx.coroutines.delay(180)
+            zapytanieDebounced = zapytanie
+        }
+
         LaunchedEffect(odswiezenie, maKontakty) {
-            kontakty = if (maKontakty) pobierzKontakty(context) else emptyList()
+            kontakty = if (maKontakty) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    pobierzKontakty(context)
+                }
+            } else {
+                emptyList()
+            }
         }
 
         // Kontakty są już zgrupowane po osobie (CONTACT_ID) i pozbawione duplikatów numerów
         // w [pobierzKontakty]. Tu zostaje wyszukiwanie + filtr ulubionych.
-        val przefiltrowane = remember(kontakty, zapytanie, ulubione) {
-            if (zapytanie.isBlank()) {
+        val przefiltrowane = remember(kontakty, zapytanieDebounced) {
+            if (zapytanieDebounced.isBlank()) {
                 kontakty
             } else {
-                val q = zapytanie.lowercase()
+                val q = zapytanieDebounced.lowercase()
                 val qCyfry = q.filter { c -> c.isDigit() }
                 kontakty.filter { kontakt ->
                     kontakt.name.lowercase().contains(q) ||
-                                            kontakt.pseudonim?.lowercase()?.contains(q) == true ||
-                                            kontakt.firma?.lowercase()?.contains(q) == true ||
-                                            (qCyfry.isNotEmpty() && kontakt.numery.any {
-                                                it.normalizowany.contains(qCyfry)
-                                            })
+                        kontakt.pseudonim?.lowercase()?.contains(q) == true ||
+                        kontakt.firma?.lowercase()?.contains(q) == true ||
+                        (qCyfry.isNotEmpty() && kontakt.numery.any {
+                            it.normalizowany.contains(qCyfry)
+                        })
                 }
             }
         }
@@ -182,7 +196,7 @@ fun KontaktyScreen(
                     title = {
                         Text(
                             text = "KONTAKTY",
-                            color = Color.White.copy(alpha = 0.42f),
+                            color = paletaKontakty.naTle.copy(alpha = 0.42f),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Medium,
                             letterSpacing = 2.2.sp
@@ -202,16 +216,18 @@ fun KontaktyScreen(
                                                     .fillMaxWidth()
                                                     .padding(horizontal = 16.dp, vertical = 8.dp)
                                                     .clip(RoundedCornerShape(16.dp))
-                                                    .background(Color(0xFF131C18))
+                                                    .background(dialer.dominik.pl.ui.theme.LocalMotyw.current.kafelek)
                                                     .border(1.dp, ZielonyNeon.copy(alpha = 0.14f), RoundedCornerShape(16.dp))
                                                     .padding(start = 12.dp),
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
+                                                val kolorTekstuSzukaj =
+                                                    dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle
                                                 BasicTextField(
                                                     value = zapytanie,
                                                     onValueChange = { zapytanie = it },
                                                     singleLine = true,
-                                                    textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
+                                                    textStyle = TextStyle(color = kolorTekstuSzukaj, fontSize = 15.sp),
                                                     cursorBrush = SolidColor(ZielonyNeon),
                                                     modifier = Modifier
                                                         .weight(1f)
@@ -220,7 +236,7 @@ fun KontaktyScreen(
                                                         if (zapytanie.isEmpty()) {
                                                             Text(
                                                                 text = "Szukaj kontaktu…",
-                                                                color = Color.White.copy(alpha = 0.32f),
+                                                                color = kolorTekstuSzukaj.copy(alpha = 0.32f),
                                                                 fontSize = 15.sp
                                                             )
                                                         }
@@ -285,18 +301,22 @@ fun KontaktyScreen(
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             for ((litera, grupa) in sekcje) {
-                                item(key = "lit-$litera") {
+                                item(
+                                    key = "lit-$litera",
+                                    contentType = "naglowek"
+                                ) {
                                     NaglowekSekcji(litera = litera)
                                 }
                                 items(
-                                    grupa,
-                                    key = { it.name + "|" + it.number }
+                                    items = grupa,
+                                    key = { it.contactId },
+                                    contentType = { "kontakt" }
                                 ) { kontakt ->
-                                    val klucz = kontakt.name + "|" + kontakt.number
+                                    val id = kontakt.contactId
                                     KartaKontaktu(
                                         kontakt = kontakt,
                                         context = context,
-                                        rozwinieta = klucz in rozwiniete,
+                                        rozwinieta = id in rozwiniete,
                                         ulubiony = kontakt.name in ulubione,
                                         onToggleUlubione = {
                                             val nowe = if (kontakt.name in ulubione) {
@@ -308,10 +328,11 @@ fun KontaktyScreen(
                                             prefsUlubione.edit().putStringSet("nazwy", nowe).apply()
                                         },
                                         onRozwin = {
-                                            rozwiniete = if (klucz in rozwiniete) {
-                                                rozwiniete - klucz
+                                            rozwiniete = if (id in rozwiniete) {
+                                                rozwiniete - id
                                             } else {
-                                                rozwiniete + klucz
+                                                // Jedna rozwinięta karta — mniej layoutu przy scrollu.
+                                                setOf(id)
                                             }
                                         },
                                         onZmianaPreferencji = { odswiezenie++ },

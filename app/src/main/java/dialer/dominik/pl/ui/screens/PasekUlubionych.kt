@@ -84,8 +84,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -109,12 +107,13 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import dialer.dominik.pl.data.BazaSpamu
-import dialer.dominik.pl.call.NotatkiRozmow
 import dialer.dominik.pl.ui.components.IkonyAplikacji
 import dialer.dominik.pl.ui.theme.CzerwonyPolaczenia
+import dialer.dominik.pl.ui.theme.LocalMotyw
 import dialer.dominik.pl.ui.theme.ZielonyGleboki
 import dialer.dominik.pl.ui.theme.ZielonyMorski
 import dialer.dominik.pl.ui.theme.ZielonyNeon
+import dialer.dominik.pl.ui.theme.gradientKafelka
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -171,7 +170,7 @@ internal fun PasekUlubionych(
                 Spacer(Modifier.height(6.dp))
                 Text(
                     text = kontakt.nazwaWyswietlana,
-                    color = Color.White.copy(alpha = 0.8f),
+                    color = LocalMotyw.current.naTle.copy(alpha = 0.8f),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
@@ -190,18 +189,12 @@ internal fun KafelekAkcjiUlubionego(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val motyw = LocalMotyw.current
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(22.dp))
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF1D2E24),
-                        Color(0xFF131F18)
-                    )
-                )
-            )
-            .border(1.dp, ZielonyNeon.copy(alpha = 0.22f), RoundedCornerShape(22.dp))
+            .background(brush = motyw.gradientKafelka())
+            .border(1.dp, motyw.kafelekRamka, RoundedCornerShape(22.dp))
             .clickable(onClick = onClick)
             .padding(vertical = 18.dp, horizontal = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -226,7 +219,7 @@ internal fun KafelekAkcjiUlubionego(
         Spacer(Modifier.height(10.dp))
         Text(
             text = etykieta,
-            color = Color.White,
+            color = motyw.naTle,
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1

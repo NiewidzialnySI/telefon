@@ -1,6 +1,7 @@
 package dialer.dominik.pl
 
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -10,7 +11,9 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -20,8 +23,10 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -42,6 +47,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +55,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import dialer.dominik.pl.nagranie.NagrywanieUstawienia
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Alignment
@@ -70,9 +80,14 @@ import dialer.dominik.pl.ui.screens.PermissionsScreen
 import dialer.dominik.pl.ui.screens.SmsScreen
 import dialer.dominik.pl.ui.screens.WelcomeScreen
 import dialer.dominik.pl.ui.theme.CzarnyAmoled
+import dialer.dominik.pl.ui.theme.EkranMotywu
+import dialer.dominik.pl.ui.theme.LocalMotyw
+import dialer.dominik.pl.ui.theme.MotywEkranu
 import dialer.dominik.pl.ui.theme.TelefonTheme
-import dialer.dominik.pl.ui.theme.ZielonyMorski
-import dialer.dominik.pl.ui.theme.ZielonyNeon
+import dialer.dominik.pl.update.AktualizacjaAplikacji
+import dialer.dominik.pl.ui.theme.IkonaUruchamiacza
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 
 // Główna aktywność — wszystko po polsku
 class MainActivity : ComponentActivity() {
@@ -80,22 +95,97 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // Treść rysowana pod paskami systemowymi (edge-to-edge)
         enableEdgeToEdge()
+        dialer.dominik.pl.nagranie.TranskrypcjaForegroundService.obsluzIntent(intent)
+        // Debug / automatyka testów:
+        // am start -n …/.MainActivity -a dialer.dominik.pl.adb.TEST_PAIR
+        // am start -n …/.MainActivity -a dialer.dominik.pl.adb.TEST_PAIR_CODE --es kod 123456 --ei port 37123
+        // am start -n …/.MainActivity -a dialer.dominik.pl.adb.TEST_URUCHOM
+        when (intent?.action) {
+            "dialer.dominik.pl.adb.TEST_PAIR" ->
+                dialer.dominik.pl.nagranie.adb.AdbParowanieService.startujIOtworzUstawienia(this)
+            "dialer.dominik.pl.adb.TEST_PAIR_CODE" -> {
+                dialer.dominik.pl.nagranie.adb.AdbParowanieService.startujIOtworzUstawienia(this)
+                val kod = intent.getStringExtra("kod").orEmpty()
+                val port = intent.getIntExtra("port", -1)
+                val host = intent.getStringExtra("host")
+                if (kod.length == 6) {
+                    window.decorView.postDelayed({
+                        dialer.dominik.pl.nagranie.adb.AdbParowanieService
+                            .dostarczKod(this, kod, port, host)
+                    }, 800)
+                }
+            }
+            "dialer.dominik.pl.adb.TEST_URUCHOM" -> {
+                lifecycleScope.launch {
+                    val w = dialer.dominik.pl.nagranie.adb.ShellAdbBootstrap
+                        .uruchomZOpisem(this@MainActivity)
+                    android.util.Log.i(
+                        "ShellAdbBootstrap",
+                        "TEST_URUCHOM → $w diag=${dialer.dominik.pl.nagranie.adb.ShellAdbBootstrap.zdiagnozuj(this@MainActivity).linie()}",
+                    )
+                }
+            }
+        }
         // Pending NotificationInd (MMS) — dociągnij także bez otwierania skrzynki,
         // żeby MmsPobranyIZapisanyReceiver mógł pokazać dymek po pobraniu.
         if (android.provider.Telephony.Sms.getDefaultSmsPackage(this) == packageName) {
             dialer.dominik.pl.sms.dociagnijOczekujaceMms(this)
         }
+        // Zaległe „Tworzenie kopii…” po zakończonym backupie (bug DETACH).
+        dialer.dominik.pl.backup.BackupForegroundService.usunZaleglyPostep(this)
+        // Autoaktualizacja — ciche sprawdzenie update.json (max raz na 6 h).
+        lifecycleScope.launch {
+            AktualizacjaAplikacji.sprawdzPrzyStarcie(this@MainActivity)
+        }
+        // Nagrywanie: własna ADB; adb_wifi tylko gdy daemon naprawdę nie żyje.
+        dialer.dominik.pl.nagranie.ShizukuKlient.dolacz(this)
+        if (dialer.dominik.pl.nagranie.NagrywanieUstawienia.czyWlaczone(this)) {
+            lifecycleScope.launch {
+                val app = this@MainActivity
+                if (dialer.dominik.pl.nagranie.ShellKlient.czyShellGotowy()) {
+                    dialer.dominik.pl.nagranie.PowiadomieniaShizuku.anulujBrak(app)
+                    return@launch
+                }
+                // Straznik → zapewnij → uruchom: najpierw republish, potem ewentualnie adb_wifi.
+                dialer.dominik.pl.nagranie.ShizukuStraznik.sprawdz(app)
+            }
+        } else {
+            dialer.dominik.pl.nagranie.PowiadomieniaShizuku.anulujBrak(this)
+        }
         setContent {
-            // dynamicColor = false — pełna paleta zielono-czarna, bez nadpisywania tła tapetą
-            TelefonTheme(dynamicColor = false) {
+            TelefonTheme {
                 NawigacjaAplikacji()
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        dialer.dominik.pl.nagranie.TranskrypcjaForegroundService.obsluzIntent(intent)
+        when (intent.action) {
+            "dialer.dominik.pl.adb.TEST_PAIR" ->
+                dialer.dominik.pl.nagranie.adb.AdbParowanieService.startujIOtworzUstawienia(this)
+            "dialer.dominik.pl.adb.TEST_URUCHOM" -> {
+                lifecycleScope.launch {
+                    val w = dialer.dominik.pl.nagranie.adb.ShellAdbBootstrap
+                        .uruchomZOpisem(this@MainActivity)
+                    android.util.Log.i("ShellAdbBootstrap", "TEST_URUCHOM → $w")
+                }
+            }
+        }
+    }
+
+    override fun onStop() {
+        // Wyłączenie starego activity-alias dopiero po wyjściu — inaczej system
+        // niszczy bieżące MainActivity (SecurityException / wyrzut do launchera).
+        IkonaUruchamiacza.zastosujPoWyjsciu(this)
+        super.onStop()
+    }
 }
 
 /** Zakładki dolnego paska. */
-enum class Zakladka { Glowny, Kontakty, Wiadomosci, Ustawienia }
+enum class Zakladka { Glowny, Kontakty, Wiadomosci, Nagrania, Ustawienia }
 
 // Klucze w SharedPreferences — zapamiętują, że powitanie już się odbyło
 private const val PREFS = "telefon_prefs"
@@ -166,9 +256,18 @@ private fun EkranZZakladkami(context: Context) {
     var numerStartowySms by remember { mutableStateOf("") }
     var numerDoWybraniaNaMain by remember { mutableStateOf("") }
 
-    LaunchedEffect(AppNavigationState.docelowaZakladka, AppNavigationState.numerDoWybrania) {
+    LaunchedEffect(Unit) { NagrywanieUstawienia.odswiezUi(context) }
+    val nagrywanieWlaczone by NagrywanieUstawienia.wlaczoneUi.collectAsState()
+
+    LaunchedEffect(nagrywanieWlaczone, zakladka) {
+        if (!nagrywanieWlaczone && zakladka == Zakladka.Nagrania) {
+            zakladka = Zakladka.Glowny
+        }
+    }
+
+    LaunchedEffect(AppNavigationState.docelowaZakladka, AppNavigationState.numerDoWybrania, nagrywanieWlaczone) {
         AppNavigationState.docelowaZakladka?.let { z ->
-            zakladka = z
+            zakladka = if (z == Zakladka.Nagrania && !nagrywanieWlaczone) Zakladka.Ustawienia else z
             AppNavigationState.docelowaZakladka = null
         }
         AppNavigationState.numerDoWybrania?.let { num ->
@@ -219,8 +318,23 @@ private fun EkranZZakladkami(context: Context) {
         label = "dolnyPadZakladek"
     )
 
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var tloAnimuj by remember { mutableStateOf(true) }
+    DisposableEffect(lifecycleOwner) {
+        val obs = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> tloAnimuj = true
+                Lifecycle.Event.ON_PAUSE -> tloAnimuj = false
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        tloAnimuj = lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(CzarnyAmoled)) {
-        TloAmoled()
+        TloAmoled(animuj = tloAnimuj)
 
         Box(
             modifier = Modifier
@@ -234,47 +348,57 @@ private fun EkranZZakladkami(context: Context) {
                 transitionSpec = {
                     val staryIndeks = initialState.ordinal
                     val nowyIndeks = targetState.ordinal
-                    // M3: ruch (slide) = spring (fizyka), fade = tween — płynne bez sztywności.
-                    if (nowyIndeks > staryIndeks) {
+                    val skok = kotlin.math.abs(nowyIndeks - staryIndeks) > 1
+                    // Nie-sąsiadujące zakładki: sam fade; sąsiednie: lekki slide.
+                    if (skok) {
+                        fadeIn(tween(220)).togetherWith(fadeOut(tween(160)))
+                    } else if (nowyIndeks > staryIndeks) {
                         (slideInHorizontally(
                             animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
-                        ) { it / 5 } + fadeIn(tween(260)))
+                        ) { it / 6 } + fadeIn(tween(220)))
                             .togetherWith(slideOutHorizontally(
                                 animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
-                            ) { -it / 5 } + fadeOut(tween(180)))
+                            ) { -it / 6 } + fadeOut(tween(160)))
                     } else {
                         (slideInHorizontally(
                             animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
-                        ) { -it / 5 } + fadeIn(tween(260)))
+                        ) { -it / 6 } + fadeIn(tween(220)))
                             .togetherWith(slideOutHorizontally(
                                 animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
-                            ) { it / 5 } + fadeOut(tween(180)))
+                            ) { it / 6 } + fadeOut(tween(160)))
                     }
                 },
                 label = "przejscieZakladek"
             ) { cel ->
                 stanZakladek.SaveableStateProvider(cel.name) {
                     when (cel) {
-                        Zakladka.Glowny -> MainDialerScreen(
-                            context = context,
-                            onOpenSms = { numer ->
-                                android.util.Log.i("KlikSms", "onOpenSms numer=$numer")
-                                numerStartowySms = numer
-                                zakladka = Zakladka.Wiadomosci
-                            },
-                            poczatkowyNumer = numerDoWybraniaNaMain,
-                            onNumerSkonsumowany = { numerDoWybraniaNaMain = "" }
-                        )
-                        Zakladka.Kontakty -> KontaktyScreen(
-                            context = context,
-                            onBack = { zakladka = Zakladka.Glowny },
-                            onOpenSms = { numer ->
-                                android.util.Log.i("KlikSms", "onOpenSms numer=$numer")
-                                numerStartowySms = numer
-                                zakladka = Zakladka.Wiadomosci
-                            }
-                        )
-                        Zakladka.Wiadomosci -> {
+                        Zakladka.Glowny -> MotywEkranu(EkranMotywu.Glowny) {
+                            MainDialerScreen(
+                                context = context,
+                                onOpenSms = { numer ->
+                                    android.util.Log.i("KlikSms", "onOpenSms numer=$numer")
+                                    numerStartowySms = numer
+                                    zakladka = Zakladka.Wiadomosci
+                                },
+                                poczatkowyNumer = numerDoWybraniaNaMain,
+                                onNumerSkonsumowany = { numerDoWybraniaNaMain = "" }
+                            )
+                        }
+                        Zakladka.Kontakty -> MotywEkranu(EkranMotywu.Kontakty) {
+                            KontaktyScreen(
+                                context = context,
+                                onBack = { zakladka = Zakladka.Glowny },
+                                onOpenSms = { numer ->
+                                    android.util.Log.i("KlikSms", "onOpenSms numer=$numer")
+                                    numerStartowySms = numer
+                                    zakladka = Zakladka.Wiadomosci
+                                }
+                            )
+                        }
+                        Zakladka.Nagrania -> MotywEkranu(EkranMotywu.Rozmowa) {
+                            dialer.dominik.pl.ui.screens.EkranNagran(context = context)
+                        }
+                        Zakladka.Wiadomosci -> MotywEkranu(EkranMotywu.Sms) {
                             SmsScreen(
                                 context = context,
                                 onBack = { zakladka = Zakladka.Glowny },
@@ -309,6 +433,7 @@ private fun EkranZZakladkami(context: Context) {
         ) {
             DolnyPasekZakladek(
                 wybrana = zakladka,
+                pokazNagrania = nagrywanieWlaczone,
                 onWybierz = { zakladka = it }
             )
         }
@@ -316,22 +441,33 @@ private fun EkranZZakladkami(context: Context) {
 }
 
 /**
- * Dolny pasek zakładek w stylu AMOLED — ciemne tło, aktywna zakładka
- * podświetlona zielenią marki.
+ * Dolny pasek zakładek — kolory z [LocalMotyw]
+ * (przycisk / accent / kafelek), nie hardcodowana zieleń.
+ * Zakładka Nagrania tylko gdy nagrywanie włączone w ustawieniach.
  */
 @Composable
 private fun DolnyPasekZakladek(
     wybrana: Zakladka,
+    pokazNagrania: Boolean,
     onWybierz: (Zakladka) -> Unit
 ) {
+    val paleta = LocalMotyw.current
+    val ksztalt = RoundedCornerShape(paleta.promienKafla.dp + 4.dp)
     // Bez navigationBarsPadding — dodaje je nakładka w EkranZZakladkami,
     // żeby padding treści i slide paska były zsynchronizowane.
-    Box(modifier = Modifier.fillMaxWidth()) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                .clip(ksztalt)
+                .background(paleta.kafelek.copy(alpha = if (paleta.ciemny) 0.92f else 0.96f))
+                .border(1.dp, paleta.kafelekRamka, ksztalt)
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             ElementZakladki(
@@ -355,6 +491,15 @@ private fun DolnyPasekZakladek(
                 modifier = Modifier.weight(1f),
                 onClick = { onWybierz(Zakladka.Wiadomosci) }
             )
+            if (pokazNagrania) {
+                ElementZakladki(
+                    tytul = "Nagrania",
+                    zaznaczona = wybrana == Zakladka.Nagrania,
+                    ikona = IkonyAplikacji.Nagrywanie,
+                    modifier = Modifier.weight(1f),
+                    onClick = { onWybierz(Zakladka.Nagrania) }
+                )
+            }
             ElementZakladki(
                 tytul = "Ustawienia",
                 zaznaczona = wybrana == Zakladka.Ustawienia,
@@ -374,20 +519,42 @@ private fun ElementZakladki(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    val kolorZawartosci = if (zaznaczona) Color(0xFF06231A) else Color.White.copy(alpha = 0.5f)
-    val tlo = if (zaznaczona) {
-        Brush.horizontalGradient(colors = listOf(ZielonyMorski, ZielonyNeon))
-    } else {
-        Brush.horizontalGradient(
-            colors = listOf(Color.White.copy(alpha = 0.05f), Color.White.copy(alpha = 0.05f))
+    val paleta = LocalMotyw.current
+    val kolorZawartosci by animateColorAsState(
+        targetValue = when {
+            zaznaczona -> paleta.naPrzycisku
+            paleta.ciemny -> Color.White.copy(alpha = 0.48f)
+            else -> Color.Black.copy(alpha = 0.42f)
+        },
+        animationSpec = tween(200, easing = FastOutSlowInEasing),
+        label = "kolorZakladki"
+    )
+    val alfaTla by animateFloatAsState(
+        targetValue = if (zaznaczona) 1f else 0f,
+        animationSpec = tween(200, easing = FastOutSlowInEasing),
+        label = "alfaTlaZakladki"
+    )
+    val baza = paleta.kafelek.copy(alpha = 0f)
+    val tlo = Brush.horizontalGradient(
+        colors = listOf(
+            androidx.compose.ui.graphics.lerp(baza, paleta.accentMorski, alfaTla),
+            androidx.compose.ui.graphics.lerp(baza, paleta.przycisk, alfaTla)
         )
-    }
+    )
+    val ksztalt = RoundedCornerShape(paleta.promienKafla.dp)
 
     Box(
         modifier = modifier
-            .height(52.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .height(48.dp)
+            .clip(ksztalt)
             .background(tlo)
+            .then(
+                if (zaznaczona) {
+                    Modifier.border(1.dp, paleta.przycisk.copy(alpha = 0.45f), ksztalt)
+                } else {
+                    Modifier
+                }
+            )
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,

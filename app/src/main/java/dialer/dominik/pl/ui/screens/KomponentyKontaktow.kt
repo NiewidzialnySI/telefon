@@ -197,6 +197,23 @@ internal fun KomunikatKontakty(tytul: String, opis: String) {
                 }
             }
 
+/** Cache miniaturek awatarów — bez LRU każde przewinięcie listy dekoduje od nowa. */
+internal object AwatarBitmapCache {
+    private val cache = object : android.util.LruCache<String, androidx.compose.ui.graphics.ImageBitmap>(
+        (Runtime.getRuntime().maxMemory() / 1024L / 16L).toInt().coerceIn(1_024, 8_192)
+    ) {
+        override fun sizeOf(key: String, value: androidx.compose.ui.graphics.ImageBitmap): Int =
+            ((value.width * value.height * 4) / 1024).coerceAtLeast(1)
+    }
+
+    fun get(uri: String): androidx.compose.ui.graphics.ImageBitmap? =
+        synchronized(cache) { cache.get(uri) }
+
+    fun put(uri: String, bmp: androidx.compose.ui.graphics.ImageBitmap) {
+        synchronized(cache) { cache.put(uri, bmp) }
+    }
+}
+
 /** Awatar kontaktu — zdjęcie z książki (jeśli jest), inaczej inicjał na zielonym tle. */
 @Composable
 internal fun AwatarKontaktu(
@@ -205,23 +222,28 @@ internal fun AwatarKontaktu(
     context: Context,
     rozmiar: androidx.compose.ui.unit.Dp
 ) {
-    // Dekodowanie zdjęcia ZAWSZE na wątku IO (poza UI), żeby przewijanie listy
-    // nie czkało — synchronny decodeStream na main thread to typowy jank przy
-    // wjeździe nowych kart. W trakcie ładowania pokazujemy inicjał; bitmapa
-    // podmienia się, gdy gotowa.
+    val density = LocalDensity.current
+    // 2× rozmiar Dp → px (ekrany xxhdpi); downsample zamiast pełnego JPEG z książki.
+    val maxPx = remember(rozmiar, density) {
+        with(density) { (rozmiar.toPx() * 2f).toInt().coerceIn(64, 256) }
+    }
     val bitmap by produceState<androidx.compose.ui.graphics.ImageBitmap?>(
-        initialValue = null,
+        initialValue = fotoUri?.let { AwatarBitmapCache.get(it) },
         key1 = fotoUri,
-        key2 = context
+        key2 = maxPx
     ) {
+        if (fotoUri.isNullOrBlank()) {
+            value = null
+            return@produceState
+        }
+        AwatarBitmapCache.get(fotoUri)?.let {
+            value = it
+            return@produceState
+        }
         value = withContext(Dispatchers.IO) {
-            if (fotoUri.isNullOrBlank()) {
-                null
-            } else try {
-                android.net.Uri.parse(fotoUri)?.let { uri ->
-                    context.contentResolver.openInputStream(uri)?.use { ins ->
-                        android.graphics.BitmapFactory.decodeStream(ins)?.asImageBitmap()
-                    }
+            try {
+                dekodujAwatarZUri(context, android.net.Uri.parse(fotoUri), maxPx)?.also {
+                    AwatarBitmapCache.put(fotoUri, it)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -229,11 +251,10 @@ internal fun AwatarKontaktu(
             }
         }
     }
-        // Lokalna kopia, żeby smart-cast działał (bitmap to delegowana właściwość).
-        val obraz = bitmap
-        if (obraz != null) {
-            Image(
-                bitmap = obraz,
+    val obraz = bitmap
+    if (obraz != null) {
+        Image(
+            bitmap = obraz,
             contentDescription = null,
             modifier = Modifier
                 .size(rozmiar)
@@ -246,14 +267,7 @@ internal fun AwatarKontaktu(
             modifier = Modifier
                 .size(rozmiar)
                 .clip(CircleShape)
-                .background(
-                    Brush.radialGradient(
-                        listOf(
-                            ZielonyMorski.copy(alpha = 0.35f),
-                            ZielonyNeon.copy(alpha = 0.12f)
-                        )
-                    )
-                )
+                .background(Color(0xFF12362A))
                 .border(1.dp, ZielonyNeon.copy(alpha = 0.22f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
@@ -265,4 +279,31 @@ internal fun AwatarKontaktu(
             )
         }
     }
+}
+
+/** Dekoduje miniaturkę z inSampleSize — bez pełnego decode + createScaledBitmap. */
+private fun dekodujAwatarZUri(
+    context: Context,
+    uri: android.net.Uri,
+    maxPx: Int
+): androidx.compose.ui.graphics.ImageBitmap? {
+    val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    context.contentResolver.openInputStream(uri)?.use {
+        android.graphics.BitmapFactory.decodeStream(it, null, opts)
+    }
+    var sample = 1
+    val h = opts.outHeight
+    val w = opts.outWidth
+    if (h > maxPx || w > maxPx) {
+        var halfH = h / 2
+        var halfW = w / 2
+        while (halfH / sample >= maxPx && halfW / sample >= maxPx) {
+            sample *= 2
+        }
+    }
+    val decode = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+    val bmp = context.contentResolver.openInputStream(uri)?.use {
+        android.graphics.BitmapFactory.decodeStream(it, null, decode)
+    } ?: return null
+    return bmp.asImageBitmap()
 }

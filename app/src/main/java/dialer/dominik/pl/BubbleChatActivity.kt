@@ -39,7 +39,7 @@ class BubbleChatActivity : ComponentActivity() {
         val kontekst = applicationContext
 
         setContent {
-            TelefonTheme(dynamicColor = false) {
+            TelefonTheme {
                 // Ładujemy wątek na bieżąco (numer może być wśród istniejących komunikatów).
                 var watek by remember { mutableStateOf<SmsWatek?>(null) }
                 var odswiez by remember { mutableStateOf(0) }

@@ -24,8 +24,11 @@ object IkonyAplikacji {
     val Strzalka: ImageVector get() = IkonySystemowe.Strzalka
     val Klodka: ImageVector get() = IkonySystemowe.Klodka
     val Bluetooth: ImageVector get() = IkonySystemowe.Bluetooth
+    val Wifi: ImageVector get() = IkonySystemowe.Wifi
+    val AdbWifi: ImageVector get() = IkonySystemowe.AdbWifi
     val Lupa: ImageVector get() = IkonySystemowe.Lupa
     val Notatka: ImageVector get() = IkonySystemowe.Notatka
+    val Edytuj: ImageVector get() = IkonySystemowe.Edytuj
 
     // --- Dialer / rozmowa ---
     val Sluchawka: ImageVector get() = IkonyDialer.Sluchawka
@@ -38,6 +41,10 @@ object IkonyAplikacji {
     val Dymek: ImageVector get() = IkonyDialer.Dymek
     val Nagrywanie: ImageVector get() = IkonyDialer.Nagrywanie
     val StrzalkaWGore: ImageVector get() = IkonyDialer.StrzalkaWGore
+    val PolaczeniePrzychodzace: ImageVector get() = IkonyDialer.PolaczeniePrzychodzace
+    val PolaczenieWychodzace: ImageVector get() = IkonyDialer.PolaczenieWychodzace
+    val PolaczenieNieodebrane: ImageVector get() = IkonyDialer.PolaczenieNieodebrane
+    val PolaczenieOdrzucone: ImageVector get() = IkonyDialer.PolaczenieOdrzucone
 
     // --- Kontakty / formularze ---
     val NowyKontakt: ImageVector get() = IkonyKontaktow.NowyKontakt

@@ -76,7 +76,9 @@ import dialer.dominik.pl.ui.components.IkonyAplikacji
 import dialer.dominik.pl.ui.components.LogoAnimowane
 import dialer.dominik.pl.ui.theme.CzerwonyPolaczenia
 import dialer.dominik.pl.ui.theme.ZielonyMorski
+import dialer.dominik.pl.ui.theme.NaPrzycisku
 import dialer.dominik.pl.ui.theme.ZielonyNeon
+import dialer.dominik.pl.ui.theme.gradientKafelka
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -106,47 +108,36 @@ internal fun EkranCzatuSzczegoly(
     val wybranaPlatforma = pobierzKanal(context, adres)
     val density = LocalDensity.current
 
-    // Wejście / wyjście elementów czatu: staggered fade + slide.
+    // Lekkie wejście UI — wyjście z czatu robi AnimatedContent w SmsScreen (jeden owner).
     var wejscieUi by remember(adres) { mutableStateOf(false) }
-    var wychodzi by remember(adres) { mutableStateOf(false) }
     var pokazWyborZalacznika by remember { mutableStateOf(false) }
     LaunchedEffect(adres) {
-        wychodzi = false
         wejscieUi = false
         pokazWyborZalacznika = false
         delay(16)
         wejscieUi = true
     }
-    // Wstecz: najpierw animacja wyjścia, dopiero potem callback do skrzynki.
-    // (gdy otwarte zdjęcie MMS — jego własny BackHandler ma pierwszeństwo)
-    // Wyjście czatu — wyłączone gdy otwarte menu spinacza (osobny BackHandler niżej).
-    BackHandler(enabled = onWyjscie != null && !wychodzi && !pokazWyborZalacznika) {
-        wychodzi = true
-    }
-    LaunchedEffect(wychodzi) {
-        if (!wychodzi) return@LaunchedEffect
-        wejscieUi = false
-        delay(300)
+    BackHandler(enabled = onWyjscie != null && !pokazWyborZalacznika) {
         onWyjscie?.invoke()
     }
     val alphaListy by animateFloatAsState(
         targetValue = if (wejscieUi) 1f else 0f,
-        animationSpec = tween(320, delayMillis = 40, easing = FastOutSlowInEasing),
+        animationSpec = tween(200, easing = FastOutSlowInEasing),
         label = "alphaListyCzatu"
     )
     val przesuniecieListyPx by animateFloatAsState(
-        targetValue = if (wejscieUi) 0f else with(density) { 18.dp.toPx() },
-        animationSpec = tween(340, delayMillis = 40, easing = FastOutSlowInEasing),
+        targetValue = if (wejscieUi) 0f else with(density) { 10.dp.toPx() },
+        animationSpec = tween(220, easing = FastOutSlowInEasing),
         label = "offsetListyCzatu"
     )
     val alphaPaska by animateFloatAsState(
         targetValue = if (wejscieUi) 1f else 0f,
-        animationSpec = tween(300, delayMillis = 90, easing = FastOutSlowInEasing),
+        animationSpec = tween(200, delayMillis = 40, easing = FastOutSlowInEasing),
         label = "alphaPaskaCzatu"
     )
     val przesunieciePaskaPx by animateFloatAsState(
-        targetValue = if (wejscieUi) 0f else with(density) { 28.dp.toPx() },
-        animationSpec = tween(360, delayMillis = 70, easing = FastOutSlowInEasing),
+        targetValue = if (wejscieUi) 0f else with(density) { 16.dp.toPx() },
+        animationSpec = tween(220, delayMillis = 30, easing = FastOutSlowInEasing),
         label = "offsetPaskaCzatu"
     )
 
@@ -177,6 +168,7 @@ internal fun EkranCzatuSzczegoly(
     var edytowanyZalacznikKlucz by remember { mutableStateOf<Long?>(null) }
     val tymczasowyZdjecieFile = remember { mutableStateOf<java.io.File?>(null) }
     val maZalaczniki = zalaczniki.isNotEmpty()
+    val coroutineScope = rememberCoroutineScope()
 
     fun dodajZalacznikiZUri(uris: List<android.net.Uri>, juzPrzygotowane: Boolean = false) {
         val wolne = MAX_ZALACZNIKOW_SMS - zalaczniki.size
@@ -185,18 +177,28 @@ internal fun EkranCzatuSzczegoly(
             return
         }
         val doDodania = uris.take(wolne)
-        val nowe = doDodania.mapNotNull { zrodlo ->
-            val uriWysylki = if (juzPrzygotowane) zrodlo else przygotujZdjecieDoMms(context, zrodlo)
-            val bmp = dekodujPodgladZdjecia(context, zrodlo)
-            if (uriWysylki != null && bmp != null) ZalacznikSms(System.nanoTime(), uriWysylki, bmp) else null
-        }
-        if (nowe.isEmpty()) {
-            Toast.makeText(context, "Nie udało się dodać zdjęcia", Toast.LENGTH_SHORT).show()
-            return
-        }
-        zalaczniki = zalaczniki + nowe
-        if (uris.size > wolne) {
-            Toast.makeText(context, "Dodano $wolne z ${uris.size} (limit $MAX_ZALACZNIKOW_SMS)", Toast.LENGTH_SHORT).show()
+        coroutineScope.launch {
+            val nowe = withContext(Dispatchers.IO) {
+                doDodania.mapNotNull { zrodlo ->
+                    val uriWysylki = if (juzPrzygotowane) zrodlo else przygotujZdjecieDoMms(context, zrodlo)
+                    val bmp = dekodujBitmapuZUri(context, zrodlo, maxDim = 512)
+                    if (uriWysylki != null && bmp != null) {
+                        ZalacznikSms(System.nanoTime(), uriWysylki, bmp)
+                    } else null
+                }
+            }
+            if (nowe.isEmpty()) {
+                Toast.makeText(context, "Nie udało się dodać zdjęcia", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            zalaczniki = zalaczniki + nowe
+            if (uris.size > wolne) {
+                Toast.makeText(
+                    context,
+                    "Dodano $wolne z ${uris.size} (limit $MAX_ZALACZNIKOW_SMS)",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
         }
     }
 
@@ -227,7 +229,7 @@ internal fun EkranCzatuSzczegoly(
     }
 
     val listState = rememberLazyListState()
-    val coroutineScope = rememberCoroutineScope()
+    val pullRefreshState = rememberPullToRefreshState()
 
     /** reverseLayout: index 0 = najnowsza. „Przy dole” = firstVisible ≈ 0. */
     fun jestPrzyDoleCzatu(): Boolean {
@@ -376,7 +378,7 @@ internal fun EkranCzatuSzczegoly(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = tytulNaglowka,
-                        color = Color.White,
+                        color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle,
                         fontSize = 17.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
@@ -385,7 +387,7 @@ internal fun EkranCzatuSzczegoly(
                     if (pokazNumerPod) {
                         Text(
                             text = adres,
-                            color = Color.White.copy(alpha = 0.45f),
+                            color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle.copy(alpha = 0.45f),
                             fontSize = 12.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -397,19 +399,16 @@ internal fun EkranCzatuSzczegoly(
                         .size(40.dp)
                         .clip(CircleShape)
                         .background(
-                            Brush.radialGradient(
-                                listOf(
-                                    ZielonyMorski.copy(alpha = 0.55f),
-                                    ZielonyMorski.copy(alpha = 0.18f)
-                                )
-                            )
+                            Brush.horizontalGradient(listOf(ZielonyMorski, ZielonyNeon))
                         )
                         .clickable { zadzwonDoKontaktu(context, adres) },
                     contentAlignment = Alignment.Center
                 ) {
-                    LogoAnimowane(
-                        modifier = Modifier.size(26.dp),
-                        pokazPierscien = false
+                    Icon(
+                        imageVector = IkonyAplikacji.TelefonLogo,
+                        contentDescription = "Zadzwoń",
+                        tint = Color(0xFF06231A),
+                        modifier = Modifier.size(22.dp)
                     )
                 }
             }
@@ -537,14 +536,19 @@ internal fun EkranCzatuSzczegoly(
     val przypisaneWpisy = remember(wiadomosci, przypiete) {
         wiadomosci.filter { it.id.toString() in przypiete }
     }
-    if (przypisaneWpisy.isNotEmpty()) {
-        val bezpiecznyIndeks = aktualnyPinIndeks.coerceIn(0, przypisaneWpisy.size - 1)
+    AnimatedVisibility(
+        visible = przypisaneWpisy.isNotEmpty(),
+        enter = expandVertically(tween(200, easing = FastOutSlowInEasing)) + fadeIn(tween(160)),
+        exit = shrinkVertically(tween(160)) + fadeOut(tween(120))
+    ) {
+        val bezpiecznyIndeks = aktualnyPinIndeks.coerceIn(0, (przypisaneWpisy.size - 1).coerceAtLeast(0))
+        if (przypisaneWpisy.isEmpty()) return@AnimatedVisibility
         val pinWpis = przypisaneWpisy[bezpiecznyIndeks]
 
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
                 .clip(RoundedCornerShape(14.dp))
-                .background(Brush.horizontalGradient(listOf(Color(0xFF0F2A1F), Color(0xFF072018))))
+                .background(dialer.dominik.pl.ui.theme.LocalMotyw.current.gradientKafelka())
                 .border(1.dp, ZielonyNeon.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
                 .clickable {
                     val idx = wiadomosci.indexOfFirst { it.id == pinWpis.id }
@@ -570,7 +574,7 @@ internal fun EkranCzatuSzczegoly(
                 }
                 Text(
                     text = if (pinWpis.bitmap != null) "📷 [MMS]" else pinWpis.body,
-                    color = Color.White.copy(alpha = 0.9f),
+                    color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle.copy(alpha = 0.9f),
                     fontSize = 13.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -597,10 +601,16 @@ internal fun EkranCzatuSzczegoly(
     }
 
     // Pasek wyszukiwania WE WNĄTRZ czatu — pojawia się po wybraniu „Szukaj w czacie".
-    if (trybSzukaniaCzat) {
+    AnimatedVisibility(
+        visible = trybSzukaniaCzat,
+        enter = expandVertically(tween(200, easing = FastOutSlowInEasing)) + fadeIn(tween(160)),
+        exit = shrinkVertically(tween(160)) + fadeOut(tween(120))
+    ) {
+        val kolorTekstuSzukaj = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
-                .clip(RoundedCornerShape(14.dp)).background(Color(0xFF131C18))
+                .clip(RoundedCornerShape(14.dp))
+                .background(dialer.dominik.pl.ui.theme.LocalMotyw.current.kafelek)
                 .border(1.dp, ZielonyNeon.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
                 .padding(start = 14.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -610,11 +620,11 @@ internal fun EkranCzatuSzczegoly(
                 value = szukaneWCzacie,
                 onValueChange = { szukaneWCzacie = it },
                 singleLine = true,
-                textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
+                textStyle = TextStyle(color = kolorTekstuSzukaj, fontSize = 15.sp),
                 cursorBrush = SolidColor(ZielonyNeon),
                 modifier = Modifier.weight(1f).padding(horizontal = 10.dp, vertical = 12.dp).focusRequester(poleSzukaniaFocus),
                 decorationBox = { inner ->
-                    if (szukaneWCzacie.isEmpty()) Text("Szukaj w tej rozmowie…", color = Color.White.copy(alpha = 0.35f), fontSize = 15.sp)
+                    if (szukaneWCzacie.isEmpty()) Text("Szukaj w tej rozmowie…", color = kolorTekstuSzukaj.copy(alpha = 0.35f), fontSize = 15.sp)
                     inner()
                 }
             )
@@ -625,7 +635,7 @@ internal fun EkranCzatuSzczegoly(
                 aktualneTrafienie = 0
                 podswietloneId = null
             }) {
-                Icon(IkonyAplikacji.Zamknij, contentDescription = "Zamknij", tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(18.dp))
+                Icon(IkonyAplikacji.Zamknij, contentDescription = "Zamknij", tint = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle.copy(alpha = 0.7f), modifier = Modifier.size(18.dp))
             }
         }
     }
@@ -656,7 +666,7 @@ internal fun EkranCzatuSzczegoly(
                 .pullToRefresh(
                     onRefresh = { odswiezPoAkcji++ },
                     isRefreshing = false,
-                    state = rememberPullToRefreshState()
+                    state = pullRefreshState
                 ),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -665,18 +675,21 @@ internal fun EkranCzatuSzczegoly(
             // Planowane (na górze, wyróżnione).
             items(planowane, key = { "pl_" + it.second }) { (_, czas, trescPl) ->
                 val podgladCzasu = java.text.SimpleDateFormat("dd.MM, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(czas))
-                Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFF0F2A1F)).border(1.dp, ZielonyNeon.copy(alpha = 0.2f), RoundedCornerShape(14.dp)).padding(10.dp)) {
+                Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(dialer.dominik.pl.ui.theme.LocalMotyw.current.kafelek).border(1.dp, ZielonyNeon.copy(alpha = 0.2f), RoundedCornerShape(14.dp)).padding(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         dialer.dominik.pl.ui.components.icons.IkonaZegaraCzasu(czasMs = czas, modifier = Modifier.size(18.dp), kolor = ZielonyNeon)
                         Spacer(Modifier.width(8.dp))
                         Column {
                             Text("Zaplanowano: $podgladCzasu", color = ZielonyNeon, fontSize = 11.sp)
-                            Text(trescPl, color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(trescPl, color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle.copy(alpha = 0.85f), fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
             }
-            itemsIndexed(wiadomosci, key = { _, w -> "${w.id}_${w.type}_${w.date}" }) { idx, wpis ->
+            itemsIndexed(
+                wiadomosci,
+                key = { _, w -> w.lokalnyKlucz ?: w.id }
+            ) { idx, wpis ->
                 KartaWiadomosciNowoczesna(
                     modifier = Modifier.animateItem(
                         fadeInSpec = tween(220, easing = FastOutSlowInEasing),
@@ -709,7 +722,8 @@ internal fun EkranCzatuSzczegoly(
             LogoAnimowane(
                 modifier = Modifier.size(108.dp),
                 wejscieAnimacji = 1f,
-                pokazPierscien = false
+                pokazPierscien = false,
+                trybLekki = false
             )
         }
 
@@ -774,7 +788,7 @@ internal fun EkranCzatuSzczegoly(
                     },
                     modifier = Modifier.size(48.dp).background(Color.Black.copy(alpha = 0.45f), CircleShape)
                 ) {
-                    Icon(IkonyAplikacji.Zamknij, contentDescription = "Zamknij wyszukiwanie", tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(18.dp))
+                    Icon(IkonyAplikacji.Zamknij, contentDescription = "Zamknij wyszukiwanie", tint = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle.copy(alpha = 0.9f), modifier = Modifier.size(18.dp))
                 }
             }
         }
@@ -790,31 +804,42 @@ internal fun EkranCzatuSzczegoly(
             }
     ) {
         // Pasek informacyjny planowania.
-        if (planPodglad != null) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).clip(RoundedCornerShape(12.dp)).background(Brush.horizontalGradient(listOf(Color(0xFF06231A), Color(0xFF0A2E22)))).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                dialer.dominik.pl.ui.components.icons.IkonaZegaraCzasu(czasMs = planCzasMs ?: 0L, modifier = Modifier.size(16.dp), kolor = ZielonyNeon)
-                Spacer(Modifier.width(8.dp))
-                Text("Wiadomość zostanie wysłana: $planPodglad — kliknij wyślij, aby potwierdzić", color = Color.White.copy(alpha = 0.9f), fontSize = 12.sp, modifier = Modifier.weight(1f))
-                IconButton(onClick = { planCzasMs = null; planPodglad = null }, modifier = Modifier.size(28.dp)) {
-                    Icon(IkonyAplikacji.Zamknij, contentDescription = "Anuluj plan", tint = CzerwonyPolaczenia, modifier = Modifier.size(16.dp))
+        AnimatedVisibility(
+            visible = planPodglad != null,
+            enter = expandVertically(tween(200)) + fadeIn(tween(160)),
+            exit = shrinkVertically(tween(160)) + fadeOut(tween(120))
+        ) {
+            Column {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).clip(RoundedCornerShape(12.dp)).background(dialer.dominik.pl.ui.theme.LocalMotyw.current.gradientKafelka()).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    dialer.dominik.pl.ui.components.icons.IkonaZegaraCzasu(czasMs = planCzasMs ?: 0L, modifier = Modifier.size(16.dp), kolor = ZielonyNeon)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Wiadomość zostanie wysłana: $planPodglad — kliknij wyślij, aby potwierdzić", color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle.copy(alpha = 0.9f), fontSize = 12.sp, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { planCzasMs = null; planPodglad = null }, modifier = Modifier.size(28.dp)) {
+                        Icon(IkonyAplikacji.Zamknij, contentDescription = "Anuluj plan", tint = CzerwonyPolaczenia, modifier = Modifier.size(16.dp))
+                    }
                 }
+                Spacer(Modifier.height(4.dp))
             }
-            Spacer(Modifier.height(4.dp))
         }
 
         // Podgląd cytowanej wiadomości (Odpowiedź)
-        cytowanaWiadomosc?.let { cytat ->
+        AnimatedVisibility(
+            visible = cytowanaWiadomosc != null,
+            enter = expandVertically(tween(200)) + fadeIn(tween(160)),
+            exit = shrinkVertically(tween(160)) + fadeOut(tween(120))
+        ) {
+            val cytat = cytowanaWiadomosc ?: return@AnimatedVisibility
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)
                     .clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFF111C17))
+                    .background(dialer.dominik.pl.ui.theme.LocalMotyw.current.kafelek)
                     .border(1.dp, ZielonyNeon.copy(alpha = 0.2f), RoundedCornerShape(14.dp))
                     .padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(Modifier.weight(1f).padding(start = 4.dp)) {
                     Text("Odpowiadasz na:", color = ZielonyNeon, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    Text(cytat.body, color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(cytat.body, color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle.copy(alpha = 0.85f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 IconButton(onClick = { cytowanaWiadomosc = null }, modifier = Modifier.size(30.dp)) {
                     Icon(IkonyAplikacji.Zamknij, contentDescription = "Anuluj odpowiedź", tint = CzerwonyPolaczenia, modifier = Modifier.size(18.dp))
@@ -839,8 +864,8 @@ internal fun EkranCzatuSzczegoly(
             pokazWyborZalacznika = false
         }
         val ksztaltPaska = RoundedCornerShape(16.dp)
-        val kolorTlaPaska = Color(0xFF131C18)
-        val kolorRamkiPaska = ZielonyNeon.copy(alpha = 0.14f)
+        val kolorTlaPaska = dialer.dominik.pl.ui.theme.LocalMotyw.current.kafelek
+        val kolorRamkiPaska = dialer.dominik.pl.ui.theme.LocalMotyw.current.kafelekRamka
         val pasekRozwiniety = pokazWyborZalacznika || maZalaczniki
         Column(
             Modifier
@@ -991,7 +1016,7 @@ internal fun EkranCzatuSzczegoly(
                     Icon(
                         imageVector = IkonyAplikacji.Zlacznik,
                         contentDescription = "Dodaj załącznik",
-                        tint = if (maZalaczniki) Color(0xFF06231A) else ZielonyNeon,
+                        tint = if (maZalaczniki) NaPrzycisku else ZielonyNeon,
                         modifier = Modifier.size(28.dp)
                     )
                 }
@@ -1002,7 +1027,7 @@ internal fun EkranCzatuSzczegoly(
                         tresc = zamienEmotikonNaKoncu(it)
                         zapiszDraftCzatu(context, adres, tresc)
                     },
-                    textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
+                    textStyle = TextStyle(color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle, fontSize = 15.sp),
                     cursorBrush = SolidColor(ZielonyNeon),
                     maxLines = 6,
                     modifier = Modifier
@@ -1012,7 +1037,7 @@ internal fun EkranCzatuSzczegoly(
                         .padding(vertical = 6.dp),
                     decorationBox = { inner ->
                         if (tresc.isEmpty()) {
-                            Text("Napisz wiadomość…", color = Color.White.copy(alpha = 0.32f), fontSize = 15.sp)
+                            Text("Napisz wiadomość…", color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle.copy(alpha = 0.32f), fontSize = 15.sp)
                         }
                         inner()
                     }
@@ -1116,13 +1141,13 @@ internal fun EkranCzatuSzczegoly(
                         dialer.dominik.pl.ui.components.icons.IkonaZegaraCzasu(
                             czasMs = planCzasMs,
                             modifier = Modifier.size(26.dp),
-                            kolor = Color(0xFF06231A)
+                            kolor = NaPrzycisku
                         )
                     } else {
                         Icon(
                             IkonyAplikacji.Strzalka,
                             contentDescription = "Wyślij",
-                            tint = if (tresc.isNotBlank() || maZalaczniki) Color(0xFF06231A) else ZielonyNeon,
+                            tint = if (tresc.isNotBlank() || maZalaczniki) NaPrzycisku else ZielonyNeon,
                             modifier = Modifier.size(26.dp)
                         )
                     }
@@ -1152,13 +1177,14 @@ internal fun EkranCzatuSzczegoly(
         val wpis = wybranyWpis!!
         val jestMms = wpis.bitmap != null || wpis.mmsMsgId != null
         val scope = rememberCoroutineScope()
+        val paletaSheet = dialer.dominik.pl.ui.theme.LocalMotyw.current
         ModalBottomSheet(
             onDismissRequest = { wybranyWpis = null },
-            containerColor = Color(0xFF0B120F)
+            containerColor = paletaSheet.tlo
         ) {
             Column(Modifier.padding(bottom = 24.dp)) {
                 if (wpis.body.isNotBlank() && wpis.body != "📷 [MMS]" && wpis.body != "MMS") {
-                    Text(wpis.body, color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp), maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    Text(wpis.body, color = paletaSheet.tekstDrugorzedny, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp), maxLines = 3, overflow = TextOverflow.Ellipsis)
                 }
 
                 if (jestMms) {
@@ -1289,7 +1315,7 @@ internal fun EkranCzatuSzczegoly(
                         .size(48.dp)
                         .background(Color.Black.copy(alpha = 0.5f), CircleShape)
                 ) {
-                    Icon(IkonyAplikacji.Zamknij, contentDescription = "Zamknij", tint = Color.White, modifier = Modifier.size(24.dp))
+                    Icon(IkonyAplikacji.Zamknij, contentDescription = "Zamknij", tint = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle, modifier = Modifier.size(24.dp))
                 }
             }
         }
@@ -1414,7 +1440,7 @@ private fun OpcjaZalacznika(tekst: String, ikona: androidx.compose.ui.graphics.v
     ) {
         Icon(ikona, contentDescription = null, tint = ZielonyNeon, modifier = Modifier.size(22.dp))
         Spacer(Modifier.width(12.dp))
-        Text(tekst, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+        Text(tekst, color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle, fontSize = 15.sp, fontWeight = FontWeight.Medium)
     }
 }
 

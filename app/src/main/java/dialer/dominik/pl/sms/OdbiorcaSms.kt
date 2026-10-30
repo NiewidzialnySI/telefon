@@ -294,7 +294,7 @@ class OdbiorcaSms : BroadcastReceiver() {
             .setSmallIcon(R.drawable.ic_logo_telefon)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .addPerson(nadawcaPersona)
-            .setColor(0xFF69F0AE.toInt())
+            .setColor(dialer.dominik.pl.ui.theme.MotywKoloryAndroid.akcentArgb(context))
             .setColorized(true)
             .setAutoCancel(true)
             .setContentIntent(wejscie)

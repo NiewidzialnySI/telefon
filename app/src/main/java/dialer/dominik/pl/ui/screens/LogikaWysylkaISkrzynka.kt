@@ -1015,11 +1015,20 @@ internal fun pobierzTekstMms(context: Context, msgId: Long): String {
     return ""
 }
 
-/** Globalny cache bitmap MMS w pamięci — żeby nie dekodować zdjęć z dysku ponownie. */
+/** Globalny cache bitmap MMS — LRU, żeby długie wątki ze zdjęciami nie zjadały heapu. */
 object MmsBitmapCache {
-    private val mapa = java.util.Collections.synchronizedMap(mutableMapOf<Long, android.graphics.Bitmap>())
-    fun get(id: Long): android.graphics.Bitmap? = mapa[id]
-    fun put(id: Long, bmp: android.graphics.Bitmap) { mapa[id] = bmp }
+    private val cache = object : android.util.LruCache<Long, android.graphics.Bitmap>(
+        (Runtime.getRuntime().maxMemory() / 1024L / 8L).toInt().coerceIn(2_048, 24_576)
+    ) {
+        override fun sizeOf(key: Long, value: android.graphics.Bitmap): Int =
+            (value.byteCount / 1024).coerceAtLeast(1)
+    }
+
+    fun get(id: Long): android.graphics.Bitmap? = synchronized(cache) { cache.get(id) }
+
+    fun put(id: Long, bmp: android.graphics.Bitmap) {
+        synchronized(cache) { cache.put(id, bmp) }
+    }
 }
 
 /** Pomocnicza funkcja bezpiecznego dekodowania bitmapy z zachowaniem proporcji i bez ryzyka OOM (OutOfMemoryError). */

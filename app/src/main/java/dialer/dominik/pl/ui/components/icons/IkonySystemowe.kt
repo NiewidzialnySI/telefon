@@ -253,6 +253,126 @@ object IkonySystemowe {
         }.build()
     }
 
+    /** Ołówek / edycja — Material "edit" (ścieżka ołówka). */
+    val Edytuj: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Edytuj",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f
+        ).apply {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(3f, 17.25f)
+                verticalLineTo(21f)
+                horizontalLineTo(6.75f)
+                lineTo(17.81f, 9.94f)
+                lineTo(14.06f, 6.19f)
+                lineTo(3f, 17.25f)
+                close()
+                moveTo(20.71f, 7.04f)
+                curveTo(21.1f, 6.65f, 21.1f, 6.02f, 20.71f, 5.63f)
+                lineTo(18.37f, 3.29f)
+                curveTo(17.98f, 2.9f, 17.35f, 2.9f, 16.96f, 3.29f)
+                lineTo(15.13f, 5.12f)
+                lineTo(18.88f, 8.87f)
+                lineTo(20.71f, 7.04f)
+                close()
+            }
+        }.build()
+    }
+
+    /** Wi‑Fi — status sieci dla Wireless debugging. */
+    val Wifi: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Wifi",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(1f, 9f)
+                lineTo(3f, 11f)
+                curveTo(7.97f, 6.03f, 16.03f, 6.03f, 21f, 11f)
+                lineTo(23f, 9f)
+                curveTo(16.93f, 2.93f, 7.08f, 2.93f, 1f, 9f)
+                close()
+                moveTo(5f, 13f)
+                lineTo(7f, 15f)
+                curveTo(9.76f, 12.24f, 14.24f, 12.24f, 17f, 15f)
+                lineTo(19f, 13f)
+                curveTo(15.14f, 9.14f, 8.87f, 9.14f, 5f, 13f)
+                close()
+                moveTo(9f, 17f)
+                lineTo(12f, 20f)
+                lineTo(15f, 17f)
+                curveTo(13.35f, 15.34f, 10.66f, 15.34f, 9f, 17f)
+                close()
+            }
+        }.build()
+    }
+
+    /** Wireless ADB — „bug” stylu debug (status adb_wifi). */
+    val AdbWifi: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "AdbWifi",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(20f, 8f)
+                horizontalLineTo(17.19f)
+                curveTo(16.74f, 7.22f, 16.12f, 6.55f, 15.37f, 6.04f)
+                lineTo(17f, 4.41f)
+                lineTo(15.59f, 3f)
+                lineTo(13.42f, 5.17f)
+                curveTo(12.96f, 5.06f, 12.49f, 5f, 12f, 5f)
+                curveTo(11.51f, 5f, 11.04f, 5.06f, 10.59f, 5.17f)
+                lineTo(8.41f, 3f)
+                lineTo(7f, 4.41f)
+                lineTo(8.62f, 6.04f)
+                curveTo(7.88f, 6.55f, 7.26f, 7.22f, 6.81f, 8f)
+                horizontalLineTo(4f)
+                verticalLineTo(10f)
+                horizontalLineTo(6.09f)
+                curveTo(6.04f, 10.33f, 6f, 10.66f, 6f, 11f)
+                verticalLineTo(12f)
+                horizontalLineTo(4f)
+                verticalLineTo(14f)
+                horizontalLineTo(6f)
+                verticalLineTo(15f)
+                curveTo(6f, 15.34f, 6.04f, 15.67f, 6.09f, 16f)
+                horizontalLineTo(4f)
+                verticalLineTo(18f)
+                horizontalLineTo(6.81f)
+                curveTo(7.85f, 19.79f, 9.78f, 21f, 12f, 21f)
+                curveTo(14.22f, 21f, 16.15f, 19.79f, 17.19f, 18f)
+                horizontalLineTo(20f)
+                verticalLineTo(16f)
+                horizontalLineTo(17.91f)
+                curveTo(17.96f, 15.67f, 18f, 15.34f, 18f, 15f)
+                verticalLineTo(14f)
+                horizontalLineTo(20f)
+                verticalLineTo(12f)
+                horizontalLineTo(18f)
+                verticalLineTo(11f)
+                curveTo(18f, 10.66f, 17.96f, 10.33f, 17.91f, 10f)
+                horizontalLineTo(20f)
+                verticalLineTo(8f)
+                close()
+                moveTo(14f, 14f)
+                horizontalLineTo(10f)
+                verticalLineTo(10f)
+                horizontalLineTo(14f)
+                verticalLineTo(14f)
+                close()
+            }
+        }.build()
+    }
+
     /** Notatka / notatnik — Material "description" icon (kartka z liniami tekstu).
         Używana na kafelku historii połączeń, by pokazać, że do rozmowy jest notatka. */
     val Notatka: ImageVector by lazy {

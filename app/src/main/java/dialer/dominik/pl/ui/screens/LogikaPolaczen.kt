@@ -14,6 +14,8 @@ import android.telecom.TelecomManager
 import dialer.dominik.pl.call.EkranRozmowy
 import dialer.dominik.pl.call.OczekiwanieNaPolaczenie
 import dialer.dominik.pl.call.StanPolaczenia
+import dialer.dominik.pl.call.odrzucPrzychodzace
+import android.telecom.Call
 /** Sugestia kontaktu dla dialera: nazwa, numer(y), zdjęcie. */
 @Immutable
 data class ContactSuggestion(
@@ -257,12 +259,21 @@ internal fun wykonajFaktycznePolaczenie(context: Context, numer: String) {
         OczekiwanieNaPolaczenie.anuluj()
 
         // 2) Rozłącz aktywny Call (jeśli jest).
+        // RINGING → reject(DECLINED)=REJECTED; disconnect() na dzwoniącym = busy tone.
         val aktywne = StanPolaczenia.polaczenie
         var rozlaczono = false
         if (aktywne != null) {
             try {
-                @Suppress("DEPRECATION")
-                aktywne.disconnect()
+                val stanCall = aktywne.state
+                val dzwoni = stanCall == Call.STATE_RINGING ||
+                    (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+                        stanCall == Call.STATE_SIMULATED_RINGING)
+                if (dzwoni) {
+                    odrzucPrzychodzace(aktywne)
+                } else {
+                    @Suppress("DEPRECATION")
+                    aktywne.disconnect()
+                }
                 rozlaczono = true
             } catch (e: Exception) {
                 e.printStackTrace()

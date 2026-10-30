@@ -27,6 +27,7 @@ import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
+import androidx.compose.ui.graphics.toArgb
 import kotlin.math.abs
 import kotlin.math.hypot
 
@@ -86,6 +87,7 @@ class DymekRozmowyService : Service() {
             animatorSnap?.cancel()
             przygotujWidokPoDodaniu = null
             usunNadkladke()
+            DymekDane.wyczysc()
             stopSelf()
             return START_NOT_STICKY
         }
@@ -135,6 +137,7 @@ class DymekRozmowyService : Service() {
     override fun onDestroy() {
         animatorSnap?.cancel()
         usunNadkladke()
+        DymekDane.wyczysc()
         super.onDestroy()
     }
 
@@ -438,14 +441,17 @@ class AwatarDymkaView(context: Context) : View(context) {
     private var pad = 0
     private val tlo = Paint(Paint.ANTI_ALIAS_FLAG)
     private val tekst = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(110, 231, 168)
         textAlign = Paint.Align.CENTER
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     }
     private val ramka = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        color = Color.argb(160, 105, 240, 174)
     }
+    private val sciezka = Path()
+    private var ostatniCx = Float.NaN
+    private var ostatniCy = Float.NaN
+    private var ostatniR = Float.NaN
+    private var ostatniAkcent = 0
 
     fun ustawPaddingRysowania(padding: Int) {
         pad = padding
@@ -458,7 +464,35 @@ class AwatarDymkaView(context: Context) : View(context) {
         return true
     }
 
+    /** Kolor dymka z motywu (seed / przycisk / nadpisanie ekranu Rozmowa). */
+    private fun kolorAkcentuPolaczenia(): Int {
+        dialer.dominik.pl.ui.theme.MotywStan.zapewnijWczytane(context)
+        val stan = dialer.dominik.pl.ui.theme.MotywStan.stan.value
+        val nad = stan.ekrany[dialer.dominik.pl.ui.theme.EkranMotywu.Rozmowa]
+        val kolor = nad?.przycisk
+            ?: stan.kolorPrzycisku
+            ?: nad?.seed
+            ?: stan.seed
+        return kolor.toArgb()
+    }
+
+    private fun przyciemnij(argb: Int, wsp: Float): Int {
+        val r = ((Color.red(argb) * wsp).toInt()).coerceIn(0, 255)
+        val g = ((Color.green(argb) * wsp).toInt()).coerceIn(0, 255)
+        val b = ((Color.blue(argb) * wsp).toInt()).coerceIn(0, 255)
+        return Color.rgb(r, g, b)
+    }
+
     override fun onDraw(canvas: Canvas) {
+        val accent = kolorAkcentuPolaczenia()
+        tekst.color = accent
+        ramka.color = Color.argb(
+            160,
+            Color.red(accent),
+            Color.green(accent),
+            Color.blue(accent)
+        )
+
         val stroke = 2.5f * resources.displayMetrics.density
         ramka.strokeWidth = stroke
         // Środek okna; promień zostawia miejsce na cały stroke wewnątrz obszaru treści.
@@ -467,13 +501,24 @@ class AwatarDymkaView(context: Context) : View(context) {
         val rTresc = (width / 2f - pad).coerceAtLeast(1f)
         val rRysunek = rTresc - stroke / 2f
 
-        val sciezka = Path().apply { addCircle(cx, cy, rRysunek, Path.Direction.CW) }
+        if (cx != ostatniCx || cy != ostatniCy || rRysunek != ostatniR || accent != ostatniAkcent) {
+            sciezka.reset()
+            sciezka.addCircle(cx, cy, rRysunek, Path.Direction.CW)
+            tlo.shader = RadialGradient(
+                cx, cy, rRysunek,
+                intArrayOf(przyciemnij(accent, 0.28f), przyciemnij(accent, 0.12f)),
+                null, Shader.TileMode.CLAMP
+            )
+            ostatniCx = cx
+            ostatniCy = cy
+            ostatniR = rRysunek
+            ostatniAkcent = accent
+        }
         canvas.save()
         canvas.clipPath(sciezka)
 
         val zdjecie = DymekDane.zdjecie
         if (zdjecie != null) {
-            val bok = rRysunek * 2f
             canvas.drawBitmap(
                 zdjecie,
                 null,
@@ -481,11 +526,6 @@ class AwatarDymkaView(context: Context) : View(context) {
                 null
             )
         } else {
-            tlo.shader = RadialGradient(
-                cx, cy, rRysunek,
-                intArrayOf(Color.rgb(0x12, 0x36, 0x2A), Color.rgb(0x08, 0x1A, 0x14)),
-                null, Shader.TileMode.CLAMP
-            )
             canvas.drawCircle(cx, cy, rRysunek, tlo)
             tekst.textSize = rRysunek * 0.7f
             val y = cy - (tekst.descent() + tekst.ascent()) / 2

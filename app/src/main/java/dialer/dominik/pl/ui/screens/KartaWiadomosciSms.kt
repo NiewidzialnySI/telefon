@@ -35,7 +35,9 @@ import dialer.dominik.pl.ui.components.IkonyAplikacji
 import dialer.dominik.pl.ui.components.LogoAnimowane
 import dialer.dominik.pl.ui.theme.CzerwonyPolaczenia
 import dialer.dominik.pl.ui.theme.ZielonyMorski
+import dialer.dominik.pl.ui.theme.NaPrzycisku
 import dialer.dominik.pl.ui.theme.ZielonyNeon
+import dialer.dominik.pl.ui.theme.gradientKafelka
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 internal enum class SpanType { LINK, PHONE, CODE }
@@ -229,7 +231,7 @@ internal fun KartaWiadomosciNowoczesna(
             ) {
                 Text(
                     text = czasFormat,
-                    color = Color.White.copy(alpha = 0.5f),
+                    color = dialer.dominik.pl.ui.theme.LocalMotyw.current.tekstDrugorzedny,
                     fontSize = 11.sp
                 )
                 if (stanWysylki != null) {
@@ -249,7 +251,9 @@ internal fun KartaWiadomosciNowoczesna(
                                     Brush.horizontalGradient(listOf(ZielonyMorski, ZielonyNeon))
                             )
                         else
-                            Modifier.background(Brush.verticalGradient(listOf(Color(0xFF131C18), Color(0xFF0B120F))))
+                            Modifier.background(
+                                dialer.dominik.pl.ui.theme.LocalMotyw.current.gradientKafelka()
+                            )
                     )
                     .then(
                         if (podswietlonaGlowna) Modifier.border(2.dp, ZielonyNeon.copy(alpha = ramkaAlpha), RoundedCornerShape(18.dp))
@@ -292,7 +296,8 @@ internal fun KartaWiadomosciNowoczesna(
                                 .align(Alignment.Center)
                                 .size(56.dp),
                             wejscieAnimacji = 1f,
-                            pokazPierscien = false
+                            pokazPierscien = false,
+                            trybLekki = true
                         )
                     }
                 }
@@ -302,8 +307,8 @@ internal fun KartaWiadomosciNowoczesna(
                         // Podświetlenie rozjaśnia tło — wybielamy tekst, by był czytelny.
                         color = when {
                             podswietlona -> Color.White
-                            wychodzaca -> Color(0xFF06231A)
-                            else -> Color.White
+                            wychodzaca -> NaPrzycisku
+                            else -> dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle
                         },
                         fontSize = 14.sp
                     )
@@ -336,13 +341,14 @@ internal fun zapiszZdjecieDoGalerii(context: Context, bitmap: android.graphics.B
 /** Pojedynczy wiersz w menu akcji wiadomości. */
 @Composable
 internal fun ListRowMenu(tekst: String, ikona: androidx.compose.ui.graphics.vector.ImageVector, czerwony: Boolean = false, onClick: () -> Unit) {
+    val naTle = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 22.dp, vertical = 15.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(ikona, contentDescription = null, tint = if (czerwony) CzerwonyPolaczenia else Color.White, modifier = Modifier.size(20.dp))
+        Icon(ikona, contentDescription = null, tint = if (czerwony) CzerwonyPolaczenia else naTle, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(14.dp))
-        Text(tekst, color = if (czerwony) CzerwonyPolaczenia else Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+        Text(tekst, color = if (czerwony) CzerwonyPolaczenia else naTle, fontSize = 15.sp, fontWeight = FontWeight.Medium)
     }
 }
 
@@ -362,13 +368,18 @@ internal fun StatusWysylkiWskaznik(stan: StanWysylki) {
                 LogoAnimowane(
                     modifier = Modifier.size(14.dp),
                     wejscieAnimacji = 1f,
-                    pokazPierscien = false
+                    pokazPierscien = false,
+                    trybLekki = true
                 )
                 Text("Wysyłanie…", color = ZielonyNeon.copy(alpha = 0.7f), fontSize = 10.sp)
             }
         }
         StanWysylki.WYSŁANO -> {
-            Text("Wysłano ✓", color = Color.White.copy(alpha = 0.55f), fontSize = 10.sp)
+            Text(
+                "Wysłano ✓",
+                color = dialer.dominik.pl.ui.theme.LocalMotyw.current.tekstDrugorzedny,
+                fontSize = 10.sp
+            )
         }
         StanWysylki.DOSTARCZONO -> {
             Text("Dostarczono ✓✓", color = ZielonyNeon.copy(alpha = 0.85f), fontSize = 10.sp)

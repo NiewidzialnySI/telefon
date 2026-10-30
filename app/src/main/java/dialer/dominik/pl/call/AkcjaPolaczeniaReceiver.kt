@@ -16,7 +16,8 @@ class AkcjaPolaczeniaReceiver : BroadcastReceiver() {
                 EkranRozmowy.pokaz(context)
             }
             "AKCJA_ODRZUC" -> {
-                StanPolaczenia.polaczenie?.reject(false, null)
+                // REJECT_REASON_DECLINED → DisconnectCause.REJECTED (nie BUSY / disconnect).
+                odrzucPrzychodzace(StanPolaczenia.polaczenie)
                 StanPolaczenia.polaczenie = null
             }
             "AKCJA_ROZLACZ" -> {

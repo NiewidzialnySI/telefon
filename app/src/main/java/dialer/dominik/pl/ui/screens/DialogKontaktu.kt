@@ -52,6 +52,7 @@ import dialer.dominik.pl.sms.zapamietajKanal
 import dialer.dominik.pl.ui.components.IkonyAplikacji
 import dialer.dominik.pl.ui.components.icons.IkonyKanalow
 import dialer.dominik.pl.ui.theme.ZielonyMorski
+import dialer.dominik.pl.ui.theme.NaPrzycisku
 import dialer.dominik.pl.ui.theme.ZielonyNeon
 
 /** Okno dialogowe tworzenia nowego kontaktu. */
@@ -303,12 +304,12 @@ internal fun DialogDodajKontakt(
                             Icon(
                                 imageVector = IkonyAplikacji.Sprawdzenie,
                                 contentDescription = "Zapisz",
-                                tint = Color(0xFF06231A),
+                                tint = NaPrzycisku,
                                 modifier = Modifier.size(20.dp)
                             )
                             Text(
                                 text = "Zapisz",
-                                color = Color(0xFF06231A),
+                                color = NaPrzycisku,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp
                             )

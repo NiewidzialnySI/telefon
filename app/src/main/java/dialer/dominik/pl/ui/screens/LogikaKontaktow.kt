@@ -248,6 +248,15 @@ private fun pobierzKontaktyBezCache(context: Context): List<KontaktItem> {
         e.printStackTrace()
     }
 
+    // Jeden odczyt prefs zamiast N× getSharedPreferences w pętli.
+    val mapaPseudo = context.getSharedPreferences(PREFS_PSEUDONIMY, Context.MODE_PRIVATE)
+        .all
+        .mapNotNull { (k, v) ->
+            val p = (v as? String)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            k to p
+        }
+        .toMap()
+
     return wedlugKontaktu
         .map { (kontaktId, dane) ->
             val (nazwa, numery) = dane
@@ -255,7 +264,7 @@ private fun pobierzKontaktyBezCache(context: Context): List<KontaktItem> {
                 kontaktId,
                 nazwa,
                 numery,
-                pseudonim = pobierzPseudonim(context, nazwa),
+                pseudonim = mapaPseudo[nazwa.trim()],
                 fotoUri = mapajotoUri[kontaktId],
                 firma = mapafirm[kontaktId]
             )

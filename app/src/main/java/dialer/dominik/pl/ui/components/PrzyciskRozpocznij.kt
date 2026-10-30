@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.clickable
 import dialer.dominik.pl.ui.theme.ZielonyMorski
+import dialer.dominik.pl.ui.theme.NaPrzycisku
 import dialer.dominik.pl.ui.theme.ZielonyNeon
 import dialer.dominik.pl.ui.theme.ZielonyGleboki
 
@@ -99,7 +100,7 @@ fun PrzyciskRozpocznij(
         ) {
             Text(
                 text = tekst,
-                color = Color(0xFF06231A),
+                color = NaPrzycisku,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.SemiBold,
                 letterSpacing = 0.2.sp
@@ -108,7 +109,7 @@ fun PrzyciskRozpocznij(
             Icon(
                 imageVector = IkonaStrzalka,
                 contentDescription = null,
-                tint = Color(0xFF06231A),
+                tint = NaPrzycisku,
                 modifier = Modifier.size(22.dp)
             )
         }

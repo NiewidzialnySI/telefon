@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import dialer.dominik.pl.ui.components.IkonyAplikacji
+import dialer.dominik.pl.ui.theme.NaPrzycisku
 import dialer.dominik.pl.ui.theme.ZielonyNeon
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -210,11 +211,11 @@ internal fun DialogKadrowaniaZdjecia(
                             Icon(
                                 imageVector = IkonyAplikacji.Sprawdzenie,
                                 contentDescription = "Zapisz",
-                                tint = Color(0xFF06231A),
+                                tint = NaPrzycisku,
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(Modifier.width(6.dp))
-                            Text("Zapisz zdjęcie", color = Color(0xFF06231A), fontWeight = FontWeight.Bold)
+                            Text("Zapisz zdjęcie", color = NaPrzycisku, fontWeight = FontWeight.Bold)
                         }
                     }
                 }

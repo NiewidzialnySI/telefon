@@ -322,8 +322,9 @@ object IkonyDialer {
     }
 
     /**
-     * Ikona „Ścisz" — głośnik z falą i ukośną kreską (volume_off).
-     * Używana na ekranie połączenia przychodzącego do wyciszenia dzwonka.
+     * Ikona „Ścisz" — klasyczny Material volume_off:
+     * korpus głośnika + dwie fale (częściowo przecięte) + ukośna kreska.
+     * Czytelna w ~24–28 dp (i w chipach ~20–22 dp).
      */
     val Wciszenie: ImageVector by lazy {
         ImageVector.Builder(
@@ -333,24 +334,46 @@ object IkonyDialer {
             viewportWidth = 24f,
             viewportHeight = 24f
         ).apply {
-            // Głośnik (jak Glosnik)
             path(fill = SolidColor(Color.Black)) {
-                moveTo(3f, 9f)
-                verticalLineTo(15f)
-                horizontalLineTo(7f)
-                lineTo(12f, 20f)
-                verticalLineTo(4f)
-                lineTo(7f, 9f)
-                horizontalLineTo(3f)
+                // Bliska fala (ucięta ukośną)
+                moveTo(16.5f, 12f)
+                curveTo(16.5f, 10.23f, 15.48f, 8.71f, 14f, 7.97f)
+                verticalLineToRelative(2.21f)
+                lineToRelative(2.45f, 2.45f)
+                curveToRelative(0.03f, -0.2f, 0.05f, -0.41f, 0.05f, -0.63f)
                 close()
-            }
-            // Ukośna kreska „wyciszone" od prawego górnego do lewego dolnego rogu
-            path(fill = SolidColor(Color.Black)) {
-                moveTo(18.5f, 3.5f)
-                lineTo(20f, 5f)
-                lineTo(7f, 18f)
-                lineTo(5.5f, 16.5f)
-                lineTo(18.5f, 3.5f)
+                // Daleka fala (ucięta ukośną)
+                moveTo(19f, 12f)
+                curveToRelative(0f, 0.94f, -0.2f, 1.82f, -0.54f, 2.64f)
+                lineToRelative(1.51f, 1.51f)
+                curveTo(20.63f, 14.91f, 21f, 13.5f, 21f, 12f)
+                curveToRelative(0f, -4.28f, -2.99f, -7.86f, -7f, -8.77f)
+                verticalLineToRelative(2.06f)
+                curveToRelative(2.89f, 0.86f, 5f, 3.54f, 5f, 6.71f)
+                close()
+                // Korpus + ukośna kreska + reszta głośnika pod kreską
+                moveTo(4.27f, 3f)
+                lineTo(3f, 4.27f)
+                lineTo(7.73f, 9f)
+                horizontalLineTo(3f)
+                verticalLineToRelative(6f)
+                horizontalLineToRelative(4f)
+                lineToRelative(5f, 5f)
+                verticalLineToRelative(-6.73f)
+                lineToRelative(4.25f, 4.25f)
+                curveToRelative(-0.67f, 0.52f, -1.42f, 0.93f, -2.25f, 1.18f)
+                verticalLineToRelative(2.06f)
+                curveToRelative(1.38f, -0.31f, 2.63f, -0.95f, 3.69f, -1.81f)
+                lineTo(19.73f, 21f)
+                lineTo(21f, 19.73f)
+                lineToRelative(-9f, -9f)
+                lineTo(4.27f, 3f)
+                close()
+                // Górny fragment membrany (nad kreską)
+                moveTo(12f, 4f)
+                lineTo(9.91f, 6.09f)
+                lineTo(12f, 8.18f)
+                verticalLineTo(4f)
                 close()
             }
         }.build()
@@ -439,6 +462,130 @@ object IkonyDialer {
                 horizontalLineToRelative(-8f)
                 verticalLineToRelative(-8f)
                 horizontalLineTo(4f)
+                close()
+            }
+        }.build()
+    }
+
+    /**
+     * Połączenie przychodzące — Material Icons `call_received` (Apache 2.0).
+     * Czytelna strzałka ↘ w 16–20 dp.
+     */
+    val PolaczeniePrzychodzace: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "PolaczeniePrzychodzace",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f
+        ).apply {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(20f, 5.41f)
+                lineTo(18.59f, 4f)
+                lineTo(7f, 15.59f)
+                verticalLineTo(9f)
+                horizontalLineTo(5f)
+                verticalLineToRelative(10f)
+                horizontalLineToRelative(10f)
+                verticalLineToRelative(-2f)
+                horizontalLineTo(8.41f)
+                close()
+            }
+        }.build()
+    }
+
+    /**
+     * Połączenie wychodzące — Material Icons `call_made` (Apache 2.0).
+     */
+    val PolaczenieWychodzace: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "PolaczenieWychodzace",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f
+        ).apply {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(9f, 5f)
+                verticalLineToRelative(2f)
+                horizontalLineToRelative(6.59f)
+                lineTo(4f, 18.59f)
+                lineTo(5.41f, 20f)
+                lineTo(17f, 8.41f)
+                verticalLineTo(15f)
+                horizontalLineToRelative(2f)
+                verticalLineTo(5f)
+                close()
+            }
+        }.build()
+    }
+
+    /**
+     * Połączenie nieodebrane — Material Icons `call_missed` (Apache 2.0).
+     */
+    val PolaczenieNieodebrane: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "PolaczenieNieodebrane",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f
+        ).apply {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(19.59f, 7f)
+                lineTo(12f, 14.59f)
+                lineTo(6.41f, 9f)
+                horizontalLineTo(11f)
+                verticalLineTo(7f)
+                horizontalLineTo(3f)
+                verticalLineToRelative(8f)
+                horizontalLineToRelative(2f)
+                verticalLineToRelative(-4.59f)
+                lineToRelative(7f, 7f)
+                lineToRelative(9f, -9f)
+                close()
+            }
+        }.build()
+    }
+
+    /**
+     * Połączenie odrzucone — Material Icons `phone_disabled` (Apache 2.0).
+     * Słuchawka z przekreśleniem — odróżnialna od nieodebranego.
+     */
+    val PolaczenieOdrzucone: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "PolaczenieOdrzucone",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f
+        ).apply {
+            path(fill = SolidColor(Color.Black)) {
+                moveTo(17.34f, 14.54f)
+                lineToRelative(-1.43f, -1.43f)
+                curveToRelative(0.56f, -0.73f, 1.05f, -1.5f, 1.47f, -2.32f)
+                lineToRelative(-2.2f, -2.2f)
+                curveToRelative(-0.28f, -0.28f, -0.36f, -0.67f, -0.25f, -1.02f)
+                curveToRelative(0.37f, -1.12f, 0.57f, -2.32f, 0.57f, -3.57f)
+                curveToRelative(0f, -0.55f, 0.45f, -1f, 1f, -1f)
+                horizontalLineTo(20f)
+                curveToRelative(0.55f, 0f, 1f, 0.45f, 1f, 1f)
+                curveToRelative(0f, 3.98f, -1.37f, 7.64f, -3.66f, 10.54f)
+                close()
+                moveTo(14.52f, 17.35f)
+                curveTo(11.63f, 19.64f, 7.97f, 21f, 4f, 21f)
+                curveToRelative(-0.55f, 0f, -1f, -0.45f, -1f, -1f)
+                verticalLineToRelative(-3.49f)
+                curveToRelative(0f, -0.55f, 0.45f, -1f, 1f, -1f)
+                curveToRelative(1.24f, 0f, 2.45f, -0.2f, 3.57f, -0.57f)
+                curveToRelative(0.35f, -0.12f, 0.75f, -0.03f, 1.02f, 0.24f)
+                lineToRelative(2.2f, 2.2f)
+                curveToRelative(0.81f, -0.42f, 1.58f, -0.9f, 2.3f, -1.46f)
+                lineTo(1.39f, 4.22f)
+                lineToRelative(1.42f, -1.41f)
+                lineTo(21.19f, 21.2f)
+                lineToRelative(-1.41f, 1.41f)
+                lineToRelative(-5.26f, -5.26f)
                 close()
             }
         }.build()

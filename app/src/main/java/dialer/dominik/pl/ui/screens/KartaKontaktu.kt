@@ -9,9 +9,15 @@ import android.os.Bundle
 import android.provider.ContactsContract
 import android.telecom.TelecomManager
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -90,7 +96,9 @@ import dialer.dominik.pl.sms.zapamietajKontoKomunikatora
 import dialer.dominik.pl.ui.components.IkonyAplikacji
 import dialer.dominik.pl.ui.theme.CzarnyAmoled
 import dialer.dominik.pl.ui.theme.ZielonyMorski
+import dialer.dominik.pl.ui.theme.NaPrzycisku
 import dialer.dominik.pl.ui.theme.ZielonyNeon
+import dialer.dominik.pl.ui.theme.gradientKafelka
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
@@ -107,27 +115,24 @@ import kotlinx.coroutines.launch
                                                     onEdytuj: () -> Unit = {}
                                                 ) {
     // Który numer jest aktywny — przy jednym numerze zawsze pierwszy.
-    // Wybór jest pamiętany w obrębie karty, więc kanał i akcje odnoszą się do niego.
-    var indeksNumeru by remember(kontakt.name) {
-        mutableIntStateOf(
-            pobierzNumerDoDzwonienia(context, kontakt.name)?.let { numerZap ->
-                kontakt.numery.indexOfFirst { it.surowy == numerZap }.coerceAtLeast(0)
-            } ?: kontakt.numery.indexOfFirst { it == kontakt.numery.firstOrNull() }.coerceAtLeast(0)
-        )
+    // Preferencję z prefs ładujemy dopiero po rozwinięciu (nie przy każdym scrollu).
+    var indeksNumeru by remember(kontakt.contactId) { mutableIntStateOf(0) }
+    LaunchedEffect(rozwinieta, kontakt.contactId) {
+        if (!rozwinieta) return@LaunchedEffect
+        val numerZap = pobierzNumerDoDzwonienia(context, kontakt.name) ?: return@LaunchedEffect
+        val idx = kontakt.numery.indexOfFirst { it.surowy == numerZap }
+        if (idx >= 0) indeksNumeru = idx
     }
     val wybranyNumer = kontakt.numery.getOrNull(indeksNumeru) ?: kontakt.numery.first()
-    val inicial = kontakt.name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
-
-    val alfaTla by animateFloatAsState(
-        targetValue = if (rozwinieta) 1f else 0f,
-        animationSpec = tween(220),
-        label = "alfa"
-    )
+    val inicial = remember(kontakt.name) {
+        kontakt.name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+    }
 
     // Przesunięcie karty przy przeciągnięciu (swipe) — jak w historii połączeń.
     var zasieg by remember { mutableFloatStateOf(0f) }
     val gestyDensity = LocalDensity.current
     val prog = remember { with(gestyDensity) { 110.dp.toPx() } }
+    val scopeGestu = rememberCoroutineScope()
 
     Box(modifier = Modifier.fillMaxWidth()) {
         // Tło po PRAWĘJ — widoczne przy przeciągnięciu w LEWO (Wyślij wiadomość)
@@ -189,24 +194,22 @@ import kotlinx.coroutines.launch
             }
         }
 
+    val paletaMotywu = dialer.dominik.pl.ui.theme.LocalMotyw.current
+    val alfaTla by animateFloatAsState(
+        targetValue = if (rozwinieta) 1f else 0f,
+        animationSpec = tween(220),
+        label = "alfa"
+    )
+    val kolorRamki = if (rozwinieta) ZielonyNeon.copy(alpha = 0.10f + 0.08f * alfaTla)
+    else paletaMotywu.kafelekRamka
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .offset { IntOffset(zasieg.roundToInt(), 0) }
             .clip(RoundedCornerShape(20.dp))
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        Color(0xFF131C18).copy(alpha = 0.85f + 0.15f * alfaTla),
-                        Color(0xFF0B120F)
-                    )
-                )
-            )
-            .border(
-                1.dp,
-                ZielonyNeon.copy(alpha = 0.10f + 0.08f * alfaTla),
-                RoundedCornerShape(20.dp)
-            )
+            .background(paletaMotywu.gradientKafelka(alfaGora = 0.85f + 0.15f * alfaTla))
+            .border(1.dp, kolorRamki, RoundedCornerShape(20.dp))
             .pointerInput(Unit) {
                 detectHorizontalDragGestures(
                     onDragEnd = {
@@ -225,7 +228,16 @@ import kotlinx.coroutines.launch
                             // bez przesunięcia → rozwiń
                             else -> onRozwin()
                         }
-                        zasieg = 0f
+                        val start = zasieg
+                        scopeGestu.launch {
+                            Animatable(start).animateTo(
+                                0f,
+                                spring(
+                                    dampingRatio = Spring.DampingRatioNoBouncy,
+                                    stiffness = Spring.StiffnessMedium
+                                )
+                            ) { zasieg = value }
+                        }
                     },
                     onHorizontalDrag = { _, dystans ->
                         zasieg = (zasieg + dystans).coerceIn(-prog * 1.4f, prog * 1.4f)
@@ -256,7 +268,7 @@ import kotlinx.coroutines.launch
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = kontakt.nazwaWyswietlana,
-                    color = Color.White,
+                    color = paletaMotywu.naTle,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
@@ -266,7 +278,7 @@ import kotlinx.coroutines.launch
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = wybranyNumer.surowy,
-                        color = Color.White.copy(alpha = 0.45f),
+                        color = paletaMotywu.tekstDrugorzedny,
                         fontSize = 12.5.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -303,7 +315,7 @@ import kotlinx.coroutines.launch
                     imageVector = if (ulubiony) IkonyAplikacji.Gwiazda
                     else IkonyAplikacji.GwiazdaPusta,
                     contentDescription = if (ulubiony) "Usuń z ulubionych" else "Dodaj do ulubionych",
-                    tint = if (ulubiony) ZielonyNeon else Color.White.copy(alpha = 0.35f),
+                    tint = if (ulubiony) ZielonyNeon else paletaMotywu.naTle.copy(alpha = 0.35f),
                     modifier = Modifier.size(22.dp)
                 )
             }
@@ -312,15 +324,17 @@ import kotlinx.coroutines.launch
         // Rozwinięcie: wybór kanału wiadomości
         AnimatedVisibility(
             visible = rozwinieta,
-            enter = expandVertically(),
-            exit = shrinkVertically()
+            enter = expandVertically(animationSpec = tween(220, easing = FastOutSlowInEasing)) +
+                fadeIn(tween(180)),
+            exit = shrinkVertically(animationSpec = tween(180, easing = FastOutSlowInEasing)) +
+                fadeOut(tween(140))
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(1.dp)
-                        .background(Color.White.copy(alpha = 0.06f))
+                        .background(paletaMotywu.naTle.copy(alpha = 0.06f))
                 )
                 Column(
                                     modifier = Modifier
@@ -333,7 +347,7 @@ import kotlinx.coroutines.launch
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
                                 text = "Numer telefonu",
-                                color = Color.White.copy(alpha = 0.42f),
+                                color = paletaMotywu.naTle.copy(alpha = 0.42f),
                                 fontSize = 12.sp
                             )
                             kontakt.numery.forEachIndexed { indeks, numer ->
@@ -344,12 +358,12 @@ import kotlinx.coroutines.launch
                                         .clip(RoundedCornerShape(12.dp))
                                         .background(
                                             if (aktywny) ZielonyNeon.copy(alpha = 0.10f)
-                                            else Color.White.copy(alpha = 0.04f)
+                                            else paletaMotywu.naTle.copy(alpha = 0.04f)
                                         )
                                         .border(
                                             1.dp,
                                             if (aktywny) ZielonyNeon.copy(alpha = 0.40f)
-                                            else Color.White.copy(alpha = 0.07f),
+                                            else paletaMotywu.naTle.copy(alpha = 0.07f),
                                             RoundedCornerShape(12.dp)
                                         )
                                         .clickable { indeksNumeru = indeks }
@@ -363,14 +377,14 @@ import kotlinx.coroutines.launch
                                             .clip(CircleShape)
                                             .background(
                                                 if (aktywny) ZielonyNeon
-                                                else Color.White.copy(alpha = 0.12f)
+                                                else paletaMotywu.naTle.copy(alpha = 0.12f)
                                             ),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         if (aktywny) {
                                             Text(
                                                 text = "✓",
-                                                color = Color(0xFF06231A),
+                                                color = NaPrzycisku,
                                                 fontSize = 10.sp,
                                                 fontWeight = FontWeight.Bold
                                             )
@@ -379,7 +393,7 @@ import kotlinx.coroutines.launch
                                     Spacer(Modifier.width(10.dp))
                                     Text(
                                         text = numer.surowy,
-                                        color = if (aktywny) Color.White else Color.White.copy(alpha = 0.55f),
+                                        color = if (aktywny) paletaMotywu.naTle else paletaMotywu.naTle.copy(alpha = 0.55f),
                                         fontSize = 14.sp,
                                         fontWeight = if (aktywny) FontWeight.Medium else FontWeight.Normal,
                                         modifier = Modifier.weight(1f)
@@ -405,7 +419,7 @@ import kotlinx.coroutines.launch
                                     IconMini(
                                         ikona = IkonyAplikacji.Wiadomosc,
                                         opis = "Pisz na ${numer.surowy}",
-                                        kolor = Color.White.copy(alpha = 0.55f),
+                                        kolor = paletaMotywu.naTle.copy(alpha = 0.55f),
                                         podswietlona = false,
                                         onClick = {
                                             // Otwarcie wiadomości na aktualny numer + kanał; bez zapisu preferencji numeru
@@ -420,7 +434,7 @@ import kotlinx.coroutines.launch
 
                     Text(
                         text = "Wyślij wiadomość przez",
-                        color = Color.White.copy(alpha = 0.42f),
+                        color = paletaMotywu.naTle.copy(alpha = 0.42f),
                         fontSize = 12.sp
                     )
 
@@ -458,14 +472,14 @@ import kotlinx.coroutines.launch
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
                                 text = "ID konta Messenger (Facebook)",
-                                color = Color.White.copy(alpha = 0.42f),
+                                color = paletaMotywu.naTle.copy(alpha = 0.42f),
                                 fontSize = 11.5.sp
                             )
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(12.dp))
-                                    .background(Color.White.copy(alpha = 0.05f))
+                                    .background(paletaMotywu.naTle.copy(alpha = 0.05f))
                                     .border(
                                         1.dp,
                                         ZielonyNeon.copy(alpha = 0.18f),
@@ -486,14 +500,14 @@ import kotlinx.coroutines.launch
                                         onZmianaPreferencji()
                                     },
                                     singleLine = true,
-                                    textStyle = TextStyle(color = Color.White, fontSize = 14.sp),
+                                    textStyle = TextStyle(color = paletaMotywu.naTle, fontSize = 14.sp),
                                     cursorBrush = SolidColor(ZielonyNeon),
                                     modifier = Modifier.fillMaxWidth(),
                                     decorationBox = { wewnetrzne ->
                                         if (idKonta.isEmpty()) {
                                             Text(
                                                 text = "np. 100005727832736",
-                                                color = Color.White.copy(alpha = 0.3f),
+                                                color = paletaMotywu.naTle.copy(alpha = 0.3f),
                                                 fontSize = 14.sp
                                             )
                                         }
@@ -521,7 +535,7 @@ import kotlinx.coroutines.launch
                                         "2. Spójrz na adres — fragment po ?id= to właśnie ID\n" +
                                         "   np. facebook.com/profile.php?id=100005727832736\n" +
                                         "3. Skopiuj same cyfry i wklej powyżej",
-                                    color = Color.White.copy(alpha = 0.42f),
+                                    color = paletaMotywu.naTle.copy(alpha = 0.42f),
                                     fontSize = 10.5.sp,
                                     lineHeight = 15.sp
                                 )

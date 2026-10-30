@@ -53,6 +53,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import dialer.dominik.pl.sms.WyslijPlanowanySmsReceiver
 import dialer.dominik.pl.ui.theme.ZielonyMorski
+import dialer.dominik.pl.ui.theme.NaPrzycisku
 import dialer.dominik.pl.ui.theme.ZielonyNeon
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -88,18 +89,19 @@ fun DialogPlanowaniaSms(
         AnimatedVisibility(
             visible = widoczne,
             enter = fadeIn(animationSpec = tween(200)) +
-                scaleIn(initialScale = 0.75f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)),
+                scaleIn(initialScale = 0.96f, animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy)),
             exit = fadeOut(animationSpec = tween(150)) +
-                scaleOut(targetScale = 0.9f, animationSpec = tween(150))
+                scaleOut(targetScale = 0.96f, animationSpec = tween(150))
         ) {
+            val paleta = dialer.dominik.pl.ui.theme.LocalMotyw.current
             Surface(
                 shape = RoundedCornerShape(28.dp),
-                color = Color(0xFF0B120F),
+                color = paleta.tlo,
                 border = androidx.compose.foundation.BorderStroke(1.dp, ZielonyNeon.copy(alpha = 0.3f)),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(20.dp)) {
-                    Text("Zaplanuj wysłanie", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("Zaplanuj wysłanie", color = paleta.naTle, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(14.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -111,7 +113,7 @@ fun DialogPlanowaniaSms(
                             val aktywny = przesuniecieDnia == i
                             Text(
                                 text = nazwa,
-                                color = if (aktywny) Color(0xFF06231A) else Color.White.copy(alpha = 0.6f),
+                                color = if (aktywny) NaPrzycisku else paleta.tekstDrugorzedny,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 textAlign = TextAlign.Center,
@@ -120,7 +122,7 @@ fun DialogPlanowaniaSms(
                                     .clip(RoundedCornerShape(12.dp))
                                     .then(
                                         if (aktywny) Modifier.background(Brush.horizontalGradient(listOf(ZielonyMorski, ZielonyNeon)))
-                                        else Modifier.background(Color(0xFF131C18))
+                                        else Modifier.background(paleta.kafelek)
                                     )
                                     .clickable { przesuniecieDnia = i }
                                     .padding(vertical = 10.dp)
@@ -149,7 +151,7 @@ fun DialogPlanowaniaSms(
                         TextButton(
                             onClick = onAnulowano,
                             modifier = Modifier.weight(1f)
-                        ) { Text("Anuluj", color = Color.White.copy(alpha = 0.6f)) }
+                        ) { Text("Anuluj", color = paleta.naTle.copy(alpha = 0.6f)) }
                         Spacer(Modifier.width(4.dp))
                         Button(
                             onClick = {
@@ -163,7 +165,7 @@ fun DialogPlanowaniaSms(
                             },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = ZielonyNeon,
-                                contentColor = Color(0xFF06231A)
+                                contentColor = NaPrzycisku
                             ),
                             modifier = Modifier.weight(1f)
                         ) { Text("Zaplanuj", fontWeight = FontWeight.Bold) }

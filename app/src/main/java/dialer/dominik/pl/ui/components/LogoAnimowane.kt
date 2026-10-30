@@ -20,27 +20,64 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.lerp
-import dialer.dominik.pl.ui.theme.ZielonyGleboki
-import dialer.dominik.pl.ui.theme.ZielonyJasny
-import dialer.dominik.pl.ui.theme.ZielonyMorski
-import dialer.dominik.pl.ui.theme.ZielonyNeon
+import dialer.dominik.pl.ui.theme.LocalMotyw
 import kotlin.math.min
 
 /**
- * Animowane logo aplikacji — rysowane na Canvas.
+ * Animowane logo aplikacji — kolory z aktualnej palety motywu
+ * ([LocalMotyw]: accent / przycisk / aurora).
  *
  * @param wejscieAnimacji postęp animacji wejścia 0..1 (scale + alpha przy starcie)
  * @param pokazPierscien czy rysować obracający się pierścień (wyłącz np. przy loaderze czatu)
+ * @param trybLekki tylko delikatny puls rdzenia — toolbar / status / przycisk dzwonienia
  */
 @Composable
 fun LogoAnimowane(
     modifier: Modifier = Modifier,
     wejscieAnimacji: Float = 1f,
-    pokazPierscien: Boolean = true
+    pokazPierscien: Boolean = true,
+    trybLekki: Boolean = false
+) {
+    if (trybLekki) {
+        LogoAnimowaneLekkie(modifier, wejscieAnimacji)
+    } else {
+        LogoAnimowanePelne(modifier, wejscieAnimacji, pokazPierscien)
+    }
+}
+
+@Composable
+private fun LogoAnimowaneLekkie(modifier: Modifier, wejscieAnimacji: Float) {
+    val animacja = rememberInfiniteTransition(label = "logoLekkie")
+    val puls by animacja.animateFloat(
+        initialValue = 0.97f,
+        targetValue = 1.03f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 2_400, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "pulsLekki"
+    )
+    LogoCanvas(
+        modifier = modifier,
+        wejscieAnimacji = wejscieAnimacji,
+        puls = puls,
+        falaA = 0f,
+        falaB = 0f,
+        falaC = 0f,
+        obrot = 0f,
+        pokazPierscien = false,
+        pokazFale = false
+    )
+}
+
+@Composable
+private fun LogoAnimowanePelne(
+    modifier: Modifier,
+    wejscieAnimacji: Float,
+    pokazPierscien: Boolean
 ) {
     val animacja = rememberInfiniteTransition(label = "logoAnimowane")
 
-    // Puls rdzenia — 3.6 s, płynnie w obie strony
     val puls by animacja.animateFloat(
         initialValue = 0.95f,
         targetValue = 1.05f,
@@ -51,7 +88,6 @@ fun LogoAnimowane(
         label = "pulsRdzenia"
     )
 
-    // Fale: jeden cykl 6.6 s — fala rozchodzi się ~2.4 s, potem chwila ciszy.
     val falaA by animacja.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
@@ -97,7 +133,6 @@ fun LogoAnimowane(
         label = "falaC"
     )
 
-    // Obrót pierścienia tylko gdy włączony (powitanie).
     val obrot by animacja.animateFloat(
         initialValue = 0f,
         targetValue = if (pokazPierscien) 360f else 0f,
@@ -111,7 +146,53 @@ fun LogoAnimowane(
         label = "obrotPierscienia"
     )
 
-    val kolorPoswiaty = lerp(ZielonyJasny, ZielonyNeon, puls.let { (it - 0.92f) / 0.14f }.coerceIn(0f, 1f))
+    LogoCanvas(
+        modifier = modifier,
+        wejscieAnimacji = wejscieAnimacji,
+        puls = puls,
+        falaA = falaA,
+        falaB = falaB,
+        falaC = falaC,
+        obrot = obrot,
+        pokazPierscien = pokazPierscien,
+        pokazFale = true
+    )
+}
+
+@Composable
+private fun LogoCanvas(
+    modifier: Modifier,
+    wejscieAnimacji: Float,
+    puls: Float,
+    falaA: Float,
+    falaB: Float,
+    falaC: Float,
+    obrot: Float,
+    pokazPierscien: Boolean,
+    pokazFale: Boolean
+) {
+    val motyw = LocalMotyw.current
+    // Zawsze z aktualnej palety (accent / secondary) — nie aurora*, bo mogą zostać
+    // „przyklejone” po Vault-Tec i logo nie reaguje na zmianę motywu.
+    val neon = motyw.accent
+    val morski = motyw.accentMorski
+    val rdzen = Color(
+        red = (neon.red * 0.22f).coerceIn(0f, 1f),
+        green = (neon.green * 0.28f).coerceIn(0f, 1f),
+        blue = (neon.blue * 0.25f).coerceIn(0f, 1f),
+        alpha = 1f
+    )
+    val rdzenCiemny = Color(
+        red = (rdzen.red * 0.45f).coerceIn(0f, 1f),
+        green = (rdzen.green * 0.45f).coerceIn(0f, 1f),
+        blue = (rdzen.blue * 0.45f).coerceIn(0f, 1f),
+        alpha = 1f
+    )
+    val kolorPoswiaty = lerp(
+        morski,
+        neon,
+        puls.let { (it - 0.92f) / 0.14f }.coerceIn(0f, 1f)
+    )
     val skala = 0.82f + 0.18f * wejscieAnimacji
 
     Canvas(modifier = modifier) {
@@ -124,7 +205,7 @@ fun LogoAnimowane(
             brush = Brush.radialGradient(
                 colors = listOf(
                     kolorPoswiaty.copy(alpha = 0.30f * widocznosc),
-                    ZielonyGleboki.copy(alpha = 0.14f * widocznosc),
+                    rdzen.copy(alpha = 0.14f * widocznosc),
                     Color.Transparent
                 ),
                 center = srodek,
@@ -137,8 +218,8 @@ fun LogoAnimowane(
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(
-                    ZielonyGleboki.copy(alpha = widocznosc),
-                    Color(0xFF061F17).copy(alpha = widocznosc)
+                    rdzen.copy(alpha = widocznosc),
+                    rdzenCiemny.copy(alpha = widocznosc)
                 ),
                 center = Offset(srodek.x - promienBazy * 0.15f, srodek.y - promienBazy * 0.2f),
                 radius = promienBazy * 0.95f
@@ -153,9 +234,9 @@ fun LogoAnimowane(
                     brush = Brush.sweepGradient(
                         colors = listOf(
                             Color.Transparent,
-                            ZielonyJasny.copy(alpha = 0.15f),
-                            ZielonyMorski.copy(alpha = 0.9f),
-                            ZielonyNeon,
+                            morski.copy(alpha = 0.15f),
+                            morski.copy(alpha = 0.9f),
+                            neon,
                             Color.Transparent
                         ),
                         center = srodek
@@ -189,16 +270,18 @@ fun LogoAnimowane(
             )
         }
 
-        rysujFale(falaA, 0.30f, 0.95f)
-        rysujFale(falaB, 0.48f, 0.70f)
-        rysujFale(falaC, 0.66f, 0.45f)
+        if (pokazFale) {
+            rysujFale(falaA, 0.30f, 0.95f)
+            rysujFale(falaB, 0.48f, 0.70f)
+            rysujFale(falaC, 0.66f, 0.45f)
+        }
 
         val kropka = srodek
         drawCircle(
             brush = Brush.radialGradient(
                 colors = listOf(
-                    ZielonyNeon.copy(alpha = widocznosc),
-                    ZielonyMorski.copy(alpha = widocznosc)
+                    neon.copy(alpha = widocznosc),
+                    morski.copy(alpha = widocznosc)
                 ),
                 center = kropka,
                 radius = promienBazy * 0.14f

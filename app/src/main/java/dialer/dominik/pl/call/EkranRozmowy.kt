@@ -56,13 +56,23 @@ object EkranRozmowy {
 fun EkranRozmowy(context: Context, onZakoncz: () -> Unit = {}) {
     val stan = StanPolaczenia
 
-    var wynikAnalizy by remember(stan.rozmowca) { mutableStateOf<WynikWeryfikacjiNumeru?>(null) }
-    LaunchedEffect(stan.rozmowca) {
-        if (stan.rozmowca.isNotBlank()) {
-            wynikAnalizy = WeryfikacjaNumeru.weryfikujNumer(context, stan.rozmowca)
+    val numerDoWeryfikacji = stan.numerRozmowy.ifBlank { stan.rozmowca }
+    var wynikAnalizy by remember(numerDoWeryfikacji) {
+        mutableStateOf<WynikWeryfikacjiNumeru?>(
+            if (numerDoWeryfikacji.isNotBlank()) WynikWeryfikacjiNumeru.laduje(numerDoWeryfikacji)
+            else null
+        )
+    }
+    LaunchedEffect(numerDoWeryfikacji) {
+        if (numerDoWeryfikacji.isNotBlank()) {
+            wynikAnalizy = WynikWeryfikacjiNumeru.laduje(numerDoWeryfikacji)
+            wynikAnalizy = WeryfikacjaNumeru.weryfikujNumer(context, numerDoWeryfikacji)
+        } else {
+            wynikAnalizy = null
         }
     }
-    val czySpam = wynikAnalizy?.poziomZagrozenia == PoziomZagrozenia.SPAM_OSZUSTWO
+    val czySpam = wynikAnalizy?.poziomZagrozenia == PoziomZagrozenia.SPAM_OSZUSTWO &&
+        wynikAnalizy?.laduje != true
 
     LaunchedEffect(stan.czyPrzychodzace, stan.stan, czySpam) {
         if (stan.czyPrzychodzace && stan.stan == StanPolaczenia.Stan.Dzwoni) {
@@ -82,7 +92,8 @@ fun EkranRozmowy(context: Context, onZakoncz: () -> Unit = {}) {
         EkranTrwajacejRozmowy(
             context = context,
             onZakoncz = onZakoncz,
-            wynikAnalizy = wynikAnalizy
+            wynikAnalizy = wynikAnalizy,
+            onWynikZmieniony = { wynikAnalizy = it }
         )
     }
 }

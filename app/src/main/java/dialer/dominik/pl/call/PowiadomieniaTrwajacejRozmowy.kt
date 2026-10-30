@@ -66,7 +66,7 @@ object PowiadomieniaTrwajacejRozmowy {
             .setSmallIcon(dialer.dominik.pl.R.drawable.ic_logo_telefon)
             .setContentTitle("Rozmowa w toku")
             .setContentText(rozmowca)
-            .setColor(0xFF69F0AE.toInt())
+            .setColor(dialer.dominik.pl.ui.theme.MotywKoloryAndroid.akcentArgb(context))
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setContentIntent(pendingIntent)

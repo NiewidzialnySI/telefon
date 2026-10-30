@@ -1,0 +1,400 @@
+package dialer.dominik.pl.backup
+
+import android.app.Activity
+import android.content.Context
+import android.content.SharedPreferences
+import android.util.Log
+import com.google.android.gms.auth.api.identity.AuthorizationRequest
+import com.google.android.gms.auth.api.identity.Identity
+import com.google.android.gms.common.api.Scope
+import com.google.android.gms.tasks.Tasks
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.File
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
+
+/**
+ * Backup / przywracanie na Dysku Google + profil konta.
+ * Folder: [NAZWA_FOLDERU]. Zakres: drive.file + profil.
+ */
+object BackupDyskGoogle {
+
+    private const val TAG = "BackupDyskGoogle"
+    const val NAZWA_FOLDERU = "Telefon-Backup-data"
+    private const val MIME_FOLDER = "application/vnd.google-apps.folder"
+    private const val MIME_JSON = "application/json"
+    private const val SCOPE_DRIVE_FILE = "https://www.googleapis.com/auth/drive.file"
+    private const val SCOPE_PROFILE = "https://www.googleapis.com/auth/userinfo.profile"
+    private const val SCOPE_EMAIL = "https://www.googleapis.com/auth/userinfo.email"
+    private const val DRIVE = "https://www.googleapis.com/drive/v3"
+    private const val UPLOAD = "https://www.googleapis.com/upload/drive/v3"
+    private const val USERINFO = "https://www.googleapis.com/oauth2/v3/userinfo"
+    private const val WERSJA_FORMATU = 1
+
+    sealed class AuthWynik {
+        data class Token(val accessToken: String) : AuthWynik()
+        data class WymagaZgody(val pendingIntent: android.app.PendingIntent) : AuthWynik()
+        data class Blad(val komunikat: String) : AuthWynik()
+    }
+
+    sealed class Wynik {
+        data class Sukces(val komunikat: String) : Wynik()
+        data class Blad(val komunikat: String) : Wynik()
+    }
+
+    private fun zakresy() = listOf(
+        Scope(SCOPE_DRIVE_FILE),
+        Scope(SCOPE_PROFILE),
+        Scope(SCOPE_EMAIL),
+        Scope("openid")
+    )
+
+    /** Tylko autoryzacja — bez wykonywania backupu (serwis zrobi resztę). */
+    suspend fun autoryzuj(activity: Activity): AuthWynik = withContext(Dispatchers.IO) {
+        try {
+            val request = AuthorizationRequest.builder()
+                .setRequestedScopes(zakresy())
+                .build()
+            val wynik = Tasks.await(
+                Identity.getAuthorizationClient(activity).authorize(request)
+            )
+            if (wynik.hasResolution()) {
+                val pi = wynik.pendingIntent
+                    ?: return@withContext AuthWynik.Blad("Brak okna zgody Google")
+                return@withContext AuthWynik.WymagaZgody(pi)
+            }
+            val token = wynik.accessToken
+            if (token.isNullOrBlank()) AuthWynik.Blad("Brak tokenu dostępu")
+            else AuthWynik.Token(token)
+        } catch (e: Exception) {
+            Log.e(TAG, "authorize", e)
+            AuthWynik.Blad(e.message?.takeIf { it.isNotBlank() } ?: "Błąd autoryzacji Google")
+        }
+    }
+
+    suspend fun tokenZIntentu(
+        activity: Activity,
+        data: android.content.Intent?
+    ): AuthWynik = withContext(Dispatchers.IO) {
+        try {
+            val wynik = Identity.getAuthorizationClient(activity)
+                .getAuthorizationResultFromIntent(data)
+            val token = wynik.accessToken
+            if (token.isNullOrBlank()) AuthWynik.Blad("Brak tokenu dostępu")
+            else AuthWynik.Token(token)
+        } catch (e: Exception) {
+            Log.e(TAG, "getAuthorizationResultFromIntent", e)
+            AuthWynik.Blad("Odmowa dostępu do Dysku Google")
+        }
+    }
+
+    /** Pobiera imię/zdjęcie i opcjonalnie datę ostatniego backupu z Dysku. */
+    suspend fun odswiezProfilIMeta(context: Context, token: String) = withContext(Dispatchers.IO) {
+        try {
+            val info = getJson(token, USERINFO)
+            val imie = info.optString("name")
+                .ifBlank { info.optString("given_name") }
+                .ifBlank { info.optString("email").substringBefore("@") }
+                .ifBlank { "Konto Google" }
+            val email = info.optString("email")
+            val foto = info.optString("picture").takeIf { it.isNotBlank() }
+            BackupStan.zapiszProfil(
+                context,
+                BackupStan.Profil(imie = imie, email = email, zdjecieUrl = foto)
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "profil", e)
+        }
+        try {
+            val folderId = znajdzFolder(token) ?: return@withContext
+            val meta = znajdzNajnowszyBackupMeta(token, folderId) ?: return@withContext
+            BackupStan.ustawOstatniZDysku(meta.createdMs)
+            if (meta.createdMs > 0L) {
+                context.getSharedPreferences("backup_meta", Context.MODE_PRIVATE).edit()
+                    .putLong("ostatni_backup_ms", meta.createdMs)
+                    .apply()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "meta backup", e)
+        }
+    }
+
+    fun wykonajBackup(context: Context, token: String): Wynik {
+        return try {
+            BackupStan.postep(0.08f, "Folder na Dysku…")
+            val folderId = znajdzLubUtworzFolder(token)
+            BackupStan.postep(0.22f, "Pakowanie danych…")
+            val nazwa = nazwaPlikuBackup()
+            val json = zbudujJsonBackup(context)
+            BackupStan.postep(0.45f, "Wysyłanie na Dysk…")
+            wgrajPlik(token, folderId, nazwa, json)
+            BackupStan.postep(0.95f, "Kończenie…")
+            val teraz = System.currentTimeMillis()
+            BackupStan.zapiszOstatniBackup(context, teraz)
+            Wynik.Sukces("Zapisano: $NAZWA_FOLDERU/$nazwa")
+        } catch (e: Exception) {
+            Log.e(TAG, "backup", e)
+            Wynik.Blad(e.message?.takeIf { it.isNotBlank() } ?: "Błąd backupu")
+        }
+    }
+
+    fun wykonajPrzywroc(context: Context, token: String): Wynik {
+        return try {
+            BackupStan.postep(0.1f, "Szukanie kopii…")
+            val folderId = znajdzLubUtworzFolder(token)
+            val plik = znajdzNajnowszyBackupMeta(token, folderId)
+                ?: return Wynik.Blad("Brak kopii w folderze $NAZWA_FOLDERU")
+            BackupStan.postep(0.35f, "Pobieranie…")
+            val json = pobierzTrescPliku(token, plik.id)
+            BackupStan.postep(0.75f, "Przywracanie…")
+            przywrocZJson(context, json)
+            BackupStan.postep(0.95f, "Kończenie…")
+            Wynik.Sukces("Przywrócono: ${plik.name}")
+        } catch (e: Exception) {
+            Log.e(TAG, "przywroc", e)
+            Wynik.Blad(e.message?.takeIf { it.isNotBlank() } ?: "Błąd przywracania")
+        }
+    }
+
+    // ------------------- Drive REST -------------------
+
+    private data class PlikMeta(val id: String, val name: String, val createdMs: Long)
+
+    private fun znajdzFolder(token: String): String? {
+        val q = URLEncoder.encode(
+            "name='$NAZWA_FOLDERU' and mimeType='$MIME_FOLDER' and trashed=false",
+            "UTF-8"
+        )
+        val lista = getJson(token, "$DRIVE/files?q=$q&spaces=drive&fields=files(id,name)")
+        val files = lista.optJSONArray("files")
+        if (files != null && files.length() > 0) {
+            return files.getJSONObject(0).getString("id")
+        }
+        return null
+    }
+
+    private fun znajdzLubUtworzFolder(token: String): String {
+        znajdzFolder(token)?.let { return it }
+        val meta = JSONObject()
+            .put("name", NAZWA_FOLDERU)
+            .put("mimeType", MIME_FOLDER)
+        return postJson(token, "$DRIVE/files?fields=id,name", meta.toString()).getString("id")
+    }
+
+    private fun znajdzNajnowszyBackupMeta(token: String, folderId: String): PlikMeta? {
+        val q = URLEncoder.encode(
+            "'$folderId' in parents and mimeType='$MIME_JSON' and trashed=false",
+            "UTF-8"
+        )
+        val lista = getJson(
+            token,
+            "$DRIVE/files?q=$q&orderBy=createdTime desc&pageSize=1&fields=files(id,name,createdTime)"
+        )
+        val files = lista.optJSONArray("files") ?: return null
+        if (files.length() == 0) return null
+        val f = files.getJSONObject(0)
+        return PlikMeta(
+            id = f.getString("id"),
+            name = f.getString("name"),
+            createdMs = parsujIso(f.optString("createdTime"))
+        )
+    }
+
+    private fun parsujIso(iso: String): Long {
+        if (iso.isBlank()) return 0L
+        return try {
+            val fmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+            }
+            fmt.parse(iso)?.time ?: 0L
+        } catch (_: Exception) {
+            try {
+                val fmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+                    timeZone = TimeZone.getTimeZone("UTC")
+                }
+                fmt.parse(iso)?.time ?: 0L
+            } catch (_: Exception) {
+                0L
+            }
+        }
+    }
+
+    private fun wgrajPlik(token: String, folderId: String, nazwa: String, tresc: String) {
+        val boundary = "telefon_backup_" + System.currentTimeMillis()
+        val meta = JSONObject()
+            .put("name", nazwa)
+            .put("mimeType", MIME_JSON)
+            .put("parents", JSONArray().put(folderId))
+        val body = buildString {
+            append("--").append(boundary).append("\r\n")
+            append("Content-Type: application/json; charset=UTF-8\r\n\r\n")
+            append(meta.toString()).append("\r\n")
+            append("--").append(boundary).append("\r\n")
+            append("Content-Type: application/json; charset=UTF-8\r\n\r\n")
+            append(tresc).append("\r\n")
+            append("--").append(boundary).append("--\r\n")
+        }
+        val bytes = body.toByteArray(Charsets.UTF_8)
+        val url = "$UPLOAD/files?uploadType=multipart&fields=id,name"
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            doOutput = true
+            setRequestProperty("Authorization", "Bearer $token")
+            setRequestProperty("Content-Type", "multipart/related; boundary=$boundary")
+            setFixedLengthStreamingMode(bytes.size)
+        }
+        conn.outputStream.use { out ->
+            var wyslane = 0
+            val chunk = 8 * 1024
+            while (wyslane < bytes.size) {
+                val n = minOf(chunk, bytes.size - wyslane)
+                out.write(bytes, wyslane, n)
+                wyslane += n
+                val frac = wyslane.toFloat() / bytes.size
+                BackupStan.postep(0.45f + 0.45f * frac, "Wysyłanie na Dysk…")
+            }
+            out.flush()
+        }
+        val kod = conn.responseCode
+        val odp = odczytaj(conn)
+        if (kod !in 200..299) {
+            throw IllegalStateException("Upload $kod: ${odp.take(200)}")
+        }
+    }
+
+    private fun pobierzTrescPliku(token: String, fileId: String): String {
+        val conn = (URL("$DRIVE/files/$fileId?alt=media").openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            setRequestProperty("Authorization", "Bearer $token")
+        }
+        val kod = conn.responseCode
+        val odp = odczytaj(conn)
+        if (kod !in 200..299) {
+            throw IllegalStateException("Download $kod: ${odp.take(200)}")
+        }
+        return odp
+    }
+
+    private fun getJson(token: String, url: String): JSONObject {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            setRequestProperty("Authorization", "Bearer $token")
+        }
+        val kod = conn.responseCode
+        val odp = odczytaj(conn)
+        if (kod !in 200..299) {
+            throw IllegalStateException("GET $kod: ${odp.take(200)}")
+        }
+        return JSONObject(odp)
+    }
+
+    private fun postJson(token: String, url: String, body: String): JSONObject {
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            doOutput = true
+            setRequestProperty("Authorization", "Bearer $token")
+            setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+        }
+        OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(body) }
+        val kod = conn.responseCode
+        val odp = odczytaj(conn)
+        if (kod !in 200..299) {
+            throw IllegalStateException("POST $kod: ${odp.take(200)}")
+        }
+        return JSONObject(odp)
+    }
+
+    private fun odczytaj(conn: HttpURLConnection): String {
+        val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
+        return stream?.use { BufferedReader(InputStreamReader(it, Charsets.UTF_8)).readText() } ?: ""
+    }
+
+    private fun nazwaPlikuBackup(): String {
+        val fmt = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).apply {
+            timeZone = TimeZone.getDefault()
+        }
+        return "telefon-backup-${fmt.format(Date())}.json"
+    }
+
+    fun zbudujJsonBackup(context: Context): String {
+        val prefsObj = JSONObject()
+        val dir = File(context.applicationInfo.dataDir, "shared_prefs")
+        dir.listFiles()?.filter { it.name.endsWith(".xml") }?.forEach { plik ->
+            val nazwa = plik.name.removeSuffix(".xml")
+            if (nazwa == "backup_meta") return@forEach
+            val sp = context.getSharedPreferences(nazwa, Context.MODE_PRIVATE)
+            prefsObj.put(nazwa, serializujPrefs(sp))
+        }
+        return JSONObject()
+            .put("wersja", WERSJA_FORMATU)
+            .put("aplikacja", context.packageName)
+            .put("utworzono", System.currentTimeMillis())
+            .put("prefs", prefsObj)
+            .toString(2)
+    }
+
+    private fun serializujPrefs(sp: SharedPreferences): JSONObject {
+        val o = JSONObject()
+        for ((k, v) in sp.all) {
+            when (v) {
+                null -> Unit
+                is String -> o.put(k, JSONObject().put("t", "s").put("v", v))
+                is Int -> o.put(k, JSONObject().put("t", "i").put("v", v))
+                is Long -> o.put(k, JSONObject().put("t", "l").put("v", v))
+                is Float -> o.put(k, JSONObject().put("t", "f").put("v", v.toDouble()))
+                is Boolean -> o.put(k, JSONObject().put("t", "b").put("v", v))
+                is Set<*> -> {
+                    val arr = JSONArray()
+                    v.filterIsInstance<String>().forEach { arr.put(it) }
+                    o.put(k, JSONObject().put("t", "ss").put("v", arr))
+                }
+            }
+        }
+        return o
+    }
+
+    fun przywrocZJson(context: Context, json: String) {
+        val root = JSONObject(json)
+        if (root.optInt("wersja", 0) > WERSJA_FORMATU) {
+            throw IllegalStateException("Nieobsługiwana wersja kopii")
+        }
+        val prefs = root.optJSONObject("prefs") ?: throw IllegalStateException("Brak sekcji prefs")
+        val klucze = prefs.keys()
+        while (klucze.hasNext()) {
+            val nazwa = klucze.next()
+            if (nazwa == "backup_meta") continue
+            val wpisy = prefs.getJSONObject(nazwa)
+            val ed = context.getSharedPreferences(nazwa, Context.MODE_PRIVATE).edit().clear()
+            val ik = wpisy.keys()
+            while (ik.hasNext()) {
+                val klucz = ik.next()
+                val cell = wpisy.getJSONObject(klucz)
+                when (cell.getString("t")) {
+                    "s" -> ed.putString(klucz, cell.getString("v"))
+                    "i" -> ed.putInt(klucz, cell.getInt("v"))
+                    "l" -> ed.putLong(klucz, cell.getLong("v"))
+                    "f" -> ed.putFloat(klucz, cell.getDouble("v").toFloat())
+                    "b" -> ed.putBoolean(klucz, cell.getBoolean("v"))
+                    "ss" -> {
+                        val set = mutableSetOf<String>()
+                        val arr = cell.getJSONArray("v")
+                        for (i in 0 until arr.length()) set.add(arr.getString(i))
+                        ed.putStringSet(klucz, set)
+                    }
+                }
+            }
+            ed.apply()
+        }
+    }
+}

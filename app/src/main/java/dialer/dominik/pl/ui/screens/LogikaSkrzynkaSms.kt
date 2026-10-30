@@ -146,6 +146,89 @@ internal fun uniewaznijCacheListyWatkow() {
     WatekCache.watki = null
 }
 
+/**
+ * Usuwa całą konwersację (SMS + MMS) dla numeru/nadawcy.
+ * Najpierw po thread_id (`content://mms-sms/conversations/#`), potem fallback po wariantach ADDRESS.
+ * Zwraca true gdy provider zgłosił usunięcie ≥1 wiersza (wymaga roli domyślnej SMS).
+ */
+internal fun usunKonwersacje(context: Context, numer: String): Boolean {
+    if (numer.isBlank()) return false
+    var usunieto = false
+    try {
+        val warianty = wariantyAdresuDoQuery(numer)
+        var threadId: Long? = null
+        // Szukaj istniejącego THREAD_ID — bez getOrCreate (nie twórz pustego wątku).
+        for (w in warianty) {
+            context.contentResolver.query(
+                Telephony.Sms.CONTENT_URI,
+                arrayOf(Telephony.Sms.THREAD_ID),
+                "${Telephony.Sms.ADDRESS} = ?",
+                arrayOf(w),
+                null
+            )?.use { c ->
+                if (c.moveToFirst()) {
+                    val tid = c.getLong(0)
+                    if (tid > 0L) threadId = tid
+                }
+            }
+            if (threadId != null) break
+        }
+        if (threadId == null) {
+            threadId = threadIdDlaAdresu(context, numer)
+        }
+        val tid = threadId
+        if (tid != null && tid > 0L) {
+            try {
+                val n = context.contentResolver.delete(
+                    Uri.parse("content://mms-sms/conversations/$tid"),
+                    null,
+                    null
+                )
+                if (n > 0) usunieto = true
+            } catch (e: Exception) {
+                android.util.Log.w("SmsSkrzynka", "delete mms-sms/conversations: ${e.message}")
+            }
+            if (!usunieto) {
+                try {
+                    val n = context.contentResolver.delete(
+                        Uri.parse("content://sms/conversations/$tid"),
+                        null,
+                        null
+                    )
+                    if (n > 0) usunieto = true
+                } catch (e: Exception) {
+                    android.util.Log.w("SmsSkrzynka", "delete sms/conversations: ${e.message}")
+                }
+            }
+            try {
+                context.contentResolver.delete(
+                    Telephony.Mms.CONTENT_URI,
+                    "${Telephony.Mms.THREAD_ID} = ?",
+                    arrayOf(tid.toString())
+                )
+            } catch (_: Exception) { /* OEM bez kasowania MMS po thread */ }
+        }
+        if (warianty.isNotEmpty()) {
+            val placeholders = warianty.joinToString(",") { "?" }
+            try {
+                val n = context.contentResolver.delete(
+                    Telephony.Sms.CONTENT_URI,
+                    "${Telephony.Sms.ADDRESS} IN ($placeholders)",
+                    warianty.toTypedArray()
+                )
+                if (n > 0) usunieto = true
+            } catch (e: Exception) {
+                android.util.Log.w("SmsSkrzynka", "delete sms IN: ${e.message}")
+            }
+        }
+        uniewaznijCacheListyWatkow()
+        uniewaznijCacheWatku(numer)
+    } catch (e: Exception) {
+        android.util.Log.e("SmsSkrzynka", "Usuwanie konwersacji nieudane", e)
+    }
+    return usunieto
+}
+
 internal fun pobierzAdresDlaRecipientId(context: Context, recipientIdStr: String): String {
     if (recipientIdStr.isBlank()) return ""
     val firstId = recipientIdStr.trim().split(Regex("\\s+")).firstOrNull() ?: return ""
@@ -181,15 +264,23 @@ internal fun pobierzWątkiSms(context: Context, odswiez: Boolean = false): List<
             val readIdx = cursor.getColumnIndex("read")
             val recipientIdsIdx = cursor.getColumnIndex("recipient_ids")
 
-            val idIdx = cursor.getColumnIndex("_id")
+            val countIdx = cursor.getColumnIndex("message_count")
+            // Jeden odczyt prefs zamiast N× getSharedPreferences w pętli.
+            val mapaPseudo = context.getSharedPreferences("kontakty_pseudonimy", Context.MODE_PRIVATE)
+                .all
+                .mapNotNull { (k, v) ->
+                    val p = (v as? String)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                    k to p
+                }
+                .toMap()
             while (cursor.moveToNext()) {
                 var date = if (dateIdx != -1) cursor.getLong(dateIdx) else 0L
                 if (date < 10000000000L) date *= 1000L
                 val snippetRaw = if (snippetIdx != -1) cursor.getString(snippetIdx)?.trim().orEmpty() else ""
-                val threadId = if (idIdx != -1) cursor.getLong(idIdx) else -1L
-                // Samo zdjęcie MMS → systemowy snippet bywa pusty; na kafelku pokaż „MMS”.
+                val msgCount = if (countIdx != -1) cursor.getInt(countIdx) else 1
+                // Pusty snippet + są wiadomości ≈ samo zdjęcie MMS (bez N+1 query na wątek).
                 val snippet = snippetRaw.ifEmpty {
-                    if (threadId >= 0L && czyOstatniaWWatkuToMms(context, threadId)) "MMS" else ""
+                    if (msgCount > 0) "MMS" else ""
                 }
                 val read = if (readIdx != -1) cursor.getInt(readIdx) == 1 else true
                 val recipientIds = if (recipientIdsIdx != -1) cursor.getString(recipientIdsIdx) ?: "" else ""
@@ -209,7 +300,7 @@ internal fun pobierzWątkiSms(context: Context, odswiez: Boolean = false): List<
                             messages = emptyList(),
                             isKontakt = nazwa != null,
                             nieprzeczytane = if (!read) 1 else 0,
-                            pseudonim = nazwa?.let { pobierzPseudonim(context, it) },
+                            pseudonim = nazwa?.let { mapaPseudo[it.trim()] },
                             fotoUri = foto
                         )
                     )
@@ -260,43 +351,6 @@ internal fun pobierzWątkiSmsFallback(context: Context): List<SmsWatek> {
             fotoUri = foto
         )
     }.sortedByDescending { it.lastDate }
-}
-
-/**
- * Czy najnowsza wiadomość w wątku to MMS (nie NotificationInd).
- * Używane gdy systemowy `snippet` jest pusty (typowe dla samego zdjęcia).
- */
-private fun czyOstatniaWWatkuToMms(context: Context, threadId: Long): Boolean {
-    return try {
-        var mmsMs = 0L
-        context.contentResolver.query(
-            Telephony.Mms.CONTENT_URI,
-            arrayOf(Telephony.Mms.DATE),
-            "${Telephony.Mms.THREAD_ID}=? AND ${Telephony.Mms.MESSAGE_TYPE}!=?",
-            arrayOf(threadId.toString(), "130"),
-            "${Telephony.Mms.DATE} DESC"
-        )?.use { c ->
-            if (c.moveToFirst()) {
-                // DATE MMS jest w sekundach
-                mmsMs = c.getLong(0) * 1000L
-            }
-        }
-        if (mmsMs <= 0L) return false
-
-        var smsMs = 0L
-        context.contentResolver.query(
-            Telephony.Sms.CONTENT_URI,
-            arrayOf(Telephony.Sms.DATE),
-            "${Telephony.Sms.THREAD_ID}=?",
-            arrayOf(threadId.toString()),
-            "${Telephony.Sms.DATE} DESC"
-        )?.use { c ->
-            if (c.moveToFirst()) smsMs = c.getLong(0)
-        }
-        mmsMs >= smsMs
-    } catch (_: Exception) {
-        false
-    }
 }
 
 /** URI zdjęcia kontaktu z książki (PhoneLookup) albo null, gdy nie ma. */

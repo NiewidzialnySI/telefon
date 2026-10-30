@@ -13,4 +13,12 @@ object DymekDane {
     var powrotCx: Float = 0f
     var powrotCy: Float = 0f
     var maPowrot: Boolean = false
+
+    fun wyczysc() {
+        zdjecie = null
+        inicjaly = "?"
+        maPowrot = false
+        powrotCx = 0f
+        powrotCy = 0f
+    }
 }

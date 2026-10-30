@@ -3,6 +3,9 @@
 <paths>
     <cache-path name="cache_zdjecia" path="images/" />
     <cache-path name="cache_mms_download" path="mms_download/" />
+    <cache-path name="cache_apk" path="apk/" />
     <external-files-path name="ext_zdjecia" path="images/" />
     <files-path name="wew_zdjecia" path="images/" />
+    <external-files-path name="nagrania" path="nagrania/" />
+    <files-path name="nagrania_wew" path="nagrania/" />
 </paths>

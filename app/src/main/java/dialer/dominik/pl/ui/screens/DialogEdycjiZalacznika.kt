@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
+import dialer.dominik.pl.ui.theme.NaPrzycisku
 import dialer.dominik.pl.ui.theme.ZielonyNeon
 import java.io.File
 import kotlin.math.atan2
@@ -446,7 +447,7 @@ internal fun DialogEdycjiZalacznika(
                         ).forEach { p ->
                             drawCircle(Color.Black.copy(alpha = 0.35f), radius = 11.dp.toPx(), center = p)
                             drawCircle(ZielonyNeon, radius = 8.dp.toPx(), center = p)
-                            drawCircle(Color(0xFF06231A), radius = 3.5.dp.toPx(), center = p)
+                            drawCircle(NaPrzycisku, radius = 3.5.dp.toPx(), center = p)
                         }
                     }
                 }
@@ -516,7 +517,7 @@ internal fun DialogEdycjiZalacznika(
                 if (narzedzie == NarzedzieEdycji.PRZYTNIJ) {
                     Text(
                         text = "Zastosuj przycięcie",
-                        color = Color(0xFF06231A),
+                        color = NaPrzycisku,
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp,
                         modifier = Modifier
@@ -812,7 +813,7 @@ private fun Pillka(tekst: String, jasna: Boolean, enabled: Boolean = true, onCli
     val alpha = if (enabled) 1f else 0.35f
     Text(
         text = tekst,
-        color = if (jasna) Color(0xFF06231A).copy(alpha = alpha) else Color.White.copy(alpha = 0.85f * alpha),
+        color = if (jasna) NaPrzycisku.copy(alpha = alpha) else Color.White.copy(alpha = 0.85f * alpha),
         fontWeight = if (jasna) FontWeight.Bold else FontWeight.Medium,
         fontSize = 14.sp,
         modifier = Modifier

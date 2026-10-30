@@ -119,7 +119,9 @@ import dialer.dominik.pl.ui.components.IkonyAplikacji
 import dialer.dominik.pl.ui.theme.CzerwonyPolaczenia
 import dialer.dominik.pl.ui.theme.ZielonyGleboki
 import dialer.dominik.pl.ui.theme.ZielonyMorski
+import dialer.dominik.pl.ui.theme.NaPrzycisku
 import dialer.dominik.pl.ui.theme.ZielonyNeon
+import dialer.dominik.pl.ui.theme.gradientKafelka
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -163,6 +165,7 @@ fun MainDialerScreen(
     poczatkowyNumer: String = "",
     onNumerSkonsumowany: () -> Unit = {}
 ) {
+    val paletaDialer = dialer.dominik.pl.ui.theme.LocalMotyw.current
     var wprowadzonyNumer by remember { mutableStateOf(poczatkowyNumer) }
     var pokazKlawiaturę by remember { mutableStateOf(poczatkowyNumer.isNotBlank()) }
 
@@ -239,6 +242,8 @@ fun MainDialerScreen(
         // Zapytania do CallLog wykonujemy na wątku IO — poza UI.
         if (stan.maHistorie) {
             val nowaHistoria = withContext(Dispatchers.IO) {
+                // Podłącz notatki oczekujące (CallLog bywa opóźniony względem onCallRemoved).
+                NotatkiRozmow.dociagnijOczekujace(context)
                 val najnowszyId = pobierzNajnowszyIdPolaczenia(context)
                 if (najnowszyId != najnowszyIdCache) {
                     // Wracamy na wątek główny z nową historią + id do aktualizacji cache.
@@ -321,9 +326,9 @@ fun MainDialerScreen(
     spamDoPotwierdzenia?.let { numer ->
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { spamDoPotwierdzenia = null },
-            containerColor = Color(0xFF141F19),
-            titleContentColor = Color.White,
-            textContentColor = Color.White.copy(alpha = 0.8f),
+            containerColor = paletaDialer.kafelek,
+            titleContentColor = paletaDialer.naTle,
+            textContentColor = paletaDialer.naTle.copy(alpha = 0.8f),
             title = { Text("Dodać do spamu?") },
             text = { Text("Numer $numer zostanie zablokowany. Na pewno chcesz dodać go do spamu?") },
             confirmButton = {
@@ -338,7 +343,7 @@ fun MainDialerScreen(
             },
             dismissButton = {
                 androidx.compose.material3.TextButton(onClick = { spamDoPotwierdzenia = null }) {
-                    Text("Anuluj", color = Color.White.copy(alpha = 0.7f))
+                    Text("Anuluj", color = paletaDialer.naTle.copy(alpha = 0.7f))
                 }
             }
         )
@@ -384,7 +389,7 @@ fun MainDialerScreen(
                             initialScale = 0.05f,
                             transformOrigin = TransformOrigin(akcja.pivotX, akcja.pivotY),
                             animationSpec = spring(
-                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                dampingRatio = Spring.DampingRatioNoBouncy,
                                 stiffness = Spring.StiffnessMediumLow
                             )
                         ),
@@ -399,16 +404,9 @@ fun MainDialerScreen(
                     modifier = Modifier
                         .fillMaxWidth(0.88f)
                         .clip(RoundedCornerShape(30.dp))
-                        .background(
-                            brush = Brush.verticalGradient(
-                                colors = listOf(
-                                    Color(0xFF1B2A22),
-                                    Color(0xFF0F1813)
-                                )
-                            )
-                        )
+                        .background(paletaDialer.gradientKafelka())
                         .border(
-                            border = BorderStroke(1.dp, ZielonyNeon.copy(alpha = 0.25f)),
+                            border = BorderStroke(1.dp, paletaDialer.kafelekRamka),
                             shape = RoundedCornerShape(30.dp)
                         )
                         .padding(24.dp)
@@ -430,7 +428,7 @@ fun MainDialerScreen(
                         // --- Nazwa i numer ---
                         Text(
                             text = kontakt.nazwaWyswietlana,
-                            color = Color.White,
+                            color = paletaDialer.naTle,
                             fontSize = 19.sp,
                             fontWeight = FontWeight.Bold,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -442,7 +440,7 @@ fun MainDialerScreen(
                             Spacer(Modifier.height(3.dp))
                             Text(
                                 text = numerGłówny,
-                                color = Color.White.copy(alpha = 0.55f),
+                                color = paletaDialer.naTle.copy(alpha = 0.55f),
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Normal
                             )
@@ -487,9 +485,9 @@ fun MainDialerScreen(
         val schowek = LocalClipboardManager.current
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { pokazMenuWklejania = false },
-            containerColor = Color(0xFF141F19),
-            titleContentColor = Color.White,
-            textContentColor = Color.White.copy(alpha = 0.8f),
+            containerColor = paletaDialer.kafelek,
+            titleContentColor = paletaDialer.naTle,
+            textContentColor = paletaDialer.naTle.copy(alpha = 0.8f),
             title = { Text("Wklej numer") },
             text = {
                 Text(
@@ -512,7 +510,7 @@ fun MainDialerScreen(
             },
             dismissButton = {
                 androidx.compose.material3.TextButton(onClick = { pokazMenuWklejania = false }) {
-                    Text("Anuluj", color = Color.White.copy(alpha = 0.7f))
+                    Text("Anuluj", color = paletaDialer.naTle.copy(alpha = 0.7f))
                 }
             }
         )
@@ -527,7 +525,7 @@ fun MainDialerScreen(
                                 title = {
                                     Text(
                                         text = "OSTATNIE POŁĄCZENIA",
-                                        color = Color.White.copy(alpha = 0.42f),
+                                        color = paletaDialer.naTle.copy(alpha = 0.42f),
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Medium,
                                         letterSpacing = 2.2.sp
@@ -561,7 +559,7 @@ fun MainDialerScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(18.dp))
-                            .background(Color(0xFF15271F))
+                            .background(paletaDialer.kafelek)
                             .border(1.dp, ZielonyNeon.copy(alpha = 0.22f), RoundedCornerShape(18.dp))
                     ) {
                         Row(
@@ -574,7 +572,7 @@ fun MainDialerScreen(
                             Text(
                                 text = "Ustaw jako domyślny dialer",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = 0.85f),
+                                color = paletaDialer.naTle.copy(alpha = 0.85f),
                                 modifier = Modifier.weight(1f)
                             )
                             Box(
@@ -586,7 +584,7 @@ fun MainDialerScreen(
                             ) {
                                 Text(
                                     "Ustaw",
-                                    color = Color(0xFF06231A),
+                                    color = NaPrzycisku,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
@@ -595,25 +593,34 @@ fun MainDialerScreen(
                     }
                 }
 
-                // Eleganckie kafelki sugestii kontaktów podczas wpisywania numeru
-                                // Przewijana lista z ograniczoną wysokością — nie rozpycha klawiatury w dół.
-                                if (sugestieKontakty.isNotEmpty() && wprowadzonyNumer.isNotEmpty()) {
+                // Sugestie + pole numeru — expand/fade (spójne z klawiaturą poniżej).
+                val panelKlawiaturyWidoczny = pokazKlawiaturę || wprowadzonyNumer.isNotEmpty()
+                AnimatedVisibility(
+                    visible = sugestieKontakty.isNotEmpty() && wprowadzonyNumer.isNotEmpty(),
+                    enter = expandVertically(tween(220, easing = FastOutSlowInEasing)) +
+                        fadeIn(tween(180, easing = FastOutSlowInEasing)),
+                    exit = shrinkVertically(tween(180, easing = FastOutSlowInEasing)) +
+                        fadeOut(tween(140, easing = FastOutSlowInEasing))
+                ) {
                                     LazyColumn(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .heightIn(max = 240.dp)
                                             .clip(RoundedCornerShape(18.dp))
-                                            .background(Color(0xFF131C18))
+                                            .background(dialer.dominik.pl.ui.theme.LocalMotyw.current.kafelek)
                                             .border(1.dp, ZielonyNeon.copy(alpha = 0.15f), RoundedCornerShape(18.dp))
                                             .padding(6.dp),
                                         verticalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
-                                        items(sugestieKontakty) { sugestia ->
+                                        items(
+                                            sugestieKontakty,
+                                            key = { it.name + "|" + (it.number ?: it.numery.firstOrNull().orEmpty()) }
+                                        ) { sugestia ->
                                                                                     Row(
                                                                                         modifier = Modifier
                                                                                             .fillMaxWidth()
                                                                                             .clip(RoundedCornerShape(12.dp))
-                                                                                            .background(Color.White.copy(alpha = 0.04f))
+                                                                                            .background(paletaDialer.naTle.copy(alpha = 0.04f))
                                                                                             .clickable {
                                                                                                 // Uzupełniamy numerem, który faktycznie wpisujemy (pasuje do fragmentu),
                                                                                                 // a nie zawsze pierwszym. Gdy kontakt ma 2 numery i wpiszesz „733",
@@ -646,14 +653,14 @@ fun MainDialerScreen(
                                                 Column(modifier = Modifier.weight(1f)) {
                                                                                                     Text(
                                                                                                         text = sugestia.name,
-                                                                                                        color = Color.White,
+                                                                                                        color = paletaDialer.naTle,
                                                                                                         fontSize = 15.sp,
                                                                                                         fontWeight = FontWeight.SemiBold
                                                                                                     )
                                                                                                     if (sugestia.numery.isNotEmpty()) {
                                                                                                         Text(
                                                                                                             text = sugestia.numery.joinToString("  •  ") { it },
-                                                                                                            color = Color.White.copy(alpha = 0.5f),
+                                                                                                            color = paletaDialer.naTle.copy(alpha = 0.5f),
                                                                                                             fontSize = 12.sp,
                                                                                                             maxLines = 2,
                                                                                                             overflow = TextOverflow.Ellipsis
@@ -663,10 +670,15 @@ fun MainDialerScreen(
                                             }
                                         }
                                     }
-                                }
+                }
 
-                // Wiersz z wpisanym numerem i prostym przyciskiem cofania (bez koła)
-                if (wprowadzonyNumer.isNotEmpty() || pokazKlawiaturę) {
+                AnimatedVisibility(
+                    visible = panelKlawiaturyWidoczny,
+                    enter = expandVertically(tween(220, easing = FastOutSlowInEasing)) +
+                        fadeIn(tween(180, easing = FastOutSlowInEasing)),
+                    exit = shrinkVertically(tween(180, easing = FastOutSlowInEasing)) +
+                        fadeOut(tween(140, easing = FastOutSlowInEasing))
+                ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -678,9 +690,9 @@ fun MainDialerScreen(
                         Text(
                             text = wprowadzonyNumer.ifEmpty { "Wpisz numer…" },
                             color = if (wprowadzonyNumer.isEmpty()) {
-                                Color.White.copy(alpha = 0.3f)
+                                paletaDialer.naTle.copy(alpha = 0.3f)
                             } else {
-                                Color.White
+                                paletaDialer.naTle
                             },
                             fontSize = if (wprowadzonyNumer.isEmpty()) 22.sp else 32.sp,
                             fontWeight = FontWeight.Medium,
@@ -718,41 +730,38 @@ fun MainDialerScreen(
                     }
                 }
 
-                // Klawiatura numeryczna — w 100% płynna animacja GPU z dynamicznym pomiarem wysokości
-                val klawiaturaOtwarta = pokazKlawiaturę || wprowadzonyNumer.isNotEmpty()
-                val klawiaturaProgress by animateFloatAsState(
-                    targetValue = if (klawiaturaOtwarta) 1f else 0f,
-                    animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
-                    label = "animacjaKlawiatury"
+                // Klawiatura: wzorzec FUTO Keyboard —
+                // AnimatedVisibility + slideInVertically { fullHeight } (spring),
+                // bez ręcznego progress/graphicsLayer i bez odcinania przy 0.01.
+                val slideKlawiatury = spring<IntOffset>(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMediumLow
                 )
+                val fadeWe = tween<Float>(180, easing = FastOutSlowInEasing)
+                val fadeWy = tween<Float>(140, easing = FastOutSlowInEasing)
 
-                var klawiaturaHeight by remember { mutableFloatStateOf(0f) }
-
-                if (klawiaturaProgress > 0.01f) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .onSizeChanged { if (it.height > 0) klawiaturaHeight = it.height.toFloat() }
-                            .graphicsLayer {
-                                val h = if (klawiaturaHeight > 0f) klawiaturaHeight else 700f
-                                translationY = (1f - klawiaturaProgress) * h
-                                alpha = klawiaturaProgress
+                AnimatedVisibility(
+                    visible = panelKlawiaturyWidoczny,
+                    enter = slideInVertically(animationSpec = slideKlawiatury) { it } + fadeIn(fadeWe),
+                    exit = slideOutVertically(animationSpec = slideKlawiatury) { it } + fadeOut(fadeWy)
+                ) {
+                    KlawiaturaNumeryczna(
+                        onCyfraKliknieta = { cyfra -> wprowadzonyNumer += cyfra },
+                        onZadzwon = {
+                            if (wprowadzonyNumer.isNotBlank()) {
+                                wykonajPolaczenie(context, wprowadzonyNumer)
                             }
-                    ) {
-                        KlawiaturaNumeryczna(
-                            onCyfraKliknieta = { cyfra -> wprowadzonyNumer += cyfra },
-                            onZadzwon = {
-                                if (wprowadzonyNumer.isNotBlank()) {
-                                    wykonajPolaczenie(context, wprowadzonyNumer)
-                                }
-                            },
-                            onWiadomosc = { onOpenSms(wprowadzonyNumer) },
-                            onNowyKontakt = { pokazDialogKontakt = true }
-                        )
-                    }
+                        },
+                        onWiadomosc = { onOpenSms(wprowadzonyNumer) },
+                        onNowyKontakt = { pokazDialogKontakt = true }
+                    )
                 }
 
-                if (!pokazKlawiaturę && wprowadzonyNumer.isEmpty()) {
+                AnimatedVisibility(
+                    visible = !panelKlawiaturyWidoczny,
+                    enter = fadeIn(fadeWe) + expandVertically(tween(200, easing = FastOutSlowInEasing)),
+                    exit = fadeOut(fadeWy) + shrinkVertically(tween(160, easing = FastOutSlowInEasing))
+                ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -768,7 +777,7 @@ fun MainDialerScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(1.dp)
-                                .background(Color.White.copy(alpha = 0.06f))
+                                .background(paletaDialer.naTle.copy(alpha = 0.06f))
                         )
                         Text(
                             text = "︿",
@@ -798,14 +807,14 @@ fun MainDialerScreen(
                         ) {
                             Text(
                                 text = "Brak dostępu do historii połączeń",
-                                color = Color.White,
+                                color = paletaDialer.naTle,
                                 fontSize = 17.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 textAlign = TextAlign.Center
                             )
                             Text(
                                 text = "Nadaj uprawnienie „Historia połączeń”, żeby zobaczyć listę rozmów",
-                                color = Color.White.copy(alpha = 0.5f),
+                                color = paletaDialer.naTle.copy(alpha = 0.5f),
                                 fontSize = 14.sp,
                                 textAlign = TextAlign.Center
                             )
@@ -848,7 +857,7 @@ fun MainDialerScreen(
                                             ) {
                                                 Text(
                                                     text = "Brak historii połączeń",
-                                                    color = Color.White.copy(alpha = 0.5f),
+                                                    color = paletaDialer.naTle.copy(alpha = 0.5f),
                                                     fontSize = 15.sp
                                                 )
                                             }
@@ -872,8 +881,9 @@ fun MainDialerScreen(
                     }
 
                     val stanListy = rememberLazyListState()
-                                        // Zawsze pokazuj od góry — scroll na samą górę po każdej zmianie danych.
-                                        LaunchedEffect(historia, zakresOd) {
+                                        // Scroll na górę tylko przy zmianie filtra zakresu lub nowszym topowym wpisie.
+                                        val topHistoriiKlucz = historia.firstOrNull()?.let { "${it.id}_${it.date}" } ?: "empty"
+                                        LaunchedEffect(zakresOd, topHistoriiKlucz) {
                                             stanListy.scrollToItem(0)
                                         }
                                         val przyKoncu by remember {
@@ -987,7 +997,7 @@ fun MainDialerScreen(
                                                                                                                                                                                             Icon(
                                                                                                                                                                                                 imageVector = IkonyAplikacji.StrzalkaWGore,
                                                                                                                                                                                                 contentDescription = "Wróć na górę",
-                                                                                                                                                                                                tint = Color(0xFF06231A),
+                                                                                                                                                                                                tint = NaPrzycisku,
                                                                                                                                                                                                 modifier = Modifier.size(26.dp)
                                                                                                                                                                                             )
                                                                                                                                                                                         }

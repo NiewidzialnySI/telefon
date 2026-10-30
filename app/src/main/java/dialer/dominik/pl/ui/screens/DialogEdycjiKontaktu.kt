@@ -54,6 +54,7 @@ import androidx.compose.ui.window.DialogProperties
 import dialer.dominik.pl.ui.components.IkonyAplikacji
 import dialer.dominik.pl.ui.theme.CzerwonyPolaczenia
 import dialer.dominik.pl.ui.theme.ZielonyMorski
+import dialer.dominik.pl.ui.theme.NaPrzycisku
 import dialer.dominik.pl.ui.theme.ZielonyNeon
 import dialer.dominik.pl.data.maUprawnienieZapisu
 import dialer.dominik.pl.data.pelnaNazwa
@@ -431,12 +432,12 @@ private fun PrzyciskiEdycji(onDismiss: () -> Unit, onSave: () -> Unit) {
                 Icon(
                     imageVector = IkonyAplikacji.Sprawdzenie,
                     contentDescription = "Zapisz",
-                    tint = Color(0xFF06231A),
+                    tint = NaPrzycisku,
                     modifier = Modifier.size(20.dp)
                 )
                 Text(
                     text = "Zapisz",
-                    color = Color(0xFF06231A),
+                    color = NaPrzycisku,
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp
                 )

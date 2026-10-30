@@ -81,10 +81,11 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import dialer.dominik.pl.sms.OdbiorcaSms
 import dialer.dominik.pl.ui.components.IkonyAplikacji
-import dialer.dominik.pl.ui.components.LogoAnimowane
 import dialer.dominik.pl.ui.theme.CzerwonyPolaczenia
 import dialer.dominik.pl.ui.theme.ZielonyMorski
+import dialer.dominik.pl.ui.theme.NaPrzycisku
 import dialer.dominik.pl.ui.theme.ZielonyNeon
+import dialer.dominik.pl.ui.theme.gradientKafelka
 import kotlin.math.roundToInt
 import java.text.SimpleDateFormat
 import java.util.*
@@ -109,6 +110,7 @@ fun SmsScreen(
     onSmsStartowySkonsumowany: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
+    val paletaSms = dialer.dominik.pl.ui.theme.LocalMotyw.current
     var stanEkranu by remember { mutableStateOf<SmsEkranStan>(SmsEkranStan.Skrzynka) }
             // Informatuj MainActivity, czy czat jest otwarty (do schowania dolnego paska w dół).
             LaunchedEffect(stanEkranu) {
@@ -281,7 +283,7 @@ fun SmsScreen(
                         val postepTytulu by animateFloatAsState(
                             targetValue = if (pokazArchiwum) 1f else 0f,
                             animationSpec = spring(
-                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                dampingRatio = Spring.DampingRatioNoBouncy,
                                 stiffness = Spring.StiffnessMediumLow
                             ),
                             label = "postepTytuluArchiwum"
@@ -289,7 +291,7 @@ fun SmsScreen(
                         Box(contentAlignment = Alignment.Center) {
                             Text(
                                 text = "SKRZYNKA ODBIORCZA",
-                                color = Color.White,
+                                color = paletaSms.naTle,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Medium,
                                 letterSpacing = 2.2.sp,
@@ -306,7 +308,7 @@ fun SmsScreen(
                             )
                             Text(
                                 text = "ARCHIWUM",
-                                color = Color.White,
+                                color = paletaSms.naTle,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Medium,
                                 letterSpacing = 2.2.sp,
@@ -337,22 +339,29 @@ fun SmsScreen(
                             animationSpec = tween(220, easing = FastOutSlowInEasing),
                             label = "tytulCzatSms"
                         ) { (tytul, numer) ->
-                            Column {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
                                 Text(
                                     text = tytul,
-                                    color = Color.White,
+                                    color = paletaSms.naTle,
                                     fontSize = 15.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    overflow = TextOverflow.Ellipsis,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth()
                                 )
                                 if (pokazNumer) {
                                     Text(
                                         text = numer,
-                                        color = Color.White.copy(alpha = 0.45f),
+                                        color = paletaSms.naTle.copy(alpha = 0.45f),
                                         fontSize = 11.sp,
                                         maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        overflow = TextOverflow.Ellipsis,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.fillMaxWidth()
                                     )
                                 }
                             }
@@ -365,7 +374,7 @@ fun SmsScreen(
                         ) { tekst ->
                             Text(
                                 text = tekst,
-                                color = Color.White.copy(alpha = 0.42f),
+                                color = paletaSms.naTle.copy(alpha = 0.42f),
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Medium,
                                 letterSpacing = 2.2.sp,
@@ -383,7 +392,7 @@ fun SmsScreen(
                                         val postepIkony by animateFloatAsState(
                                             targetValue = if (pokazArchiwum) 1f else 0f,
                                             animationSpec = spring(
-                                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                                dampingRatio = Spring.DampingRatioNoBouncy,
                                                 stiffness = Spring.StiffnessMediumLow
                                             ),
                                             label = "postepIkonyArchiwum"
@@ -465,6 +474,10 @@ fun SmsScreen(
                                                 }
                                             }
                                         }
+                                    } else if (stanEkranu is SmsEkranStan.Czat) {
+                                        // Ten sam slot co actions (IconButton 48dp) — bez tego
+                                        // CenterAlignedTopAppBar przesuwa tytuł w lewo.
+                                        Spacer(Modifier.size(48.dp))
                                     }
                                 },
                                                                                                         actions = {
@@ -474,9 +487,11 @@ fun SmsScreen(
                                                                                                         IconButton(
                                                                                                         onClick = { wykonajPolaczenie(context, czatAdres) }
                                                                                                         ) {
-                                                                                                        LogoAnimowane(
-                                                                                                            modifier = Modifier.size(28.dp),
-                                                                                                            pokazPierscien = false
+                                                                                                        Icon(
+                                                                                                            imageVector = IkonyAplikacji.TelefonLogo,
+                                                                                                            contentDescription = "Zadzwoń",
+                                                                                                            tint = ZielonyNeon,
+                                                                                                            modifier = Modifier.size(26.dp)
                                                                                                         )
                                                                                                         }
                                                                                                         }
@@ -493,7 +508,7 @@ fun SmsScreen(
                                                                                                             .fillMaxWidth()
                                                                                                             .padding(horizontal = 16.dp, vertical = 8.dp)
                                                                         .clip(RoundedCornerShape(16.dp))
-                                        .background(Color(0xFF131C18))
+                                        .background(dialer.dominik.pl.ui.theme.LocalMotyw.current.kafelek)
                                         .border(1.dp, ZielonyNeon.copy(alpha = 0.14f), RoundedCornerShape(16.dp))
                                         .padding(start = 12.dp),
                                     verticalAlignment = Alignment.CenterVertically
@@ -502,7 +517,10 @@ fun SmsScreen(
                                         value = zapytanieSzukania,
                                         onValueChange = { zapytanieSzukania = it },
                                         singleLine = true,
-                                        textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
+                                        textStyle = TextStyle(
+                                            color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle,
+                                            fontSize = 15.sp
+                                        ),
                                         cursorBrush = SolidColor(ZielonyNeon),
                                         modifier = Modifier
                                             .weight(1f)
@@ -511,7 +529,7 @@ fun SmsScreen(
                                             if (zapytanieSzukania.isEmpty()) {
                                                 Text(
                                                     text = "Szukaj w wiadomościach…",
-                                                    color = Color.White.copy(alpha = 0.32f),
+                                                    color = paletaSms.naTle.copy(alpha = 0.32f),
                                                     fontSize = 15.sp
                                                 )
                                             }
@@ -558,31 +576,27 @@ fun SmsScreen(
                     val zeCzatu = initialState is SmsEkranStan.Czat && targetState is SmsEkranStan.Skrzynka
                     val doNowej = targetState is SmsEkranStan.NowaWiadomosc
                     val zeNowej = initialState is SmsEkranStan.NowaWiadomosc
-                    // Wejście w czat: lekki slide z prawej + fade (bez bounce — mniej „chamskie").
-                    // Wyjście: odwrotnie. Wspólne SizeTransform(clip=false) żeby nie ucinać animacji.
-                    val specIn = tween<Float>(300, easing = FastOutSlowInEasing)
-                    val specOut = tween<Float>(220, easing = FastOutSlowInEasing)
-                    val specSlide = tween<IntOffset>(320, easing = FastOutSlowInEasing)
+                    // Jeden owner przejścia: tylko oś pozioma + fade (bez skosu i bez drugiej animacji skrzynki).
+                    val fadeInSpec = tween<Float>(180, easing = FastOutSlowInEasing)
+                    val fadeOutSpec = tween<Float>(160, easing = FastOutSlowInEasing)
+                    val slideSpec = tween<IntOffset>(240, easing = FastOutSlowInEasing)
                     when {
                         doCzatu || doNowej -> {
-                            (fadeIn(specIn) + slideInHorizontally(specSlide) { it / 6 } +
-                                slideInVertically(specSlide) { it / 16 })
+                            (fadeIn(fadeInSpec) + slideInHorizontally(slideSpec) { it / 8 })
                                 .togetherWith(
-                                    fadeOut(specOut) + slideOutHorizontally(tween(240)) { -it / 10 }
+                                    fadeOut(fadeOutSpec) + slideOutHorizontally(slideSpec) { -it / 10 }
                                 )
                         }
                         zeCzatu -> {
-                            // Czat już zrobił wewnętrzną animację wyjścia — skrzynka wjeżdża miękko.
-                            (fadeIn(tween(300, easing = FastOutSlowInEasing)) +
-                                slideInHorizontally(tween(340, easing = FastOutSlowInEasing)) { -it / 8 } +
-                                slideInVertically(tween(320, easing = FastOutSlowInEasing)) { it / 20 })
-                                .togetherWith(fadeOut(tween(100)))
+                            (fadeIn(fadeInSpec) + slideInHorizontally(slideSpec) { -it / 8 })
+                                .togetherWith(
+                                    fadeOut(fadeOutSpec) + slideOutHorizontally(slideSpec) { it / 10 }
+                                )
                         }
                         zeNowej -> {
-                            (fadeIn(specIn) + slideInHorizontally(specSlide) { -it / 10 })
+                            (fadeIn(fadeInSpec) + slideInHorizontally(slideSpec) { -it / 10 })
                                 .togetherWith(
-                                    fadeOut(specOut) + slideOutHorizontally(specSlide) { it / 6 } +
-                                        slideOutVertically(tween(260)) { it / 16 }
+                                    fadeOut(fadeOutSpec) + slideOutHorizontally(slideSpec) { it / 8 }
                                 )
                         }
                         else -> {
@@ -601,33 +615,11 @@ fun SmsScreen(
             ) { stan ->
                 when (stan) {
                 is SmsEkranStan.Skrzynka -> {
-                    // Wejście listy przy powrocie z czatu / pierwszym pokazaniu.
-                    var wejscieSkrzynki by remember { mutableStateOf(false) }
-                    LaunchedEffect(Unit) {
-                        wejscieSkrzynki = false
-                        delay(16)
-                        wejscieSkrzynki = true
-                    }
-                    val alphaSkrzynki by animateFloatAsState(
-                        targetValue = if (wejscieSkrzynki) 1f else 0f,
-                        animationSpec = tween(300, easing = FastOutSlowInEasing),
-                        label = "alphaSkrzynki"
-                    )
-                    val offsetSkrzynki by animateFloatAsState(
-                        targetValue = if (wejscieSkrzynki) 0f else 24f,
-                        animationSpec = tween(340, easing = FastOutSlowInEasing),
-                        label = "offsetSkrzynki"
-                    )
                     Box(Modifier.fillMaxSize()) {
                         // Przejście skrzynka ↔ archiwum: skrzynka znika, archiwum wjeżdża (i odwrotnie).
                         AnimatedContent(
                             targetState = pokazArchiwum,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    alpha = alphaSkrzynki
-                                    translationY = offsetSkrzynki
-                                },
+                            modifier = Modifier.fillMaxSize(),
                             transitionSpec = {
                                 val doArchiwum = targetState && !initialState
                                 val slideIn = if (doArchiwum) {
@@ -680,10 +672,18 @@ fun SmsScreen(
                                                 }
                                             },
                                             onUsun = {
-                                                usunKonwersacje(context, watek.address)
-                                                usunDraftCzatu(context, watek.address)
-                                                zapiszUkryte(ukryteAdresy - watek.address)
-                                                watki = watki.filter { it.address != watek.address }
+                                                val adres = watek.address
+                                                val norm = normalizujAdresSms(adres)
+                                                // Najpierw UI — kafelek znika od razu (bez bounce „w miejscu”).
+                                                watki = watki.filter { normalizujAdresSms(it.address) != norm }
+                                                WatekCache.watki = watki
+                                                zapiszUkryte(
+                                                    ukryteAdresy.filter { normalizujAdresSms(it) != norm }.toSet()
+                                                )
+                                                usunDraftCzatu(context, adres)
+                                                scope.launch(Dispatchers.IO) {
+                                                    usunKonwersacje(context, adres)
+                                                }
                                             },
                                             trybArchiwum = archiwum,
                                             modifier = Modifier.animateItem(
@@ -711,7 +711,7 @@ fun SmsScreen(
                                                 archiwum -> "Brak wiadomości w archiwum"
                                                 else -> "Brak wiadomości w skrzynce"
                                             },
-                                            color = Color.White.copy(alpha = 0.5f),
+                                            color = paletaSms.naTle.copy(alpha = 0.5f),
                                             fontSize = 15.sp
                                         )
                                     }
@@ -729,7 +729,7 @@ fun SmsScreen(
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .background(Color(0xFF0A1210).copy(alpha = 0.72f))
+                                    .background(paletaSms.tlo.copy(alpha = 0.72f))
                                     .clickable(enabled = false) { /* blokuje listę pod spodem */ },
                                 contentAlignment = Alignment.Center
                             ) {
@@ -739,7 +739,7 @@ fun SmsScreen(
                                 ) {
                                     Text(
                                         text = "Aby odbierać i wysyłać wiadomości,\nustaw tę aplikację jako domyślną do SMS",
-                                        color = Color.White.copy(alpha = 0.72f),
+                                        color = paletaSms.naTle.copy(alpha = 0.72f),
                                         fontSize = 14.sp,
                                         textAlign = TextAlign.Center,
                                         lineHeight = 20.sp,
@@ -821,20 +821,6 @@ fun SmsScreen(
 
 /** Wolne miejsce po przeniesieniu czyZnanaFirma do LogikaSms (internal jest współdzielone). */
 
-/** Usuwa całą konwersację SMS (wszystkie wiadomości) dla danego numeru. */
-private fun usunKonwersacje(context: Context, numer: String) {
-    try {
-        val uri = Telephony.Sms.CONTENT_URI
-        context.contentResolver.delete(
-            uri,
-            "${Telephony.Sms.ADDRESS} = ?",
-            arrayOf(numer)
-        )
-    } catch (e: Exception) {
-                android.util.Log.e("SmsScreen", "Usuwanie konwersacji nieudane", e)
-        }
-    }
-
     /** Logo prawdziwej firmy (alfa-nadawcy SMS) — pobrane z internetu raz i cache'owane.
      *  Gdy sieć niedostępna / nie znaleziono → pokazuje inicjał (aż sieć wróci, kolejna
      *  recompozycja karty ponowi `pobierzLogoFirmy`). */
@@ -875,34 +861,46 @@ private fun usunKonwersacje(context: Context, numer: String) {
         trybArchiwum: Boolean = false,
         modifier: Modifier = Modifier
     ) {
-    val formatDaty = remember { SimpleDateFormat("dd.MM.yyyy, HH:mm", Locale.getDefault()) }
+        val paletaSms = dialer.dominik.pl.ui.theme.LocalMotyw.current
+        val ksztaltKafla = RoundedCornerShape(paletaSms.promienKafla.dp)
+        val formatDaty = remember { SimpleDateFormat("dd.MM.yyyy, HH:mm", Locale.getDefault()) }
         val roboczy = watek.lastDate == Long.MAX_VALUE
         val dataTekst = if (roboczy) "Roboczy" else formatDaty.format(Date(watek.lastDate))
     // Numer z kontaktu → ciemniejsze tło; nieznany numer → jaśniejsze (wyróżnienie).
-    // Nieprzeczytane: subtelna zielona ramka zamiast czerwieni — spójnie z neonową estetyką.
         val nieprzeczytana = watek.nieprzeczytane > 0
         val obramowanie = when {
-            nieprzeczytana -> ZielonyNeon.copy(alpha = 0.32f)
-            watek.isKontakt -> Color(0xFF1E382C)
-            else -> Color(0xFF2A4A42)
+            nieprzeczytana -> ZielonyNeon.copy(alpha = 0.40f)
+            else -> paletaSms.kafelekRamka
         }
-        val gradientKarty = if (nieprzeczytana) {
-            listOf(Color(0xFF152820), Color(0xFF0C1812))
-        } else {
-            listOf(Color(0xFF131C18), Color(0xFF0B120F))
-        }
+        val gradientKarty = paletaSms.gradientKafelka()
 
         // Swipe: przeciągnięcie przesuwa kartę i ujawnia tła akcji pod spodem.
         var zasieg by remember { mutableFloatStateOf(0f) }
-        val gestyDensity = LocalDensity.current
-        val prog = remember { with(gestyDensity) { 110.dp.toPx() } }
+        val prog = with(LocalDensity.current) { 72.dp.toPx() }
+        val scopeSwipe = rememberCoroutineScope()
+        val aktualneUsun by rememberUpdatedState(onUsun)
+        val aktualneUkryj by rememberUpdatedState(onUkryj)
+        val aktualneKlik by rememberUpdatedState(onClick)
+
+        fun animujPowrot() {
+            val start = zasieg
+            scopeSwipe.launch {
+                androidx.compose.animation.core.Animatable(start).animateTo(
+                    0f,
+                    spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMedium
+                    )
+                ) { zasieg = value }
+            }
+        }
 
         Box(modifier = modifier.fillMaxWidth()) {
             // Tło po PRAWĘJ — widoczne przy przeciągnięciu w LEWO (Usuń konwersację).
             Box(
                 modifier = Modifier
                     .matchParentSize()
-                    .clip(RoundedCornerShape(16.dp))
+                    .clip(ksztaltKafla)
                     .background(CzerwonyPolaczenia.copy(alpha = 0.16f)),
                 contentAlignment = Alignment.CenterEnd
             ) {
@@ -923,7 +921,7 @@ private fun usunKonwersacje(context: Context, numer: String) {
             Box(
                 modifier = Modifier
                     .matchParentSize()
-                    .clip(RoundedCornerShape(16.dp))
+                    .clip(ksztaltKafla)
                     .background(ZielonyMorski.copy(alpha = 0.20f)),
                 contentAlignment = Alignment.CenterStart
             ) {
@@ -936,42 +934,47 @@ private fun usunKonwersacje(context: Context, numer: String) {
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(Modifier.width(5.dp))
-                                                Text(if (trybArchiwum) "Przywróć" else "Ukryj", color = ZielonyNeon, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text(if (trybArchiwum) "Przywróć" else "Ukryj", color = ZielonyNeon, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
 
-            // Gradient tła jak w kartach Ostatnie połączenia i Kontakty (0xFF131C18→0xFF0B120F),
-            // zamiast płaskiego koloru — spójność z resztą aplikacji.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .offset { IntOffset(zasieg.roundToInt(), 0) }
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Brush.verticalGradient(gradientKarty))
-                    .border(1.dp, obramowanie, RoundedCornerShape(16.dp))
+                    .clip(ksztaltKafla)
+                    .background(gradientKarty)
+                    .border(1.dp, obramowanie, ksztaltKafla)
                     .pointerInput(watek.address) {
-                                            // Krótkie kliknięcie (bez przeciągania) otwiera czat.
-                                            detectTapGestures(onTap = { onClick() })
-                                        }
-                                        .pointerInput(watek.address) {
-                                            detectHorizontalDragGestures(
-                                                onDragEnd = {
-                                                    when {
-                                                        // lewo → prawo (drag > 0) → ukryj konwersację
-                                                        zasieg > prog -> onUkryj()
-                                                        // prawo → lewo (drag < 0) → usuń konwersację
-                                                        zasieg < -prog -> onUsun()
-                                                        // NO else: po przeciągnięciu nie otwieramy czatu
-                                                        // (czat tylko po krótkim klku — osobny detectTapGestures).
-                                                    }
-                                                    zasieg = 0f
-                                                },
-                                                onHorizontalDrag = { _, dystans ->
-                                                    zasieg = (zasieg + dystans).coerceIn(-prog * 1.4f, prog * 1.4f)
-                                                }
-                                            )
-                                        }
+                        // Krótkie kliknięcie (bez przeciągania) otwiera czat.
+                        detectTapGestures(onTap = { aktualneKlik() })
+                    }
+                    .pointerInput(watek.address, prog) {
+                        detectHorizontalDragGestures(
+                            onDragEnd = {
+                                val przekroczono = when {
+                                    // w prawo → ukryj / przywróć
+                                    zasieg > prog -> {
+                                        aktualneUkryj()
+                                        true
+                                    }
+                                    // w lewo → usuń
+                                    zasieg < -prog -> {
+                                        aktualneUsun()
+                                        true
+                                    }
+                                    else -> false
+                                }
+                                // Bounce tylko gdy próg nieosiągnięty; po akcji kafelek znika z listy.
+                                if (!przekroczono) animujPowrot()
+                            },
+                            onDragCancel = { animujPowrot() },
+                            onHorizontalDrag = { _, dystans ->
+                                zasieg = (zasieg + dystans).coerceIn(-prog * 1.5f, prog * 1.5f)
+                            }
+                        )
+                    }
             ) {
                 Column(
                 modifier = Modifier
@@ -1047,7 +1050,7 @@ private fun usunKonwersacje(context: Context, numer: String) {
                                                     ) {
                                                         Text(
                                                             text = inicjal,
-                                                            color = if (nieprzeczytana) Color.White else ZielonyNeon,
+                                                            color = if (nieprzeczytana) paletaSms.naTle else ZielonyNeon,
                                                             fontSize = 19.sp,
                                                             fontWeight = FontWeight.Bold
                                                         )
@@ -1067,7 +1070,7 @@ private fun usunKonwersacje(context: Context, numer: String) {
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
                                                 text = watek.pseudonim ?: watek.contactName ?: watek.address,
-                                                color = if (nieprzeczytana) Color.White else Color.White.copy(alpha = 0.9f),
+                                                color = if (nieprzeczytana) paletaSms.naTle else paletaSms.naTle.copy(alpha = 0.9f),
                                                 fontSize = 16.sp,
                                                 fontWeight = if (nieprzeczytana) FontWeight.Bold else FontWeight.SemiBold,
                                                 maxLines = 1,
@@ -1078,7 +1081,7 @@ private fun usunKonwersacje(context: Context, numer: String) {
                                             if (watek.pseudonim != null || watek.contactName != null) {
                                                 Text(
                                                     text = watek.address,
-                                                    color = Color.White.copy(alpha = 0.4f),
+                                                    color = paletaSms.naTle.copy(alpha = 0.4f),
                                                     fontSize = 11.sp,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
@@ -1089,7 +1092,7 @@ private fun usunKonwersacje(context: Context, numer: String) {
                 Text(
                     text = dataTekst,
                     color = if (nieprzeczytana) ZielonyNeon.copy(alpha = 0.88f)
-                    else Color.White.copy(alpha = 0.4f),
+                    else paletaSms.naTle.copy(alpha = 0.4f),
                     fontSize = 11.sp,
                     fontWeight = if (nieprzeczytana) FontWeight.Medium else FontWeight.Normal
                 )
@@ -1101,8 +1104,8 @@ private fun usunKonwersacje(context: Context, numer: String) {
                                             else -> watek.lastMessage
                                         },
                                         color = if (roboczy) ZielonyNeon
-                                                else if (nieprzeczytana) Color.White.copy(alpha = 0.85f)
-                                                else Color.White.copy(alpha = 0.7f),
+                                                else if (nieprzeczytana) paletaSms.naTle.copy(alpha = 0.85f)
+                                                else paletaSms.naTle.copy(alpha = 0.7f),
                                         fontSize = 14.sp,
                                         fontWeight = if (nieprzeczytana) FontWeight.SemiBold else FontWeight.Normal,
                                         maxLines = 1
@@ -1121,7 +1124,7 @@ private fun usunKonwersacje(context: Context, numer: String) {
                     ) {
                         Text(
                             text = watek.nieprzeczytane.toString(),
-                            color = Color(0xFF06231A),
+                            color = NaPrzycisku,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
                         )

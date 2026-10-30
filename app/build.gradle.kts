@@ -20,10 +20,22 @@ android {
         applicationId = "dialer.dominik.pl"
         minSdk = 31
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 4
+        versionName = "1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Autoaktualizacja — patrz UPDATE.md / update.json w root repo.
+        buildConfigField(
+            "String",
+            "UPDATE_MANIFEST_URL",
+            "\"https://raw.githubusercontent.com/NiewidzialnySI/telefon/main/update.json\""
+        )
+
+        // whisper-android (free): tylko arm64-v8a — telefony; emulator x86 nie.
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     buildTypes {
@@ -40,6 +52,8 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
+        aidl = true
     }
 }
 
@@ -61,4 +75,19 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     // MMS: Fossify fork android-smsmms (PDU + system sending) — jak Fossify Messages
     implementation("org.fossify:mmslib:1.0.1")
+    // Backup: zgoda OAuth na Dysku Google (AuthorizationClient + drive.file)
+    implementation("com.google.android.gms:play-services-auth:21.3.0")
+    // Motyw: seed color → paleta Material 3 (light/dark + animate)
+    implementation("com.materialkolor:material-kolor:2.1.1")
+    // Nagrywanie rozmów przez Shizuku (UserService = UID shell)
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
+    // Refleksja ActivityThread / AttributionSource w procesie shell
+    implementation("org.lsposed.hiddenapibypass:hiddenapibypass:4.3")
+    // Offline transkrypcja (Whisper.cpp AAR; model PL ~488 MB przy pierwszym użyciu)
+    implementation("dev.ffmpegkit-maintained:whisper-android:1.0.0")
+    // Własne ADB (Wireless debugging) → shell UID bez Shizuku (jak CallVault)
+    implementation("com.github.MuntashirAkon:libadb-android:3.1.1")
+    implementation("com.github.MuntashirAkon:sun-security-android:1.1")
+    implementation("org.conscrypt:conscrypt-android:2.5.3")
 }

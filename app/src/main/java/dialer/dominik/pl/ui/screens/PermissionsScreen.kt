@@ -1,9 +1,12 @@
 package dialer.dominik.pl.ui.screens
 
 import android.Manifest
+import android.app.Activity
 import android.app.ActivityManager
+import android.app.AlarmManager
 import android.app.AppOpsManager
 import android.app.NotificationManager
+import android.app.role.RoleManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -11,6 +14,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Process
 import android.provider.Settings
+import android.provider.Telephony
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -27,6 +31,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -35,6 +40,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -48,118 +55,220 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import dialer.dominik.pl.nagranie.adb.AdbParowanieDostepnosc
 import dialer.dominik.pl.ui.components.IkonyAplikacji
 import dialer.dominik.pl.ui.components.KartaUprawnieniaAmoled
 import dialer.dominik.pl.ui.components.TloAmoled
+import dialer.dominik.pl.ui.theme.LocalMotyw
+import dialer.dominik.pl.ui.theme.NaPrzycisku
 import dialer.dominik.pl.ui.theme.ZielonyMorski
 import dialer.dominik.pl.ui.theme.ZielonyNeon
 import kotlinx.coroutines.delay
 
-// Sposob nadania uprawnienia
-private enum class TypUprawnienia { Systemowe, Nakladka, PelnyEkran, DomyslnaApka }
+private enum class TypUprawnienia {
+    Systemowe,
+    Nakladka,
+    PelnyEkran,
+    DomyslnaApka,
+    ExactAlarm,
+    NieznaneZrodla,
+    Dostepnosc,
+}
 
 private data class Uprawnienie(
     val id: String,
     val tytul: String,
-    val ikonaTarcza: Boolean,
     val typ: TypUprawnienia,
-    // System żąda uprawnień GRUPAMI. Żądanie pojedynczego uprawnienia z grupy,
-    // której aplikacja nie ma, kończy się ciszą - dialog się nie pojawia.
-    // Dlatego dla każdej pozycji podajemy wszystkie potrzebne uprawnienia naraz.
     val doZadania: List<String> = emptyList(),
-    // Dla roli domyślnej aplikacji (np. SMS, Dialer) — nazwa roli z RoleManager.
-    val rola: String? = null
+    val rola: String? = null,
+    val opis: String? = null,
+    val moznaPominac: Boolean = true
 )
 
-// Lista uprawnien - tylko tytul i ikona, bez opisow
+/**
+ * Pełna lista uprawnień pierwszego uruchomienia:
+ * runtime (telefon, kontakty, SMS, mikrofon, BT, powiadomienia)
+ * + role (dialer / SMS / screening)
+ * + ustawienia specjalne (nakładka, pełny ekran, exact alarm, instalacja APK, a11y).
+ *
+ * WRITE_SECURE_SETTINGS nie da się nadać dialogiem — pojawia się później przez ADB/Shizuku.
+ */
 private fun zbudujListeUprawnien(): List<Uprawnienie> = buildList {
-    // Grupa PHONE: READ_PHONE_STATE + READ_PHONE_NUMBERS muszą iść razem
-    add(Uprawnienie(
-        "stan_telefonu", "Stan telefonu", true, TypUprawnienia.Systemowe,
-        listOf(Manifest.permission.READ_PHONE_STATE, Manifest.permission.READ_PHONE_NUMBERS)
-    ))
-    // Grupa CALL_LOG
-    add(Uprawnienie(
-        "historia", "Historia połączeń", false, TypUprawnienia.Systemowe,
-        listOf(Manifest.permission.READ_CALL_LOG)
-    ))
-    add(Uprawnienie(
-        "polaczenie", "Telefon", true, TypUprawnienia.Systemowe,
-        listOf(Manifest.permission.CALL_PHONE)
-    ))
-    add(Uprawnienie(
-        "odbieranie", "Odbieranie połączeń", true, TypUprawnienia.Systemowe,
-        listOf(Manifest.permission.ANSWER_PHONE_CALLS, Manifest.permission.READ_PHONE_STATE)
-    ))
+    add(
+        Uprawnienie(
+            id = "telefon",
+            tytul = "Telefon i historia",
+            typ = TypUprawnienia.Systemowe,
+            doZadania = listOf(
+                Manifest.permission.READ_PHONE_STATE,
+                Manifest.permission.READ_PHONE_NUMBERS,
+                Manifest.permission.CALL_PHONE,
+                Manifest.permission.ANSWER_PHONE_CALLS,
+                Manifest.permission.READ_CALL_LOG
+            ),
+            moznaPominac = false
+        )
+    )
+    add(
+        Uprawnienie(
+            id = "kontakty",
+            tytul = "Kontakty",
+            typ = TypUprawnienia.Systemowe,
+            doZadania = listOf(
+                Manifest.permission.READ_CONTACTS,
+                Manifest.permission.WRITE_CONTACTS
+            ),
+            opis = "Odczyt i zapis książki telefonicznej",
+            moznaPominac = true
+        )
+    )
+    add(
+        Uprawnienie(
+            id = "sms",
+            tytul = "Wiadomości SMS",
+            typ = TypUprawnienia.Systemowe,
+            doZadania = listOf(
+                Manifest.permission.SEND_SMS,
+                Manifest.permission.RECEIVE_SMS,
+                Manifest.permission.READ_SMS,
+                Manifest.permission.RECEIVE_MMS
+            ),
+            opis = "Pełny dostęp po ustawieniu jako domyślnej aplikacji SMS",
+            moznaPominac = true
+        )
+    )
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        add(Uprawnienie(
-            "powiadomienia", "Powiadomienia", false, TypUprawnienia.Systemowe,
-            listOf(Manifest.permission.POST_NOTIFICATIONS)
-        ))
+        add(
+            Uprawnienie(
+                id = "powiadomienia",
+                tytul = "Powiadomienia",
+                typ = TypUprawnienia.Systemowe,
+                doZadania = listOf(Manifest.permission.POST_NOTIFICATIONS)
+            )
+        )
     }
-    // Grupa CONTACTS — dialer wyszukuje kontakty po nazwie i numerze
-    add(Uprawnienie(
-        "kontakty", "Kontakty", false, TypUprawnienia.Systemowe,
-        listOf(Manifest.permission.READ_CONTACTS)
-    ))
-    add(Uprawnienie(
-        "nagrywanie", "Nagrywanie rozmów", false, TypUprawnienia.Systemowe,
-        listOf(Manifest.permission.RECORD_AUDIO)
-    ))
-    // Grupa SMS: wszystkie trzy naraz - inaczej system odmawia po cichu
-    add(Uprawnienie(
-        "wysylanie_sms", "Wysyłanie SMS", false, TypUprawnienia.Systemowe,
-        listOf(Manifest.permission.SEND_SMS, Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_SMS)
-    ))
-    add(Uprawnienie(
-        "odbieranie_sms", "Odbieranie SMS", false, TypUprawnienia.Systemowe,
-        listOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.READ_SMS, Manifest.permission.SEND_SMS)
-    ))
-    add(Uprawnienie(
-        "czytanie_sms", "Czytanie SMS", false, TypUprawnienia.Systemowe,
-        listOf(Manifest.permission.READ_SMS, Manifest.permission.SEND_SMS, Manifest.permission.RECEIVE_SMS)
-    ))
-    // Rola domyślnej aplikacji SMS — bez niej Android nie przekazuje
-    // przychodzących wiadomości, a sam wysyłać można tylko przez intencję.
+    add(
+        Uprawnienie(
+            id = "mikrofon",
+            tytul = "Mikrofon",
+            typ = TypUprawnienia.Systemowe,
+            doZadania = listOf(Manifest.permission.RECORD_AUDIO),
+            opis = "Nagrywanie i transkrypcja rozmów"
+        )
+    )
+    add(
+        Uprawnienie(
+            id = "bluetooth",
+            tytul = "Bluetooth",
+            typ = TypUprawnienia.Systemowe,
+            doZadania = listOf(Manifest.permission.BLUETOOTH_CONNECT),
+            opis = "Nazwy urządzeń audio podczas rozmowy"
+        )
+    )
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        add(Uprawnienie(
-            "domyslna_sms", "Domyślna aplikacja SMS", false, TypUprawnienia.DomyslnaApka,
-            rola = android.app.role.RoleManager.ROLE_SMS
-        ))
+        add(
+            Uprawnienie(
+                id = "domyslna_sms",
+                tytul = "Domyślna aplikacja SMS",
+                typ = TypUprawnienia.DomyslnaApka,
+                rola = RoleManager.ROLE_SMS,
+                moznaPominac = true
+            )
+        )
+        add(
+            Uprawnienie(
+                id = "domyslny_dialer",
+                tytul = "Domyślny dialer",
+                typ = TypUprawnienia.DomyslnaApka,
+                rola = RoleManager.ROLE_DIALER,
+                moznaPominac = true
+            )
+        )
+        add(
+            Uprawnienie(
+                id = "identyfikacja_spamu",
+                tytul = "Identyfikacja i spam",
+                typ = TypUprawnienia.DomyslnaApka,
+                rola = RoleManager.ROLE_CALL_SCREENING,
+                moznaPominac = true
+            )
+        )
     }
-    // Rola domyślnego dialera — aby połączenia używały naszego ekranu rozmowy.
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        add(Uprawnienie(
-            "domyslny_dialer", "Domyślny dialer", true, TypUprawnienia.DomyslnaApka,
-            rola = android.app.role.RoleManager.ROLE_DIALER
-        ))
-        // Bez tej roli UslugaIdentyfikacjiPolaczen nie dostaje połączeń do blokady spamu.
-        add(Uprawnienie(
-            "identyfikacja_spamu", "Identyfikacja rozmów i spamu", true, TypUprawnienia.DomyslnaApka,
-            rola = android.app.role.RoleManager.ROLE_CALL_SCREENING
-        ))
-    }
-    add(Uprawnienie("nakladka", "Wyświetlanie nad aplikacjami", false, TypUprawnienia.Nakladka))
+    add(
+        Uprawnienie(
+            id = "nakladka",
+            tytul = "Wyświetlanie nad innymi",
+            typ = TypUprawnienia.Nakladka,
+            opis = "Dymek rozmowy po zminimalizowaniu połączenia",
+            moznaPominac = true
+        )
+    )
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-        add(Uprawnienie("pelny_ekran", "Pełny ekran", false, TypUprawnienia.PelnyEkran))
+        add(
+            Uprawnienie(
+                id = "pelny_ekran",
+                tytul = "Pełny ekran",
+                typ = TypUprawnienia.PelnyEkran,
+                opis = "Powiadomienia połączeń i SMS na zablokowanym ekranie",
+                moznaPominac = true
+            )
+        )
     }
+    add(
+        Uprawnienie(
+            id = "alarm",
+            tytul = "Dokładne alarmy",
+            typ = TypUprawnienia.ExactAlarm,
+            opis = "Planowane wysyłanie SMS o wskazanej godzinie",
+            moznaPominac = true
+        )
+    )
+    add(
+        Uprawnienie(
+            id = "instalacja",
+            tytul = "Instalacja aktualizacji",
+            typ = TypUprawnienia.NieznaneZrodla,
+            opis = "Pozwala zainstalować pobrane aktualizacje aplikacji",
+            moznaPominac = true
+        )
+    )
+    add(
+        Uprawnienie(
+            id = "dostepnosc",
+            tytul = "Dostępność (parowanie ADB)",
+            typ = TypUprawnienia.Dostepnosc,
+            opis = "Odczyt kodu Wireless debugging przy nagrywaniu rozmów",
+            moznaPominac = true
+        )
+    )
 }
 
-// Sprawdza stan uprawnienia. Dla nakladki uzywamy AppOps, bo Settings.canDrawOverlays
-// bywa opoznione o kilka sekund po powrocie z ustawien.
-private fun Uprawnienie.czyUdzielone(context: Context): Boolean {
-    return when (typ) {
-        TypUprawnienia.Systemowe ->
-            doZadania.all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+private fun Uprawnienie.ikona(): ImageVector = when (id) {
+    "telefon", "domyslny_dialer", "identyfikacja_spamu" -> IkonyAplikacji.Tarcza
+    "kontakty" -> IkonyAplikacji.DodajKontakt
+    "sms", "domyslna_sms" -> IkonyAplikacji.Wiadomosc
+    "mikrofon" -> IkonyAplikacji.Nagrywanie
+    "bluetooth" -> IkonyAplikacji.Bluetooth
+    "nakladka", "pelny_ekran" -> IkonyAplikacji.Dymek
+    "alarm" -> IkonyAplikacji.Zegar
+    "instalacja" -> IkonyAplikacji.Ustawienia
+    "dostepnosc" -> IkonyAplikacji.AdbWifi
+    else -> IkonyAplikacji.Klodka
+}
 
-        // NAKŁADKA: trzy źródła prawdy. Settings.canDrawOverlays bywa spóźnione
-        // o kilka sekund po powrocie z ustawień, więc sprawdzamy też AppOps.
-        TypUprawnienia.Nakladka -> {
-            if (Settings.canDrawOverlays(context)) return true
+private fun Uprawnienie.czyUdzielone(context: Context): Boolean = when (typ) {
+    TypUprawnienia.Systemowe ->
+        doZadania.all { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+
+    TypUprawnienia.Nakladka -> {
+        if (Settings.canDrawOverlays(context)) true
+        else {
             val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager
             val tryb = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 @Suppress("DEPRECATION")
@@ -175,85 +284,109 @@ private fun Uprawnienie.czyUdzielone(context: Context): Boolean {
                     context.packageName
                 )
             }
-            tryb == AppOpsManager.MODE_ALLOWED || Settings.canDrawOverlays(context)
+            tryb == AppOpsManager.MODE_ALLOWED
         }
+    }
 
-        // ROLA domyślnej aplikacji (SMS/Dialer) — sprawdzamy przez RoleManager.
-        // Gdy rola niedostępna (starsze urządzenie) uznajemy za nadaną,
-        // żeby nie blokować przejścia.
-        TypUprawnienia.DomyslnaApka -> {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return true
-            val roleManager = context.getSystemService(android.app.role.RoleManager::class.java)
-                ?: return true
-            val rola = rola ?: return true
-            if (!roleManager.isRoleAvailable(rola)) return true
-            roleManager.isRoleHeld(rola)
-        }
+    TypUprawnienia.DomyslnaApka -> gdyRolaUdzielona(context, rola)
 
-        TypUprawnienia.PelnyEkran ->
-            context.getSystemService(NotificationManager::class.java)?.canUseFullScreenIntent() == true
+    TypUprawnienia.PelnyEkran ->
+        context.getSystemService(NotificationManager::class.java)?.canUseFullScreenIntent() == true
+
+    TypUprawnienia.ExactAlarm ->
+        context.getSystemService(AlarmManager::class.java)?.canScheduleExactAlarms() == true
+
+    TypUprawnienia.NieznaneZrodla ->
+        context.packageManager.canRequestPackageInstalls()
+
+    TypUprawnienia.Dostepnosc ->
+        AdbParowanieDostepnosc.czyWlaczona(context)
+}
+
+private fun gdyRolaUdzielona(context: Context, rola: String?): Boolean {
+    if (rola == null) return true
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return true
+    val rm = context.getSystemService(RoleManager::class.java) ?: return true
+    if (!rm.isRoleAvailable(rola)) return true
+    if (rm.isRoleHeld(rola)) return true
+    // Fallback SMS: niektóre OEM (ColorOS) opóźniają RoleManager.
+    if (rola == RoleManager.ROLE_SMS) {
+        return Telephony.Sms.getDefaultSmsPackage(context) == context.packageName
+    }
+    return false
+}
+
+private fun intencjaRoli(context: Context, rola: String): Intent? {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+    val rm = context.getSystemService(RoleManager::class.java) ?: return null
+    if (!rm.isRoleAvailable(rola)) return null
+    return try {
+        rm.createRequestRoleIntent(rola)
+    } catch (_: Exception) {
+        null
     }
 }
 
-// Otwiera ustawienia systemowe. Zwraca informacje, czy ekran sie otworzyl.
-private fun otworzUstawienia(context: Context, intencja: Intent): Boolean = try {
-    intencja.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    context.startActivity(intencja)
-    true
-} catch (e: Exception) {
-    e.printStackTrace()
-    false
-}
-
-/**
- * Przywraca aplikację na wierzch po nadaniu uprawnienia w Ustawieniach.
- *
- * Od Androida 11 nie da się już otworzyć ustawień nakładki bezpośrednio dla
- * aplikacji (system ignoruje package:) i nie istnieje API zamykające Ustawienia.
- * Ale aplikacja MOŻE przywrócić własne zadanie na wierzch z uprawnieniem
- * SYSTEM_ALERT_WINDOW — a dokładnie to uprawnienie właśnie przed chwilą nadano.
- * To jedyna legalna droga: nie wymaga REFLECT_USE_EXPLICIT_OVERRIDES ani
- * innych obejść z listy restricted permissions Google Play.
- */
-private fun przywrocAplikacje(context: Context) {
-    try {
-        val menedzer = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
-        menedzer?.moveTaskToFront(context.packageName.hashCode(), ActivityManager.MOVE_TASK_NO_USER_ACTION
-                or ActivityManager.MOVE_TASK_WITH_HOME, null)
-    } catch (e: Exception) {
-        e.printStackTrace()
-    }
-}
-
-/** Intencja do ustawien "Wyswietlanie nad innymi aplikacjami" dla tej apki. */
 private fun intencjaNakladki(context: Context): Intent =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-        // Od Androida 11 system ignoruje package: i pokazuje liste - to jedyna droga
-        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+            .takeIf { it.resolveActivity(context.packageManager) != null }
+            ?: Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
     } else {
         @Suppress("DEPRECATION")
-        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + context.packageName))
+        Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
     }
 
-/** Intencja do ustawien "Pelny ekran" (Android 14+). */
 private fun intencjaPelnegoEkranu(context: Context): Intent =
     Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
-        data = Uri.parse("package:" + context.packageName)
+        data = Uri.parse("package:${context.packageName}")
     }
 
-/**
- * Ekran uprawnien: bez paska postepu i bez opisow.
- * Zostaje ikona, nazwa uprawnienia i przycisk.
- * Po nadaniu ostatniego uprawnienia leci krotka animacja i przejscie do dialera.
- */
+private fun intencjaExactAlarm(context: Context): Intent =
+    Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+        data = Uri.parse("package:${context.packageName}")
+    }
+
+private fun intencjaNieznaneZrodla(context: Context): Intent =
+    Intent(
+        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+        Uri.parse("package:${context.packageName}")
+    )
+
+private fun intencjaDostepnosci(): Intent =
+    Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+
+private fun przywrocAplikacje(context: Context) {
+    val activity = context as? Activity
+    try {
+        if (activity != null) {
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            @Suppress("DEPRECATION")
+            am?.moveTaskToFront(activity.taskId, ActivityManager.MOVE_TASK_NO_USER_ACTION)
+        }
+    } catch (_: Exception) {
+        // Brak REORDER_TASKS — fallback niżej.
+    }
+    val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
+        ?: return
+    launch.addFlags(
+        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+            Intent.FLAG_ACTIVITY_SINGLE_TOP or
+            Intent.FLAG_ACTIVITY_NEW_TASK,
+    )
+    runCatching { context.startActivity(launch) }
+}
+
 @Composable
 fun PermissionsScreen(
     context: Context,
     onFinished: () -> Unit
 ) {
+    val motyw = LocalMotyw.current
     val uprawnienia = remember { zbudujListeUprawnien() }
     var odswiezenie by remember { mutableIntStateOf(0) }
     var konczenie by remember { mutableStateOf(false) }
+    var pominiete by remember { mutableStateOf(setOf<String>()) }
     var czekamyNaUstawienia by remember { mutableStateOf(false) }
 
     val cykl = LocalLifecycleOwner.current
@@ -268,50 +401,47 @@ fun PermissionsScreen(
         onDispose { cykl.lifecycle.removeObserver(obserwator) }
     }
 
-    // Strażnik powrotu z Ustawień.
-    // Co 350 ms sprawdzamy, czy użytkownik włączył uprawnienie. Gdy tak się stało,
-    // aplikacja SAMA wraca na wierzch (moveTaskToFront) — nie trzeba klikać "wstecz".
-    // Działa tylko wtedy, gdy zadanie aplikacji jest w tle, czyli użytkownik
-    // faktycznie jest w Ustawieniach. Po powrocie pętla kończy działanie.
-    LaunchedEffect(czekamyNaUstawienia) {
-        if (!czekamyNaUstawienia) return@LaunchedEffect
-        repeat(200) { // maksymalnie ok. 70 sekund
-            delay(350)
-            val aktualne = uprawnienia.firstOrNull { !it.czyUdzielone(context) }
-            // Uprawnienie nadane? Wracamy do aplikacji i odświeżamy stan.
-            // Dla uprawnień otwierających Ustawienia (nakładka, pełny ekran, rola)
-            // też sprawdzamy, czy użytkownik wrócił — aplikacja nie może zamknąć
-            // Ustawień, więc samo wraca na wierzch po nadaniu uprawnienia.
-            if (aktualne == null) {
-                odswiezenie++
-                przywrocAplikacje(context)
-                czekamyNaUstawienia = false
-                return@LaunchedEffect
-            }
-            odswiezenie++
-        }
+    // Activity Result — role i ustawienia BEZ FLAG_ACTIVITY_NEW_TASK
+    // (NEW_TASK psuło ROLE_SMS: dialog wracał, a apka nie dostawała wyniku / ON_RESUME).
+    val launcherIntencji = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        odswiezenie++
         czekamyNaUstawienia = false
     }
 
-    // ŻĄDANIE GRUPOWE: RequestMultiplePermissions zamiast RequestPermission.
-    // System pokazuje JEDEN dialog na grupę i przyznaje wszystkie pozycje z listy.
-    // Pojedyncze żądanie dla READ_SMS/RECEIVE_SMS/READ_PHONE_STATE kończyło się
-    // ciszą, bo aplikacja nie miała żadnego uprawnienia z danej grupy.
     val zapytanieOPermisje = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { odswiezenie++ }
 
-    val stany = remember(odswiezenie) {
-        uprawnienia.associate { it.id to it.czyUdzielone(context) }
+    LaunchedEffect(czekamyNaUstawienia) {
+        if (!czekamyNaUstawienia) return@LaunchedEffect
+        repeat(120) {
+            delay(400)
+            odswiezenie++
+            val biezace = uprawnienia.firstOrNull { up ->
+                up.id !in pominiete && !up.czyUdzielone(context)
+            }
+            if (biezace == null || biezace.czyUdzielone(context)) {
+                przywrocAplikacje(context)
+                czekamyNaUstawienia = false
+                return@LaunchedEffect
+            }
+        }
+        czekamyNaUstawienia = false
     }
 
-    val aktualne = remember(stany) { uprawnienia.firstOrNull { stany[it.id] != true } }
+    val stany = remember(odswiezenie, pominiete) {
+        uprawnienia.associate { it.id to (it.czyUdzielone(context) || it.id in pominiete) }
+    }
+    val aktualne = remember(stany) {
+        uprawnienia.firstOrNull { stany[it.id] != true }
+    }
 
-    // Po nadaniu ostatniego uprawnienia: krotka animacja, potem przejscie dalej
     LaunchedEffect(aktualne) {
         if (aktualne == null && !konczenie) {
             konczenie = true
-            delay(700)
+            delay(650)
             onFinished()
         }
     }
@@ -331,66 +461,95 @@ fun PermissionsScreen(
                 targetState = aktualne,
                 transitionSpec = {
                     (
-                        fadeIn(tween(320)) + slideInVertically(tween(420)) { it / 4 } +
-                            scaleIn(tween(420), initialScale = 0.94f)
+                        fadeIn(tween(300)) + slideInVertically(tween(380)) { it / 5 } +
+                            scaleIn(tween(380), initialScale = 0.95f)
                         ) togetherWith (
-                        fadeOut(tween(220)) + slideOutVertically(tween(260)) { -it / 6 } +
-                            scaleOut(tween(260), targetScale = 0.96f)
+                        fadeOut(tween(200)) + slideOutVertically(tween(220)) { -it / 8 } +
+                            scaleOut(tween(220), targetScale = 0.97f)
                         )
                 },
-                label = "przejscieKarty"
+                label = "przejscieKarty",
+                modifier = Modifier.fillMaxWidth()
             ) { uprawnienie ->
                 if (uprawnienie != null) {
-                    KartaUprawnieniaAmoled(
-                        ikona = if (uprawnienie.ikonaTarcza) IkonyAplikacji.Tarcza else IkonyAplikacji.Klodka,
-                        tytul = uprawnienie.tytul,
-                        etykietaPrzycisku = if (uprawnienie.typ == TypUprawnienia.Systemowe) {
-                            "Nadaj dostep"
-                        } else if (uprawnienie.typ == TypUprawnienia.DomyslnaApka) {
-                            "Ustaw domyslną"
-                        } else {
-                            "Otworz ustawienia"
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        onKlik = {
-                            when (uprawnienie.typ) {
-                                TypUprawnienia.Systemowe ->
-                                    zapytanieOPermisje.launch(uprawnienie.doZadania.toTypedArray())
-
-                                TypUprawnienia.DomyslnaApka -> {
-                                    val zarzadcaRol = context.getSystemService(
-                                        android.app.role.RoleManager::class.java
-                                    )
-                                    // ROLE_CALL_SCREENING i dialer: najpierw systemowy dialog roli.
-                                    val intencjaRoli = uprawnienie.rola?.let {
-                                        zarzadcaRol?.createRequestRoleIntent(it)
-                                    }
-                                    if (intencjaRoli != null && otworzUstawienia(context, intencjaRoli)) {
-                                        czekamyNaUstawienia = true
-                                    } else {
-                                        val ustawienia = Intent(
-                                            android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        KartaUprawnieniaAmoled(
+                            ikona = uprawnienie.ikona(),
+                            tytul = uprawnienie.tytul,
+                            opis = uprawnienie.opis,
+                            etykietaPrzycisku = when (uprawnienie.typ) {
+                                TypUprawnienia.Systemowe -> "Nadaj dostęp"
+                                TypUprawnienia.DomyslnaApka -> "Ustaw domyślną"
+                                else -> "Otwórz ustawienia"
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            onKlik = {
+                                when (uprawnienie.typ) {
+                                    TypUprawnienia.Systemowe ->
+                                        zapytanieOPermisje.launch(
+                                            uprawnienie.doZadania.toTypedArray()
                                         )
-                                        if (otworzUstawienia(context, ustawienia)) {
-                                            czekamyNaUstawienia = true
-                                        }
-                                    }
-                                }
 
-                                TypUprawnienia.Nakladka -> {
-                                    if (otworzUstawienia(context, intencjaNakladki(context))) {
+                                    TypUprawnienia.DomyslnaApka -> {
+                                        val rola = uprawnienie.rola
+                                        val intent = rola?.let { intencjaRoli(context, it) }
+                                            ?: Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)
                                         czekamyNaUstawienia = true
+                                        runCatching { launcherIntencji.launch(intent) }
+                                            .onFailure {
+                                                czekamyNaUstawienia = false
+                                                runCatching {
+                                                    launcherIntencji.launch(
+                                                        Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)
+                                                    )
+                                                    czekamyNaUstawienia = true
+                                                }
+                                            }
                                     }
-                                }
 
-                                TypUprawnienia.PelnyEkran -> {
-                                    if (otworzUstawienia(context, intencjaPelnegoEkranu(context))) {
+                                    TypUprawnienia.Nakladka -> {
                                         czekamyNaUstawienia = true
+                                        launcherIntencji.launch(intencjaNakladki(context))
+                                    }
+
+                                    TypUprawnienia.PelnyEkran -> {
+                                        czekamyNaUstawienia = true
+                                        launcherIntencji.launch(intencjaPelnegoEkranu(context))
+                                    }
+
+                                    TypUprawnienia.ExactAlarm -> {
+                                        czekamyNaUstawienia = true
+                                        launcherIntencji.launch(intencjaExactAlarm(context))
+                                    }
+
+                                    TypUprawnienia.NieznaneZrodla -> {
+                                        czekamyNaUstawienia = true
+                                        launcherIntencji.launch(intencjaNieznaneZrodla(context))
+                                    }
+
+                                    TypUprawnienia.Dostepnosc -> {
+                                        czekamyNaUstawienia = true
+                                        AdbParowanieDostepnosc.oznaczWrocPoWlaczeniu()
+                                        launcherIntencji.launch(intencjaDostepnosci())
                                     }
                                 }
                             }
+                        )
+                        if (uprawnienie.moznaPominac) {
+                            TextButton(
+                                onClick = {
+                                    pominiete = pominiete + uprawnienie.id
+                                    odswiezenie++
+                                }
+                            ) {
+                                Text(
+                                    text = "Pomiń na razie",
+                                    color = motyw.tekstDrugorzedny,
+                                    fontSize = 14.sp
+                                )
+                            }
                         }
-                    )
+                    }
                 } else {
                     AnimacjaZakonczenia(aktywna = konczenie)
                 }
@@ -399,7 +558,6 @@ fun PermissionsScreen(
     }
 }
 
-/** Krotka, czysta animacja po nadaniu ostatniego uprawnienia - bez tekstu. */
 @Composable
 private fun AnimacjaZakonczenia(aktywna: Boolean) {
     val postep by animateFloatAsState(
@@ -412,7 +570,6 @@ private fun AnimacjaZakonczenia(aktywna: Boolean) {
     )
 
     Box(contentAlignment = Alignment.Center) {
-        // Poswiata
         Box(
             modifier = Modifier
                 .size(160.dp)
@@ -427,7 +584,6 @@ private fun AnimacjaZakonczenia(aktywna: Boolean) {
                     shape = CircleShape
                 )
         )
-        // Zielone kolko z ptaszkiem
         Box(
             modifier = Modifier
                 .size(88.dp)
@@ -441,11 +597,10 @@ private fun AnimacjaZakonczenia(aktywna: Boolean) {
             Icon(
                 imageVector = IkonyAplikacji.Sprawdzenie,
                 contentDescription = null,
-                tint = Color(0xFF06231A),
+                tint = NaPrzycisku,
                 modifier = Modifier.size(46.dp)
             )
         }
-        // Delikatny wskaznik, ze zaraz nastapi przejscie
         CircularProgressIndicator(
             modifier = Modifier.size(136.dp),
             color = ZielonyNeon.copy(alpha = 0.35f * postep),

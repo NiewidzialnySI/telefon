@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dialer.dominik.pl.ui.theme.ZielonyMorski
+import dialer.dominik.pl.ui.theme.NaPrzycisku
 import dialer.dominik.pl.ui.theme.ZielonyNeon
 
 /** Kształty wspólne dla karty uprawnienia — spójne z ekranem powitalnym. */
@@ -53,6 +54,7 @@ fun KartaUprawnieniaAmoled(
     tytul: String,
     etykietaPrzycisku: String,
     modifier: Modifier = Modifier,
+    opis: String? = null,
     onKlik: () -> Unit
 ) {
     Box(
@@ -71,14 +73,13 @@ fun KartaUprawnieniaAmoled(
                 border = BorderStroke(1.dp, ZielonyNeon.copy(alpha = 0.16f)),
                 shape = KsztaltKarty
             )
-            .padding(horizontal = 24.dp, vertical = 40.dp)
+            .padding(horizontal = 24.dp, vertical = 32.dp)
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
-            // --- Okrągła ikona z poświatą ---
             Box(contentAlignment = Alignment.Center) {
                 Box(
                     modifier = Modifier
@@ -118,20 +119,31 @@ fun KartaUprawnieniaAmoled(
                 }
             }
 
-            Spacer(modifier = Modifier.height(26.dp))
+            Spacer(modifier = Modifier.height(22.dp))
 
-            // --- Tytuł ---
             Text(
                 text = tytul,
                 color = Color.White,
-                fontSize = 24.sp,
+                fontSize = 22.sp,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(34.dp))
+            if (!opis.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = opis,
+                    color = Color.White.copy(alpha = 0.58f),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Normal,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 18.sp,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+            }
 
-            // --- Przycisk CTA ---
+            Spacer(modifier = Modifier.height(28.dp))
+
             PrzyciskGlowny(
                 tekst = etykietaPrzycisku,
                 onClick = onKlik
@@ -185,7 +197,7 @@ fun PrzyciskGlowny(
     ) {
         Text(
             text = tekst,
-            color = Color(0xFF06231A),
+            color = NaPrzycisku,
             fontSize = 16.sp,
             fontWeight = FontWeight.SemiBold
         )
@@ -193,7 +205,7 @@ fun PrzyciskGlowny(
         Icon(
             imageVector = IkonyAplikacji.Strzalka,
             contentDescription = null,
-            tint = Color(0xFF06231A),
+            tint = NaPrzycisku,
             modifier = Modifier.size(18.dp)
         )
     }

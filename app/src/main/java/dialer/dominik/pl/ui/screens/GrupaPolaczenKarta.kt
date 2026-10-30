@@ -115,6 +115,7 @@ import dialer.dominik.pl.ui.theme.CzerwonyPolaczenia
 import dialer.dominik.pl.ui.theme.ZielonyGleboki
 import dialer.dominik.pl.ui.theme.ZielonyMorski
 import dialer.dominik.pl.ui.theme.ZielonyNeon
+import dialer.dominik.pl.ui.theme.gradientKafelka
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -140,18 +141,29 @@ internal fun GrupaPolaczenKarta(
 ) {
     val formatDaty = remember { SimpleDateFormat("d MMM, HH:mm", Locale.getDefault()) }
     val context = LocalContext.current
+    val paletaMotywu = dialer.dominik.pl.ui.theme.LocalMotyw.current
+    val ksztaltKafla = RoundedCornerShape(paletaMotywu.promienKafla.dp)
     // Pseudonim ustawiony w tej aplikacji (po nazwie z dziennika). Jeśli jest,
             // pokazujemy go zamiast nazwy systemowej — np. „Luluś" zamiast „Emilka Kowalska".
             val pseudonim = remember(context, grupa.nazwa) { pobierzPseudonim(context, grupa.nazwa ?: "") }
-            // Notatka przypisana do tej rozmowy (zapisana podczas połączenia).
-            // Cache w remember — unika synchronicznego odczytu SharedPreferences przy
-            // każdej recompozycji (drag/scroll), który powodował lag. Świeżość po
-            // powrocie z rozmowy załatwia odświeżenie listy w MainDialerScreen.
-            val notatkaLogu = remember(context, grupa.numer) {
-                NotatkiRozmow.pobierzNotatke(context, grupa.numer)
+            // Notatki per wpis CallLog (nie per numer / kafelek grupy).
+            var notatkiWpisow by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
+            // Dymek podglądu: id wpisu + treść; znika po 3 s.
+            var dymekNotatki by remember { mutableStateOf<Pair<Long, String>?>(null) }
+            // Edycja: id wpisu + bieżąca treść w polu.
+            var edycjaNotatki by remember { mutableStateOf<Pair<Long, String>?>(null) }
+            val idsWpisow = remember(widoczne) { widoczne.map { it.id } }
+            LaunchedEffect(rozwinieta, idsWpisow) {
+                withContext(Dispatchers.IO) {
+                    NotatkiRozmow.dociagnijOczekujace(context)
+                    NotatkiRozmow.mapaNotatek(context)
+                }.let { notatkiWpisow = it }
             }
-            // Czy pokazać okno z treścią notatki (po kliknięciu ikony na kafelku).
-            var pokazTrescNotatki by remember { mutableStateOf(false) }
+            LaunchedEffect(dymekNotatki) {
+                val pokazany = dymekNotatki ?: return@LaunchedEffect
+                delay(3000)
+                if (dymekNotatki == pokazany) dymekNotatki = null
+            }
 
     val etykietaTypu = when (grupa.typOstatniego) {
         CallLog.Calls.INCOMING_TYPE -> "Przychodzące"
@@ -160,9 +172,16 @@ internal fun GrupaPolaczenKarta(
         CallLog.Calls.REJECTED_TYPE -> "Odrzucone"
         else -> "Połączenie"
     }
+    val ikonaTypu = when (grupa.typOstatniego) {
+        CallLog.Calls.INCOMING_TYPE -> IkonyAplikacji.PolaczeniePrzychodzace
+        CallLog.Calls.OUTGOING_TYPE -> IkonyAplikacji.PolaczenieWychodzace
+        CallLog.Calls.MISSED_TYPE -> IkonyAplikacji.PolaczenieNieodebrane
+        CallLog.Calls.REJECTED_TYPE -> IkonyAplikacji.PolaczenieOdrzucone
+        else -> IkonyAplikacji.TelefonLogo
+    }
     val kolorTypu = when (grupa.typOstatniego) {
         CallLog.Calls.MISSED_TYPE, CallLog.Calls.REJECTED_TYPE -> CzerwonyPolaczenia
-        else -> Color.White.copy(alpha = 0.5f)
+        else -> paletaMotywu.naTle.copy(alpha = 0.5f)
     }
 
     var zasieg by remember { mutableFloatStateOf(0f) }
@@ -175,7 +194,7 @@ internal fun GrupaPolaczenKarta(
         Box(
             modifier = Modifier
                 .matchParentSize()
-                .clip(RoundedCornerShape(20.dp))
+                .clip(ksztaltKafla)
                 .background(CzerwonyPolaczenia.copy(alpha = 0.18f)),
             contentAlignment = Alignment.CenterEnd
         ) {
@@ -205,7 +224,7 @@ internal fun GrupaPolaczenKarta(
         Box(
             modifier = Modifier
                 .matchParentSize()
-                .clip(RoundedCornerShape(20.dp))
+                .clip(ksztaltKafla)
                 .background(CzerwonyPolaczenia.copy(alpha = 0.25f)),
             contentAlignment = Alignment.CenterStart
         ) {
@@ -241,11 +260,13 @@ internal fun GrupaPolaczenKarta(
                                     // (w tym 10 wpisów) — to eliminuje lag podczas gestu Ukryj/Spam.
                                     translationX = zasieg
                                 }
-                .clip(RoundedCornerShape(20.dp))
-                .background(
-                    Brush.verticalGradient(listOf(Color(0xFF131C18), Color(0xFF0B120F)))
+                .clip(ksztaltKafla)
+                .background(paletaMotywu.gradientKafelka())
+                .border(
+                    1.dp,
+                    paletaMotywu.kafelekRamka,
+                    ksztaltKafla
                 )
-                .border(1.dp, ZielonyNeon.copy(alpha = 0.10f), RoundedCornerShape(20.dp))
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures(
                         onDragEnd = {
@@ -278,7 +299,7 @@ internal fun GrupaPolaczenKarta(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                                                     text = pseudonim ?: grupa.nazwa ?: grupa.numer,
-                                                    color = Color.White,
+                                                    color = paletaMotywu.naTle,
                                                     fontSize = 16.sp,
                                                     fontWeight = FontWeight.Medium
                                                 )
@@ -287,12 +308,12 @@ internal fun GrupaPolaczenKarta(
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(50))
-                                    .background(Color.White.copy(alpha = 0.10f))
+                                    .background(paletaMotywu.naTle.copy(alpha = 0.10f))
                                     .padding(horizontal = 7.dp, vertical = 2.dp)
                             ) {
                                 Text(
                                     text = "${grupa.liczba}×",
-                                    color = Color.White.copy(alpha = 0.65f),
+                                    color = paletaMotywu.tekstDrugorzedny,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Medium
                                 )
@@ -300,12 +321,21 @@ internal fun GrupaPolaczenKarta(
                         }
                     }
                     Spacer(Modifier.height(4.dp))
-                                        Text(
-                                            text = "$etykietaTypu · ${formatDaty.format(Date(grupa.dataOstatniego))}",
-                                            color = kolorTypu,
-                                            fontSize = 12.sp
-                                        )
-                                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = ikonaTypu,
+                            contentDescription = etykietaTypu,
+                            tint = kolorTypu,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = "$etykietaTypu · ${formatDaty.format(Date(grupa.dataOstatniego))}",
+                            color = kolorTypu,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Box(
@@ -330,38 +360,18 @@ internal fun GrupaPolaczenKarta(
                             modifier = Modifier.size(22.dp)
                         )
                     }
-                    // Ikona notatki — widoczna TYLKO, gdy do rozmowy jest notatka.
-                    // Kliknięcie otwiera okno z jej treścią (na kafelku nie pokazujemy
-                    // samej treści, żeby nie było wiadomo, którego połączenia dotyczy).
-                    if (!notatkaLogu.isNullOrBlank()) {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(ZielonyNeon.copy(alpha = 0.14f))
-                                .clickable { pokazTrescNotatki = true },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = IkonyAplikacji.Notatka,
-                                contentDescription = "Pokaż notatkę",
-                                tint = ZielonyNeon,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                    }
                     Box(
                         modifier = Modifier
                             .size(40.dp)
                             .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.08f))
+                            .background(paletaMotywu.naTle.copy(alpha = 0.08f))
                             .clickable { onWiadomosc(grupa.numer) },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = IkonyAplikacji.Wiadomosc,
                             contentDescription = "Napisz wiadomość",
-                            tint = Color.White.copy(alpha = 0.65f),
+                            tint = paletaMotywu.naTle.copy(alpha = 0.65f),
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -374,59 +384,144 @@ internal fun GrupaPolaczenKarta(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(1.dp)
-                            .background(Color.White.copy(alpha = 0.06f))
+                            .background(paletaMotywu.naTle.copy(alpha = 0.06f))
                     )
                     for (wpis in widoczne) {
-                        val (znak, kolor, opis) = when (wpis.type) {
-                            CallLog.Calls.INCOMING_TYPE -> Triple("↙", ZielonyNeon, "Przychodzące")
-                            CallLog.Calls.OUTGOING_TYPE -> Triple("↗", Color(0xFF64B5F6), "Wychodzące")
-                            CallLog.Calls.MISSED_TYPE -> Triple("✕", CzerwonyPolaczenia, "Nieodebrane")
-                            CallLog.Calls.REJECTED_TYPE -> Triple("⊘", CzerwonyPolaczenia, "Odrzucone")
-                            else -> Triple("•", Color.White.copy(alpha = 0.4f), "Połączenie")
+                        val (ikona, kolor, opis) = when (wpis.type) {
+                            CallLog.Calls.INCOMING_TYPE -> Triple(
+                                IkonyAplikacji.PolaczeniePrzychodzace, ZielonyNeon, "Przychodzące"
+                            )
+                            CallLog.Calls.OUTGOING_TYPE -> Triple(
+                                IkonyAplikacji.PolaczenieWychodzace, Color(0xFF64B5F6), "Wychodzące"
+                            )
+                            CallLog.Calls.MISSED_TYPE -> Triple(
+                                IkonyAplikacji.PolaczenieNieodebrane, CzerwonyPolaczenia, "Nieodebrane"
+                            )
+                            CallLog.Calls.REJECTED_TYPE -> Triple(
+                                IkonyAplikacji.PolaczenieOdrzucone, CzerwonyPolaczenia, "Odrzucone"
+                            )
+                            else -> Triple(
+                                IkonyAplikacji.TelefonLogo, paletaMotywu.naTle.copy(alpha = 0.4f), "Połączenie"
+                            )
                         }
 
-                        Row(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Row(
                                 modifier = Modifier
-                                    .size(32.dp)
-                                    .clip(CircleShape)
-                                    .background(kolor.copy(alpha = 0.20f)),
-                                contentAlignment = Alignment.Center
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = znak,
-                                    color = kolor,
-                                    fontSize = 20.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    lineHeight = 20.sp
-                                )
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(CircleShape)
+                                        .background(kolor.copy(alpha = 0.20f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = ikona,
+                                        contentDescription = opis,
+                                        tint = kolor,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = opis,
+                                        color = kolor,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = formatDaty.format(Date(wpis.date)),
+                                        color = paletaMotywu.naTle.copy(alpha = 0.4f),
+                                        fontSize = 11.sp
+                                    )
+                                }
+                                val notatkaWpisu = notatkiWpisow[wpis.id]
+                                if (!notatkaWpisu.isNullOrBlank()) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(CircleShape)
+                                            .background(ZielonyNeon.copy(alpha = 0.14f))
+                                            .clickable {
+                                                dymekNotatki = wpis.id to notatkaWpisu
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = IkonyAplikacji.Notatka,
+                                            contentDescription = "Pokaż notatkę",
+                                            tint = ZielonyNeon,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                    Spacer(Modifier.width(6.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(CircleShape)
+                                            .background(paletaMotywu.naTle.copy(alpha = 0.08f))
+                                            .clickable {
+                                                dymekNotatki = null
+                                                edycjaNotatki = wpis.id to notatkaWpisu
+                                            },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = IkonyAplikacji.Edytuj,
+                                            contentDescription = "Edytuj notatkę",
+                                            tint = paletaMotywu.naTle.copy(alpha = 0.7f),
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+                                    Spacer(Modifier.width(8.dp))
+                                }
+                                val czasTrwania = formatujCzasTrwania(wpis.duration)
+                                if (czasTrwania.isNotEmpty()) {
+                                    Text(
+                                        text = czasTrwania,
+                                        color = paletaMotywu.naTle.copy(alpha = 0.3f),
+                                        fontSize = 12.sp
+                                    )
+                                }
                             }
-                            Spacer(Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = opis,
-                                    color = kolor,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Text(
-                                    text = formatDaty.format(Date(wpis.date)),
-                                    color = Color.White.copy(alpha = 0.4f),
-                                    fontSize = 11.sp
-                                )
-                            }
-                            val czasTrwania = formatujCzasTrwania(wpis.duration)
-                            if (czasTrwania.isNotEmpty()) {
-                                Text(
-                                    text = czasTrwania,
-                                    color = Color.White.copy(alpha = 0.3f),
-                                    fontSize = 12.sp
-                                )
+                            val trescDymka = dymekNotatki?.takeIf { it.first == wpis.id }?.second
+                            AnimatedVisibility(
+                                visible = !trescDymka.isNullOrBlank(),
+                                enter = fadeIn(tween(180)) +
+                                    expandVertically(tween(220, easing = FastOutSlowInEasing)) +
+                                    scaleIn(
+                                        initialScale = 0.92f,
+                                        animationSpec = tween(220, easing = FastOutSlowInEasing),
+                                        transformOrigin = TransformOrigin(0.15f, 0f)
+                                    ),
+                                exit = fadeOut(tween(220)) +
+                                    shrinkVertically(tween(220, easing = FastOutSlowInEasing))
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 60.dp, end = 16.dp, bottom = 10.dp)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(Color(0xFF1A2E24))
+                                        .border(
+                                            1.dp,
+                                            ZielonyNeon.copy(alpha = 0.28f),
+                                            RoundedCornerShape(14.dp)
+                                        )
+                                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                                ) {
+                                    Text(
+                                        text = trescDymka.orEmpty(),
+                                        color = paletaMotywu.naTle.copy(alpha = 0.9f),
+                                        fontSize = 13.5.sp,
+                                        lineHeight = 18.sp
+                                    )
+                                }
                             }
                         }
                     }
@@ -435,43 +530,91 @@ internal fun GrupaPolaczenKarta(
         }
     }
 
-    // Okno z treścią notatki — po kliknięciu ikony notatki na kafelku.
-    if (pokazTrescNotatki && !notatkaLogu.isNullOrBlank()) {
-        androidx.compose.ui.window.Dialog(onDismissRequest = { pokazTrescNotatki = false }) {
+    val edycja = edycjaNotatki
+    if (edycja != null) {
+        var pole by remember(edycja.first) { mutableStateOf(edycja.second) }
+        androidx.compose.ui.window.Dialog(onDismissRequest = { edycjaNotatki = null }) {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(0.9f)
+                    .fillMaxWidth(0.92f)
                     .clip(RoundedCornerShape(24.dp))
                     .background(Color(0xFF14201A))
                     .border(1.dp, ZielonyNeon.copy(alpha = 0.3f), RoundedCornerShape(24.dp))
                     .padding(20.dp)
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            imageVector = IkonyAplikacji.Notatka,
+                            imageVector = IkonyAplikacji.Edytuj,
                             contentDescription = null,
                             tint = ZielonyNeon,
-                            modifier = Modifier.size(22.dp)
+                            modifier = Modifier.size(20.dp)
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            text = "Notatka do rozmowy",
-                            color = Color.White,
+                            text = "Edytuj notatkę",
+                            color = paletaMotywu.naTle,
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
                     Spacer(Modifier.height(14.dp))
-                    Text(
-                        text = notatkaLogu,
-                        color = Color.White.copy(alpha = 0.85f),
-                        fontSize = 15.sp,
-                        lineHeight = 22.sp
+                    OutlinedTextField(
+                        value = pole,
+                        onValueChange = { pole = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                        maxLines = 5,
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            color = paletaMotywu.naTle,
+                            fontSize = 15.sp
+                        ),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = ZielonyNeon.copy(alpha = 0.6f),
+                            unfocusedBorderColor = paletaMotywu.naTle.copy(alpha = 0.15f),
+                            focusedContainerColor = paletaMotywu.naTle.copy(alpha = 0.04f),
+                            unfocusedContainerColor = paletaMotywu.naTle.copy(alpha = 0.04f),
+                            cursorColor = ZielonyNeon
+                        )
                     )
-                    Spacer(Modifier.height(16.dp))
-                    TextButton(onClick = { pokazTrescNotatki = false }) {
-                        Text("Zamknij", color = ZielonyNeon, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(14.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(
+                            onClick = {
+                                NotatkiRozmow.zapiszNotatke(context, edycja.first, "")
+                                notatkiWpisow = notatkiWpisow - edycja.first
+                                edycjaNotatki = null
+                                dymekNotatki = null
+                            }
+                        ) {
+                            Text("Usuń", color = CzerwonyPolaczenia)
+                        }
+                        Row {
+                            TextButton(onClick = { edycjaNotatki = null }) {
+                                Text("Anuluj", color = paletaMotywu.naTle.copy(alpha = 0.55f))
+                            }
+                            TextButton(
+                                onClick = {
+                                    val nowa = pole.trim()
+                                    NotatkiRozmow.zapiszNotatke(context, edycja.first, nowa)
+                                    notatkiWpisow = if (nowa.isBlank()) {
+                                        notatkiWpisow - edycja.first
+                                    } else {
+                                        notatkiWpisow + (edycja.first to nowa)
+                                    }
+                                    edycjaNotatki = null
+                                    if (nowa.isNotBlank()) {
+                                        dymekNotatki = edycja.first to nowa
+                                    }
+                                }
+                            ) {
+                                Text("Zapisz", color = ZielonyNeon, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
                     }
                 }
             }

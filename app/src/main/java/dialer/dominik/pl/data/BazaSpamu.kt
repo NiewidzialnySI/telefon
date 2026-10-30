@@ -33,6 +33,12 @@ object BazaSpamu {
         zapisz(context, numery)
     }
 
+    fun lista(context: Context): Set<String> = pobierzNumery(context)
+
+    fun wyczysc(context: Context) {
+        zapisz(context, emptySet())
+    }
+
     private fun pobierzNumery(context: Context): Set<String> {
         val zapisane = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getStringSet(KLUCZ_NUMERY, emptySet()) ?: emptySet()

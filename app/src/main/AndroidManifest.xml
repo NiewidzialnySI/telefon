@@ -11,6 +11,8 @@
          bez tego provider kontaktów rzuca SecurityException. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Autoaktualizacja: instalacja pobranego APK (wymaga zgody „nieznane źródła” dla tej apki). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- WRITE_CONTACTS: zapis nowego kontaktu w ContactsContract
@@ -25,6 +27,13 @@
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Naprawa Shizuku z powiadomienia: Wi‑Fi + Wireless debugging. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.READ_SMS" />
@@ -39,6 +48,7 @@
 <!-- ===== Pełny dialer: InCallService ===== -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
     <uses-permission android:name="android.permission.MODIFY_PHONE_STATE" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
@@ -51,10 +61,11 @@
          (getRemoteName) rzuca SecurityException i crashuje ekran rozmowy. -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
-    <!-- Widoczność zewnętrznych aplikacji (Messenger, Signal) na Androidzie 11+ -->
+    <!-- Widoczność zewnętrznych aplikacji (Messenger, Signal, Shizuku) na Androidzie 11+ -->
     <queries>
         <package android:name="com.facebook.orca" />
         <package android:name="org.thoughtcrime.securesms" />
+        <package android:name="moe.shizuku.privileged.api" />
     </queries>
 
     <application
@@ -76,6 +87,21 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- Shizuku — binder do UserService nagrywania rozmów (UID shell). -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+        <!-- Własne ADB: shell app_process publikuje INagrywanieShell. -->
+        <provider
+            android:name=".nagranie.adb.ShellBinderDostawca"
+            android:authorities="${applicationId}.shell_binder"
+            android:exported="true"
+            android:enabled="true" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -84,11 +110,7 @@
             android:screenOrientation="portrait"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
             android:windowSoftInputMode="adjustResize">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
+            <!-- LAUNCHER przeniesiony do activity-alias (dynamiczna ikona wg palety). -->
             <!-- WYMAGANE przez ROLE_DIALER: tarcza bez numeru -->
             <intent-filter>
                 <action android:name="android.intent.action.DIAL" />
@@ -118,6 +140,102 @@
                 <data android:scheme="tel" />
             </intent-filter>
         </activity>
+
+        <!--
+          Dynamiczne ikony launchera (activity-alias) — jak icora / XLauncherIcons.
+          Tylko jeden alias enabled; IkonaUruchamiacza przełącza przy wyborze palety.
+        -->
+        <activity-alias
+            android:name=".launcher.Ikona_neon_zielony"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_neon_zielony"
+            android:roundIcon="@mipmap/ic_launcher_neon_zielony_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".launcher.Ikona_rozowa"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_rozowa"
+            android:roundIcon="@mipmap/ic_launcher_rozowa_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".launcher.Ikona_fioletowa"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_fioletowa"
+            android:roundIcon="@mipmap/ic_launcher_fioletowa_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".launcher.Ikona_cyjan"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_cyjan"
+            android:roundIcon="@mipmap/ic_launcher_cyjan_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".launcher.Ikona_niebieska"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_niebieska"
+            android:roundIcon="@mipmap/ic_launcher_niebieska_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".launcher.Ikona_pomaranczowa"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_pomaranczowa"
+            android:roundIcon="@mipmap/ic_launcher_pomaranczowa_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".launcher.Ikona_fallout"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_fallout"
+            android:roundIcon="@mipmap/ic_launcher_fallout_round"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <!-- CZAT W DYNKU (bubble): osobna aktywność renderująca tylko okno czatu,
              osadzana przez system w nakładce dymka po kliknięciu w bubble SMS.
@@ -166,6 +284,23 @@
         <receiver
             android:name=".call.AkcjaTrwajacejRozmowyReceiver"
             android:exported="false" />
+
+        <!-- Klik powiadomienia: Wi‑Fi + ADB Wi‑Fi + Shizuku. -->
+        <receiver
+            android:name=".nagranie.ShizukuNaprawaReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="dialer.dominik.pl.NAPRAW_SHIZUKU" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".nagranie.ShizukuBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <!-- ===== Uwaga: Własny dymek rozmowy (nakładka SYSTEM_ALERT_WINDOW) =====
              Pokazuje małe zielone kółko, gdy użytkownik zminimalizuje rozmowę.
@@ -283,6 +418,47 @@
         <receiver
             android:name=".sms.WyslijPlanowanySmsReceiver"
             android:exported="false" />
+
+        <!-- Backup Dysku Google — działa w tle po wyjściu z aplikacji. -->
+        <service
+            android:name=".backup.BackupForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- Parowanie Wireless debugging (mDNS + kod w powiadomieniu), jak Shizuku. -->
+        <service
+            android:name=".nagranie.adb.AdbParowanieService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- Odczyt 6‑cyfrowego kodu z okna Wireless debugging (opcjonalnie). -->
+        <service
+            android:name=".nagranie.adb.AdbParowanieDostepnosc"
+            android:exported="true"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:label="@string/adb_parowanie_dostepnosc_label">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/adb_parowanie_dostepnosc" />
+        </service>
+
+        <!-- Transkrypcja Whisper w tle + powiadomienie po zakończeniu. -->
+        <service
+            android:name=".nagranie.TranskrypcjaForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- Status PackageInstaller po autoaktualizacji APK. -->
+        <receiver
+            android:name=".update.AktualizacjaInstallReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="dialer.dominik.pl.update.INSTALL_STATUS" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

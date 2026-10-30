@@ -56,11 +56,11 @@ internal fun KlawiaturaDtmf(onCyfra: (Char) -> Unit) {
                         modifier = Modifier
                             .size(52.dp)
                             .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.08f))
+                            .background(dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle.copy(alpha = 0.08f))
                             .clickable { onCyfra(znak) },
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(text = znak.toString(), color = Color.White, fontSize = 22.sp)
+                        Text(text = znak.toString(), color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle, fontSize = 22.sp)
                     }
                 }
             }

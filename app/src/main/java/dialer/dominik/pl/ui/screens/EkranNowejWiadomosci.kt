@@ -37,7 +37,9 @@ import dialer.dominik.pl.sms.zapamietajKanal
 import dialer.dominik.pl.ui.components.IkonyAplikacji
 import dialer.dominik.pl.ui.theme.CzerwonyPolaczenia
 import dialer.dominik.pl.ui.theme.ZielonyMorski
+import dialer.dominik.pl.ui.theme.NaPrzycisku
 import dialer.dominik.pl.ui.theme.ZielonyNeon
+import dialer.dominik.pl.ui.theme.gradientKafelka
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -54,6 +56,7 @@ internal fun EkranNowejWiadomosci(
     numerPoczatkowy: String,
     onWyslano: () -> Unit
 ) {
+    val paletaNowa = dialer.dominik.pl.ui.theme.LocalMotyw.current
     val wybrani = remember { mutableStateListOf<String>() }
     val wyslane = remember { mutableStateListOf<String>() }
     var szukane by remember { mutableStateOf("") }
@@ -139,9 +142,9 @@ internal fun EkranNowejWiadomosci(
     ) {
         // Nagłówek (przezroczyste tło — przepuszcza animację tła).
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("NOWA WIADOMOŚĆ", color = Color.White.copy(alpha = 0.42f), fontSize = 11.sp, fontWeight = FontWeight.Medium, letterSpacing = 2.sp, modifier = Modifier.weight(1f))
+            Text("NOWA WIADOMOŚĆ", color = paletaNowa.naTle.copy(alpha = 0.42f), fontSize = 11.sp, fontWeight = FontWeight.Medium, letterSpacing = 2.sp, modifier = Modifier.weight(1f))
             IconButton(onClick = { onWyslano() }, modifier = Modifier.size(34.dp)) {
-                Icon(IkonyAplikacji.Zamknij, contentDescription = "Zamknij", tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(20.dp))
+                Icon(IkonyAplikacji.Zamknij, contentDescription = "Zamknij", tint = paletaNowa.naTle.copy(alpha = 0.7f), modifier = Modifier.size(20.dp))
             }
         }
 
@@ -151,7 +154,7 @@ internal fun EkranNowejWiadomosci(
                 items(wybrani) { n ->
                     Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFF14221B), border = BorderStroke(1.dp, ZielonyNeon.copy(alpha = 0.3f))) {
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 12.dp, end = 6.dp, top = 5.dp, bottom = 5.dp)) {
-                            Text(resolveContactName(context, n) ?: n, color = Color.White, fontSize = 13.sp, maxLines = 1)
+                            Text(resolveContactName(context, n) ?: n, color = paletaNowa.naTle, fontSize = 13.sp, maxLines = 1)
                             Spacer(Modifier.width(6.dp))
                             Text("×", color = CzerwonyPolaczenia, fontSize = 16.sp, fontWeight = FontWeight.Bold,
                                 modifier = Modifier.clip(CircleShape).clickable { wybrani.remove(n) }.padding(4.dp))
@@ -163,12 +166,13 @@ internal fun EkranNowejWiadomosci(
 
         // Pole wyszukiwania kontaktów — dodaje przez PRZYCISK "+" (nie przez klik w pole).
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f).clip(RoundedCornerShape(16.dp)).background(Brush.verticalGradient(listOf(Color(0xFF131C18), Color(0xFF0B120F)))).then(Modifier.border(1.dp, ZielonyNeon.copy(alpha = 0.14f), RoundedCornerShape(16.dp)))) {
+            val paletaPola = dialer.dominik.pl.ui.theme.LocalMotyw.current
+            Box(Modifier.weight(1f).clip(RoundedCornerShape(16.dp)).background(paletaPola.gradientKafelka()).then(Modifier.border(1.dp, paletaPola.kafelekRamka, RoundedCornerShape(16.dp)))) {
                 BasicTextField(szukane, { szukane = it },
-                    textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
+                    textStyle = TextStyle(color = paletaPola.naTle, fontSize = 15.sp),
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 13.dp),
                     cursorBrush = SolidColor(ZielonyNeon),
-                    decorationBox = { if (szukane.isEmpty()) Text("Szukaj: numer, imię, nazwisko, firma…", color = Color.White.copy(alpha = 0.35f), fontSize = 14.sp); it() })
+                    decorationBox = { if (szukane.isEmpty()) Text("Szukaj: numer, imię, nazwisko, firma…", color = paletaPola.tekstDrugorzedny.copy(alpha = 0.7f), fontSize = 14.sp); it() })
             }
             Spacer(Modifier.width(8.dp))
             // Okrągły przycisk "+" — dodaje wpisany numer (identyczny styl jak przycisk wysyłki czatu).
@@ -177,7 +181,7 @@ internal fun EkranNowejWiadomosci(
                     .then(if (szukane.isNotBlank()) Modifier.background(Brush.horizontalGradient(listOf(ZielonyMorski, ZielonyNeon))) else Modifier.background(ZielonyNeon.copy(alpha = 0.16f)))
                     .clickable { dodaj(szukane) },
                 contentAlignment = Alignment.Center
-            ) { Text("+", color = if (szukane.isNotBlank()) Color(0xFF06231A) else ZielonyNeon, fontSize = 26.sp, fontWeight = FontWeight.Bold) }
+            ) { Text("+", color = if (szukane.isNotBlank()) NaPrzycisku else ZielonyNeon, fontSize = 26.sp, fontWeight = FontWeight.Bold) }
         }
 
         // Lista wysłanych wiadomości (góra) + kontakty (sugestie) — JEDNA lista, pasek u dołu jak w czacie.
@@ -189,39 +193,40 @@ internal fun EkranNowejWiadomosci(
         } else if (sugestie.isEmpty() && !pokazWyslane) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Text(if (maKontakty) "Brak wyników — wpisz numer, np. +48…" else "Brak dostępu do kontaktów",
-                    color = Color.White.copy(alpha = 0.4f), fontSize = 14.sp)
+                    color = paletaNowa.naTle.copy(alpha = 0.4f), fontSize = 14.sp)
             }
         } else {
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (pokazWyslane) {
                     item(key = "naglowek-wyslane") {
-                        Text("WYSŁANE", color = Color.White.copy(alpha = 0.35f), fontSize = 11.sp, fontWeight = FontWeight.Medium, letterSpacing = 2.sp, modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp))
+                        Text("WYSŁANE", color = paletaNowa.naTle.copy(alpha = 0.35f), fontSize = 11.sp, fontWeight = FontWeight.Medium, letterSpacing = 2.sp, modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp))
                     }
                     items(wyslane.reversed(), key = { "w"+it }) { w ->
                         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
                             Box(Modifier.clip(RoundedCornerShape(16.dp)).background(Brush.horizontalGradient(listOf(ZielonyMorski, ZielonyNeon))).padding(horizontal = 14.dp, vertical = 10.dp)) {
-                                Text(w, color = Color(0xFF06231A), fontSize = 14.sp)
+                                Text(w, color = NaPrzycisku, fontSize = 14.sp)
                             }
                         }
                     }
                 }
                 if (sugestie.isNotEmpty()) {
                     item(key = "naglowek-kontakty") {
-                        Text("DOSTĘPNE KONTAKTY", color = Color.White.copy(alpha = 0.35f), fontSize = 11.sp, fontWeight = FontWeight.Medium, letterSpacing = 2.sp, modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp))
+                        Text("DOSTĘPNE KONTAKTY", color = paletaNowa.naTle.copy(alpha = 0.35f), fontSize = 11.sp, fontWeight = FontWeight.Medium, letterSpacing = 2.sp, modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp))
                     }
                     items(sugestie, key = { it.name + it.number }) { s ->
                         val nrDoDodania = s.numery.firstOrNull() ?: s.number ?: ""
                         val dodany = nrDoDodania in wybrani
+                        val paletaSugestii = dialer.dominik.pl.ui.theme.LocalMotyw.current
                         Row(
                             Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
-                                .background(Brush.verticalGradient(listOf(Color(0xFF131C18), Color(0xFF0B120F))))
-                                .then(if (dodany) Modifier.border(1.dp, ZielonyNeon.copy(alpha = 0.5f), RoundedCornerShape(16.dp)) else Modifier.border(1.dp, ZielonyNeon.copy(alpha = 0.1f), RoundedCornerShape(16.dp)))
+                                .background(paletaSugestii.gradientKafelka())
+                                .then(if (dodany) Modifier.border(1.dp, ZielonyNeon.copy(alpha = 0.5f), RoundedCornerShape(16.dp)) else Modifier.border(1.dp, paletaSugestii.kafelekRamka, RoundedCornerShape(16.dp)))
                                 .padding(horizontal = 14.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(Modifier.weight(1f)) {
-                                Text(s.name, color = Color.White, fontWeight = FontWeight.Medium, maxLines = 1)
-                                if (s.numery.isNotEmpty()) Text(s.numery.joinToString("  •  "), fontSize = 11.sp, color = Color.White.copy(alpha = 0.5f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(s.name, color = paletaSugestii.naTle, fontWeight = FontWeight.Medium, maxLines = 1)
+                                if (s.numery.isNotEmpty()) Text(s.numery.joinToString("  •  "), fontSize = 11.sp, color = paletaSugestii.tekstDrugorzedny, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             if (dodany) {
                                 Text("✓", color = ZielonyNeon, fontSize = 16.sp, fontWeight = FontWeight.Bold)
@@ -231,7 +236,7 @@ internal fun EkranNowejWiadomosci(
                                         .background(Brush.horizontalGradient(listOf(ZielonyMorski, ZielonyNeon)))
                                         .clickable { dodaj(nrDoDodania) },
                                     contentAlignment = Alignment.Center
-                                ) { Text("+", color = Color(0xFF06231A), fontSize = 22.sp, fontWeight = FontWeight.Bold) }
+                                ) { Text("+", color = NaPrzycisku, fontSize = 22.sp, fontWeight = FontWeight.Bold) }
                             }
                         }
                     }
@@ -242,8 +247,9 @@ internal fun EkranNowejWiadomosci(
 // Pasek wpisywania (jak czat) — z przyciskiem załącznika (MMS) przy lewym rogu.
         Box(
             Modifier.fillMaxWidth().padding(4.dp, 6.dp, 4.dp, 12.dp).height(54.dp)
-                .clip(RoundedCornerShape(16.dp)).background(Color(0xFF131C18))
-                .border(1.dp, ZielonyNeon.copy(alpha = 0.14f), RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(16.dp))
+                .background(dialer.dominik.pl.ui.theme.LocalMotyw.current.kafelek)
+                .border(1.dp, dialer.dominik.pl.ui.theme.LocalMotyw.current.kafelekRamka, RoundedCornerShape(16.dp))
         ) {
             // Przycisk załącznika (spinacz) — lewy róg, pełna wysokość + menu opcji nad nim.
             Box(
@@ -256,7 +262,7 @@ internal fun EkranNowejWiadomosci(
                     .clickable { pokazWyborZalacznika = true },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(IkonyAplikacji.Zlacznik, contentDescription = "Dodaj za\u0142\u0105cznik", tint = if (zalacznikUri != null) Color(0xFF06231A) else ZielonyNeon, modifier = Modifier.size(28.dp))
+                Icon(IkonyAplikacji.Zlacznik, contentDescription = "Dodaj za\u0142\u0105cznik", tint = if (zalacznikUri != null) NaPrzycisku else ZielonyNeon, modifier = Modifier.size(28.dp))
                 if (pokazWyborZalacznika) {
                     Popup(
                         alignment = Alignment.TopStart,
@@ -281,10 +287,10 @@ internal fun EkranNowejWiadomosci(
                 }
             }
             // Pole wpisywania — odsunięte od przycisków.
-            BasicTextField(tresc, { tresc = it }, textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
+            BasicTextField(tresc, { tresc = it }, textStyle = TextStyle(color = paletaNowa.naTle, fontSize = 15.sp),
                 cursorBrush = SolidColor(ZielonyNeon), maxLines = 6,
                 modifier = Modifier.align(Alignment.CenterStart).fillMaxWidth().padding(start = 64.dp, end = 64.dp).padding(vertical = 6.dp),
-                decorationBox = { if (tresc.isEmpty()) Text("Napisz wiadomo\u015b\u0107\u2026", color = Color.White.copy(alpha = 0.32f), fontSize = 15.sp); it() })
+                decorationBox = { if (tresc.isEmpty()) Text("Napisz wiadomo\u015b\u0107\u2026", color = paletaNowa.naTle.copy(alpha = 0.32f), fontSize = 15.sp); it() })
             // Przycisk wysyłki — prawy róg, pełna wysokość.
             Box(
                 modifier = Modifier
@@ -306,7 +312,7 @@ internal fun EkranNowejWiadomosci(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(IkonyAplikacji.Strzalka, contentDescription = "Wy\u015blij", tint = if (tresc.isNotBlank() || zalacznikUri != null) Color(0xFF06231A) else ZielonyNeon, modifier = Modifier.size(26.dp))
+                Icon(IkonyAplikacji.Strzalka, contentDescription = "Wy\u015blij", tint = if (tresc.isNotBlank() || zalacznikUri != null) NaPrzycisku else ZielonyNeon, modifier = Modifier.size(26.dp))
             }
         }
     }
@@ -321,6 +327,11 @@ private fun OpcjaZalacznikaN(tekst: String, ikona: androidx.compose.ui.graphics.
     ) {
         Icon(ikona, contentDescription = null, tint = ZielonyNeon, modifier = Modifier.size(22.dp))
         Spacer(Modifier.width(12.dp))
-        Text(tekst, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+        Text(
+            tekst,
+            color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium
+        )
     }
 }
