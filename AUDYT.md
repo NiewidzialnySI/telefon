@@ -9,13 +9,16 @@ Kod źródłowy był już na GitHub (`657a46d`). Lokalnie dopisano **backup v2**
 - `ed.apply()` przy przywracaniu (niesynchroniczne)
 - Brak plików: klucz ADB, nagrania, transkrypcje
 
-### Po poprawce (v2, lokalnie)
+### Po poprawce (v2 + ochrona pustki) — w **v1.3** na GitHub
 - Prefs jak wcześniej
 - Klucz ADB (`filesDir/adb/adbkey` + `.crt`) → base64
 - Nagrania WAV/M4A do ~40 MB łącznie (meta zawsze)
 - Transkrypcje tekstowe
 - `zawiera` / `pomija` w JSON
 - Przywracanie: `commit()` + zapis plików
+- **Nie uploaduje pustego backupu** na Drive
+- **Restore** wybiera najlepszą niepustą z ostatnich 8 kopii; odmawia gdy lokalne dane są bogatsze
+- Puste sekcje prefs nie czyszczą lokalnych danych
 
 ### Nadal celowo poza backupem
 | Dane | Powód |
