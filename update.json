@@ -1,6 +1,6 @@
 {
-  "versionCode": 6,
-  "versionName": "1.4",
-  "apkUrl": "https://github.com/NiewidzialnySI/telefon/releases/download/v1.4/telefon-v1.4.apk",
-  "changelog": "Poprawki po audycie: race soft-switch nagrywania, waitery ADB, multipart SMS, Shizuku po odmowie, rozłączanie z powiadomienia, bezpieczne usunięte palety motywów."
+  "versionCode": 7,
+  "versionName": "1.5",
+  "apkUrl": "https://github.com/NiewidzialnySI/telefon/releases/download/v1.5/telefon-v1.5.apk",
+  "changelog": "Motyw Wiedźmin (srebro, krew, mgła, pergamin, neonowe zakładki). Easter eggi 2137 (JP2) i 420 (Palecze). Poprawki płynności list (cache GIF)."
 }
