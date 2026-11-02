@@ -187,7 +187,8 @@ fun KartaReputacjiNumeru(
 
         if (rozwiniety && !wynik.laduje) {
             val opinie = wynik.opinie.filter {
-                !it.tresc.contains("Numer nie figuruje", ignoreCase = true)
+                it.tresc.czyMaTrescOpinii() &&
+                    !it.tresc.contains("Numer nie figuruje", ignoreCase = true)
             }.take(4)
             if (opinie.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))

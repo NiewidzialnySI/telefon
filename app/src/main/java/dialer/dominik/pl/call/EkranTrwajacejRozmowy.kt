@@ -422,7 +422,7 @@ internal fun EkranTrwajacejRozmowy(
                                 wynikAnalizy = wynikAnalizy,
                                 onOdbierz = {
                                     ZarzadcaDzwonka.zatrzymaj()
-                                    stan.polaczenie?.answer(0)
+                                    odbierzPolaczenie(context, stan.polaczenie)
                                 },
                                 onOdrzuc = {
                                     ZarzadcaDzwonka.zatrzymaj()

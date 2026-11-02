@@ -1,6 +1,7 @@
 package dialer.dominik.pl.nagranie.adb
 
 import android.annotation.SuppressLint
+import android.os.Binder
 import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
@@ -21,6 +22,9 @@ import dialer.dominik.pl.nagranie.UkryteApi
 @Keep
 object ShellAdbMain {
     private const val TAG = "ShellAdbMain"
+    /** Ten sam token do get/remove ContentProviderExternal — bez niego ColorOS spamuje logi. */
+    private val providerToken = Binder()
+    private var publikacje = 0
 
     @JvmStatic
     @Keep
@@ -48,12 +52,13 @@ object ShellAdbMain {
             opublikuj(token, pkg, svc)
             val looper = Looper.getMainLooper()
             val h = Handler(looper)
-            // Republish co 2 s — app po restarcie łapie binder BEZ włączania adb_wifi.
+            // Szybki republish na starcie (app łapie binder), potem rzadko — bez spamu AM.
             val republish = object : Runnable {
                 override fun run() {
                     runCatching { opublikuj(token, pkg, svc) }
                         .onFailure { err("re-publish: ${it.message}") }
-                    h.postDelayed(this, 2_000L)
+                    val delayMs = if (publikacje < 15) 2_000L else 30_000L
+                    h.postDelayed(this, delayMs)
                 }
             }
             h.postDelayed(republish, 800L)
@@ -74,6 +79,7 @@ object ShellAdbMain {
 
     @SuppressLint("PrivateApi", "DiscouragedPrivateApi")
     private fun opublikuj(token: String, pkg: String, svc: ShellNagrywanieService) {
+        publikacje++
         val auth = ShellBinderDostawca.authority(pkg)
         val extras = Bundle().apply {
             putString(ShellBinderDostawca.EXTRA_TOKEN, token)
@@ -88,7 +94,9 @@ object ShellAdbMain {
 
         try {
             val reply = callProvider(provider, auth, extras)
-            err("publish reply=$reply")
+            if (publikacje <= 3 || publikacje % 10 == 0) {
+                err("publish#$publikacje reply=$reply")
+            }
             if (reply == null) {
                 err("reply null — token / provider odrzucił")
             }
@@ -120,13 +128,13 @@ object ShellAdbMain {
                 val n = m.parameterTypes.size
                 val r = when (n) {
                     // (String auth, int userId, IBinder token, String tag) — API 29+
-                    4 -> m.invoke(am, auth, userId, null, auth)
+                    4 -> m.invoke(am, auth, userId, providerToken, auth)
                     // (String auth, int userId, IBinder token)
-                    3 -> m.invoke(am, auth, userId, null)
+                    3 -> m.invoke(am, auth, userId, providerToken)
                     2 -> m.invoke(am, auth, userId)
                     else -> continue
                 }
-                err("getCPE arity=$n → ${r?.javaClass?.simpleName}")
+                if (publikacje <= 2) err("getCPE arity=$n → ${r?.javaClass?.simpleName}")
                 return r
             } catch (t: Throwable) {
                 last = t
@@ -249,15 +257,28 @@ object ShellAdbMain {
     }.onFailure { err("AttributionSource: ${it.message}") }.getOrNull()
 
     private fun removeContentProviderExternal(am: Any, auth: String) {
-        val methods = am.javaClass.methods.filter { it.name.startsWith("removeContentProviderExternal") }
+        // Tylko JEDNA pasująca sygnatura — wcześniej wołaliśmy wszystkie i druga
+        // kończyła się „no external references” co 2 s w logcat.
+        val methods = am.javaClass.methods
+            .filter { it.name.startsWith("removeContentProviderExternal") }
+            .sortedByDescending { it.parameterTypes.size }
         for (m in methods) {
-            runCatching {
+            val ok = runCatching {
                 when (m.parameterTypes.size) {
-                    2 -> m.invoke(am, auth, null)
-                    3 -> m.invoke(am, auth, null, 0)
-                    else -> return@runCatching
+                    // (String auth, IBinder token, int userId)
+                    3 -> {
+                        m.invoke(am, auth, providerToken, 0)
+                        true
+                    }
+                    // (String auth, IBinder token)
+                    2 -> {
+                        m.invoke(am, auth, providerToken)
+                        true
+                    }
+                    else -> false
                 }
-            }
+            }.getOrDefault(false)
+            if (ok) return
         }
     }
 }

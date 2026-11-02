@@ -1,6 +1,6 @@
 {
-  "versionCode": 8,
-  "versionName": "1.6",
-  "apkUrl": "https://github.com/NiewidzialnySI/telefon/releases/download/v1.6/telefon-v1.6.apk",
-  "changelog": "Nagrywanie tylko przez własne ADB (bez Shizuku). Stabilizacja Wireless/USB po starcie daemona — bez fałszywego sukcesu na samym USB. pm grant z UID shell."
+  "versionCode": 9,
+  "versionName": "1.7",
+  "apkUrl": "https://github.com/NiewidzialnySI/telefon/releases/download/v1.7/telefon-v1.7.apk",
+  "changelog": "Włączanie Wi‑Fi na ColorOS (gest a11y). Portal Firmy Auto. Stabilniejszy start ADB bez Wi‑Fi. Cicha instalacja update przez daemon ADB. Usunięte dopiski statusu pod ikonami."
 }

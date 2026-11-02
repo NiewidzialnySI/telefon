@@ -2,9 +2,12 @@ package dialer.dominik.pl.nagranie.adb
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.accessibilityservice.GestureDescription
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.Path
+import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -54,8 +57,12 @@ class AdbParowanieDostepnosc : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (!AdbParowanieService.czyAktywne()) return
         if (event == null) return
+        if (trybWlacWifi.get()) {
+            obsluzWlacWifi()
+            return
+        }
+        if (!AdbParowanieService.czyAktywne()) return
 
         if (resetNawigacji.compareAndSet(true, false)) {
             dialogZKodem = false
@@ -262,8 +269,202 @@ class AdbParowanieDostepnosc : AccessibilityService() {
         }
     }
 
+    /** ColorOS: ACTION_CLICK na Switch często false — gest w środek + klik rodziców. */
+    private fun obsluzWlacWifi() {
+        if (dialer.dominik.pl.nagranie.AdbNaprawa.czyWifi(this) ||
+            dialer.dominik.pl.nagranie.AdbNaprawa.czyWifiManagerOn(this)
+        ) {
+            zakonczWlacWifi(true)
+            return
+        }
+        val teraz = System.currentTimeMillis()
+        if (teraz - ostatniKlikWifi < 900) return
+
+        val roots = mutableListOf<AccessibilityNodeInfo>()
+        runCatching {
+            windows?.forEach { w ->
+                w.root?.let { roots.add(it) }
+            }
+        }
+        rootInActiveWindow?.let { r ->
+            if (roots.none { it == r }) roots.add(r)
+        }
+        if (roots.isEmpty()) return
+
+        data class Kand(val n: AccessibilityNodeInfo, val top: Int, val wifi: Boolean, val cls: String)
+        val kandydaci = mutableListOf<Kand>()
+        try {
+            for (root in roots) {
+                val wezly = mutableListOf<AccessibilityNodeInfo>()
+                zbierzWezly(root, wezly)
+                for (n in wezly) {
+                    if (!n.isVisibleToUser || !n.isEnabled) continue
+                    val cls = n.className?.toString().orEmpty()
+                    val checkable = n.isCheckable ||
+                        cls.contains("Switch", ignoreCase = true) ||
+                        cls.contains("Toggle", ignoreCase = true) ||
+                        (n.viewIdResourceName?.contains("switch", ignoreCase = true) == true)
+                    if (!checkable) continue
+                    if (n.isChecked) continue
+                    val r = Rect()
+                    n.getBoundsInScreen(r)
+                    if (r.width() < 20 || r.height() < 20) continue
+                    // Górna połowa ekranu — główny toggle Wi‑Fi.
+                    if (r.top > resources.displayMetrics.heightPixels * 0.55f) continue
+                    kandydaci += Kand(n, r.top, rzadDotyczyWifi(n), cls)
+                }
+            }
+            val posortowane = kandydaci.sortedWith(
+                compareByDescending<Kand> { it.wifi }.thenBy { it.top },
+            )
+            val cel = posortowane.firstOrNull()?.n
+            if (cel == null) {
+                Log.w(TAG, "wlacWifi a11y: brak switcha (okien=${roots.size})")
+                // Dopiero gdy ustawienia już chwilę wiszą — QS z kafelkiem Wi‑Fi.
+                if (wifiSesjaStart > 0L && teraz - wifiSesjaStart > 3_500L &&
+                    teraz - ostatniKlikWifi > 2_500L
+                ) {
+                    ostatniKlikWifi = teraz
+                    sprobujKlikQsWifi()
+                }
+                return
+            }
+            ostatniKlikWifi = teraz
+            val ok = kliknijWezelWifi(cel)
+            Log.i(
+                TAG,
+                "wlacWifi a11y klik → $ok cls=${cel.className} " +
+                    "clickable=${cel.isClickable} checkable=${cel.isCheckable} " +
+                    "id=${cel.viewIdResourceName} wifiRow=${rzadDotyczyWifi(cel)}",
+            )
+            handler.postDelayed({
+                if (!trybWlacWifi.get()) return@postDelayed
+                if (dialer.dominik.pl.nagranie.AdbNaprawa.czyWifi(this) ||
+                    dialer.dominik.pl.nagranie.AdbNaprawa.czyWifiManagerOn(this)
+                ) {
+                    zakonczWlacWifi(true)
+                }
+            }, 1_100)
+        } finally {
+            roots.forEach { runCatching { it.recycle() } }
+        }
+    }
+
+    private fun kliknijWezelWifi(n: AccessibilityNodeInfo): Boolean {
+        // ColorOS: ACTION_CLICK na Switch = false — gest najpierw (wymaga canPerformGestures).
+        if (kliknijGestem(n)) return true
+        if (n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+        var p: AccessibilityNodeInfo? = n.parent
+        repeat(8) {
+            val cur = p ?: return@repeat
+            if (cur.isClickable && cur.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                return true
+            }
+            // Duży wiersz Preference: gest w prawą stronę (switch), nie w środek tytułu.
+            if (kliknijGestem(cur, prawo = true)) return true
+            p = cur.parent
+        }
+        return false
+    }
+
+    private fun kliknijGestem(n: AccessibilityNodeInfo, prawo: Boolean = false): Boolean {
+        val r = Rect()
+        n.getBoundsInScreen(r)
+        if (r.isEmpty || r.width() < 8 || r.height() < 8) return false
+        val x = if (prawo) {
+            (r.right - (r.width() * 0.12f).coerceAtLeast(24f)).coerceAtLeast(r.left + 4f)
+        } else {
+            r.exactCenterX()
+        }
+        val y = r.exactCenterY()
+        val path = Path().apply { moveTo(x, y) }
+        val stroke = GestureDescription.StrokeDescription(path, 0, 80)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        val ok = dispatchGesture(gesture, null, null)
+        Log.i(TAG, "wlacWifi gesture @${x.toInt()},${y.toInt()} prawo=$prawo → $ok")
+        return ok
+    }
+
+    private fun sprobujKlikQsWifi() {
+        performGlobalAction(GLOBAL_ACTION_QUICK_SETTINGS)
+        handler.postDelayed({
+            if (!trybWlacWifi.get()) return@postDelayed
+            val root = rootInActiveWindow ?: return@postDelayed
+            try {
+                val wezly = mutableListOf<AccessibilityNodeInfo>()
+                zbierzWezly(root, wezly)
+                val frazy = listOf("wi-fi", "wifi", "wlan", "internet", "sieć", "siec")
+                val cel = wezly.firstOrNull { n ->
+                    if (!n.isVisibleToUser) return@firstOrNull false
+                    val t = "${n.text} ${n.contentDescription} ${n.viewIdResourceName}".lowercase()
+                    frazy.any { t.contains(it) } && (n.isClickable || n.isCheckable)
+                }
+                if (cel != null) {
+                    val ok = kliknijWezelWifi(cel)
+                    Log.i(TAG, "wlacWifi QS klik → $ok text=${cel.text}")
+                }
+            } finally {
+                runCatching { root.recycle() }
+            }
+        }, 700)
+    }
+
+    private fun rzadDotyczyWifi(n: AccessibilityNodeInfo): Boolean {
+        var p: AccessibilityNodeInfo? = n
+        repeat(6) {
+            val t = buildString {
+                append(p?.text ?: "")
+                append(' ')
+                append(p?.contentDescription ?: "")
+                append(' ')
+                append(p?.viewIdResourceName ?: "")
+            }.lowercase()
+            if (t.contains("wi-fi") || t.contains("wifi") || t.contains("wlan") ||
+                t.contains("wi‑fi") || t.contains("wireless")
+            ) {
+                return true
+            }
+            p = p?.parent ?: return false
+        }
+        return false
+    }
+
+    private fun zakonczWlacWifi(ok: Boolean) {
+        if (!trybWlacWifi.compareAndSet(true, false)) return
+        Log.i(TAG, "wlacWifi a11y koniec ok=$ok")
+        wifiSesjaStart = 0L
+        handler.removeCallbacks(wifiTimeoutRunnable)
+        // Wróć z ustawień Wi‑Fi do dialera.
+        performGlobalAction(GLOBAL_ACTION_BACK)
+        handler.postDelayed({ performGlobalAction(GLOBAL_ACTION_BACK) }, 200)
+        val cb = wifiCallback.getAndSet(null)
+        handler.postDelayed({
+            wrocDoAplikacji(applicationContext)
+            cb?.invoke(ok)
+        }, 350)
+    }
+
+    private var ostatniKlikWifi = 0L
+    private var wifiSesjaStart = 0L
+
     companion object {
         private const val TAG = "AdbParowanieA11y"
+        private val trybWlacWifi = java.util.concurrent.atomic.AtomicBoolean(false)
+        private val wifiCallback =
+            java.util.concurrent.atomic.AtomicReference<((Boolean) -> Unit)?>(null)
+        private val wifiTimeoutRunnable = Runnable {
+            val svc = instancja
+            if (trybWlacWifi.get()) {
+                val ok = svc != null && (
+                    dialer.dominik.pl.nagranie.AdbNaprawa.czyWifi(svc) ||
+                        dialer.dominik.pl.nagranie.AdbNaprawa.czyWifiManagerOn(svc)
+                    )
+                svc?.zakonczWlacWifi(ok) ?: run {
+                    trybWlacWifi.set(false)
+                    wifiCallback.getAndSet(null)?.invoke(false)
+                }
+            }
+        }
         private val RE_KOD = Regex("""(?<!\d)\d{6}(?!\d)""")
         private val RE_IP_PORT = Regex("""(\d{1,3}(?:\.\d{1,3}){3})\s*:\s*(\d{2,5})""")
         /** Ustawiane przy starcie FGS — a11y znów może klikać ścieżkę do dialogu. */
@@ -387,6 +588,44 @@ class AdbParowanieDostepnosc : AccessibilityService() {
                     Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                 )
+            }
+        }
+
+        /**
+         * Włącza Wi‑Fi przez kliknięcie switcha w ustawieniach (a11y).
+         * WRITE_SECURE / setWifiEnabled na Android 10+ ColorOS tego nie robią.
+         */
+        fun poprosWlacWifi(ctx: Context, timeoutMs: Long = 12_000L, onDone: (Boolean) -> Unit) {
+            val app = ctx.applicationContext
+            if (dialer.dominik.pl.nagranie.AdbNaprawa.czyWifi(app) ||
+                dialer.dominik.pl.nagranie.AdbNaprawa.czyWifiManagerOn(app)
+            ) {
+                onDone(true)
+                return
+            }
+            if (!czyWlaczona(app) && !sprobujWlaczyc(app)) {
+                Log.w(TAG, "poprosWlacWifi: brak a11y")
+                onDone(false)
+                return
+            }
+            wifiCallback.set(onDone)
+            trybWlacWifi.set(true)
+            val svc = instancja
+            svc?.ostatniKlikWifi = 0L
+            svc?.wifiSesjaStart = System.currentTimeMillis()
+            svc?.handler?.removeCallbacks(wifiTimeoutRunnable)
+            svc?.handler?.postDelayed(wifiTimeoutRunnable, timeoutMs)
+                ?: Handler(Looper.getMainLooper()).postDelayed(wifiTimeoutRunnable, timeoutMs)
+            runCatching {
+                app.startActivity(
+                    Intent(Settings.ACTION_WIFI_SETTINGS)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }.onFailure {
+                Log.w(TAG, "poprosWlacWifi: WIFI_SETTINGS", it)
+                trybWlacWifi.set(false)
+                svc?.wifiSesjaStart = 0L
+                wifiCallback.getAndSet(null)?.invoke(false)
             }
         }
 

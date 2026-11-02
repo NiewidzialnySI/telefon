@@ -55,11 +55,20 @@ object NagrywanieKontroler {
     private const val GRACE_MS = 500L
     /** Po grace: tyle ciszy = silnik martwy (krótko — inaczej tracimy początek rozmowy). */
     private const val VERIFY_MS = 900L
+    /**
+     * Dual/hybryda po ACTIVE (zwłaszcza firmowy cold-start): downlink ColorOS
+     * bywa cichy 1–3 s — za krótki verify → fałszywe „jednostronne” i brak nagrania.
+     */
+    private const val GRACE_OBU_MS = 2_200L
+    private const val VERIFY_OBU_MS = 2_800L
     /** Soft-switch: trzymaj do 12 s PCM z POCZĄTKU pliku (nie tylko ring 1.5 s). */
     private const val STASH_MAX_MS = 12_000
     private const val PREROLL_MS = 8_000
     /** W trakcie rozmowy nie wolno blokować 20 s na start daemona. */
     private const val ZAPEWNIJ_W_ROZMOWIE_MS = 1_800L
+    /** Cold-start ADB przy dzwonku (tryb firmowy: Wireless+USB były OFF). */
+    private const val ZAPEWNIJ_ROZGRZEWKA_FIRM_MS = 16_000L
+    private const val ZAPEWNIJ_W_ROZMOWIE_FIRM_MS = 10_000L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -74,6 +83,10 @@ object NagrywanieKontroler {
 
     private val zatrzymajFlaga = AtomicBoolean(false)
     private var job: Job? = null
+    /** Anuluje in-flight [rozgrzej], żeby po szybkim Rozłącz nie włączał ADB z powrotem. */
+    @Volatile private var rozgrzewkaGen = 0
+    private var rozgrzewkaJob: Job? = null
+    @Volatile private var appCtx: Context? = null
     @Volatile private var aktywnyPlik: File? = null
     @Volatile private var lokalnyRecord: AudioRecord? = null
     @Volatile private var pumpWatki: List<Thread> = emptyList()
@@ -83,16 +96,59 @@ object NagrywanieKontroler {
     @Volatile private var zachowanyPreroll: ByteArray = ByteArray(0)
 
     /**
-     * Rozgrzewka przed ACTIVE (DIALING / RINGING): podnieś daemon ADB,
+     * Rozgrzewka przed / przy ACTIVE (DIALING wychodzące): podnieś daemon ADB,
      * żeby przy odebraniu nie czekać ~10–20 s na shell.
+     * W trybie firmowym najpierw włącza ADB (było OFF pod aplikacje firmowe).
+     * Po zakończeniu sprawdza stan rozmowy — jeśli już Rozłącz, gasi ADB.
      */
     fun rozgrzej(ctx: Context) {
         if (!NagrywanieUstawienia.czyWlaczone(ctx)) return
+        appCtx = ctx.applicationContext
         if (ShellKlient.czyShellGotowy()) return
-        scope.launch {
-            runCatching { ShellKlient.zapewnij(ctx.applicationContext) }
-                .onFailure { Log.w(TAG, "rozgrzej", it) }
-                .onSuccess { Log.i(TAG, "rozgrzej shell=${ShellKlient.czyShellGotowy()}") }
+        // Nie anuluj trwającej rozgrzewki (RINGING → Odbierz wołało drugi raz i psuło ADB).
+        if (rozgrzewkaJob?.isActive == true) return
+        val gen = ++rozgrzewkaGen
+        rozgrzewkaJob = scope.launch {
+            val app = ctx.applicationContext
+            val firmowy = NagrywanieUstawienia.czyAdbTylkoNaRozmowe(app)
+            try {
+                if (firmowy) {
+                    if (!czyPolaczenieWToku()) return@launch
+                    AdbNaprawa.wlacDlaNagrywania(app)
+                }
+                if (gen != rozgrzewkaGen || !isActive) return@launch
+                val limit = if (firmowy) ZAPEWNIJ_ROZGRZEWKA_FIRM_MS else 8_000L
+                val ok = withTimeoutOrNull(limit) {
+                    if (gen != rozgrzewkaGen || !isActive) return@withTimeoutOrNull false
+                    runCatching { ShellKlient.zapewnij(app, autoWlacAdb = true) }.getOrDefault(false)
+                } == true
+                Log.i(TAG, "rozgrzej firmowy=$firmowy → $ok shell=${ShellKlient.czyShellGotowy()}")
+            } finally {
+                // Szybkie Rozłącz podczas DIALING / odliczania: nie zostawiaj ADB ON.
+                if (firmowy && gen == rozgrzewkaGen && !czyPolaczenieWToku()) {
+                    AdbNaprawa.wylaczDlaFirmowki(app)
+                    Log.i(TAG, "rozgrzej — brak rozmowy, ADB OFF")
+                }
+            }
+        }
+    }
+
+    /** Dzwoni / rozmowa / hold — albo żywy obiekt Call. */
+    private fun czyPolaczenieWToku(): Boolean {
+        val call = dialer.dominik.pl.call.StanPolaczenia.polaczenie
+        if (call != null) {
+            val s = runCatching { call.state }.getOrNull()
+            if (s != null && s != android.telecom.Call.STATE_DISCONNECTED &&
+                s != android.telecom.Call.STATE_DISCONNECTING
+            ) {
+                return true
+            }
+        }
+        return when (dialer.dominik.pl.call.StanPolaczenia.stan) {
+            dialer.dominik.pl.call.StanPolaczenia.Stan.Dzwoni,
+            dialer.dominik.pl.call.StanPolaczenia.Stan.Rozmowa,
+            dialer.dominik.pl.call.StanPolaczenia.Stan.Zawieszone -> true
+            else -> false
         }
     }
 
@@ -102,6 +158,7 @@ object NagrywanieKontroler {
             stan = StanNagrywania.Blad("Włącz nagrywanie i zaakceptuj warunki w Ustawieniach")
             return
         }
+        appCtx = ctx.applicationContext
         zatrzymajFlaga.set(false)
         job = scope.launch {
             try {
@@ -140,7 +197,53 @@ object NagrywanieKontroler {
             aktywnyPlik = null
             nagrywa = false
             if (stan !is StanNagrywania.Blad) stan = StanNagrywania.Bezczynny
+            // Daj onCallRemoved / nowemu Call chwilę — nie gaś ADB gdy rozmowa trwa.
+            delay(400)
+            zgasAdbPoRozmowieJesliFirmowy()
         }
+    }
+
+    /**
+     * Gdy rozmowa padła bez nagrywania (anulowanie 3…2…1, nieodebrane, Rozłącz
+     * przed ACTIVE) — unieważnij rozgrzewkę i zgaś ADB. Powtórne sprawdzenie
+     * chroni przed wyścigiem z kończącym się [rozgrzej]/autoWlacAdb).
+     */
+    fun poRozlaczeniu(ctx: Context) {
+        appCtx = ctx.applicationContext
+        if (!NagrywanieUstawienia.czyAdbTylkoNaRozmowe(ctx)) return
+        rozgrzewkaGen++
+        rozgrzewkaJob?.cancel()
+        rozgrzewkaJob = null
+        if (nagrywa || job?.isActive == true) return // stop() sam zgasi
+        val app = ctx.applicationContext
+        scope.launch {
+            delay(350)
+            if (czyPolaczenieWToku()) return@launch
+            AdbNaprawa.wylaczDlaFirmowki(app)
+            Log.i(TAG, "poRozlaczeniu — ADB OFF (Portal Firmy)")
+            // Late zapewnij/wlacAdb z anulowanej rozgrzewki — dogaś.
+            delay(900)
+            if (!czyPolaczenieWToku() &&
+                (AdbNaprawa.czyAdbWifi(app) || AdbNaprawa.czyAdbUsb(app))
+            ) {
+                AdbNaprawa.wylaczDlaFirmowki(app)
+                Log.i(TAG, "poRozlaczeniu — dogaszanie ADB")
+            }
+        }
+    }
+
+    private fun zgasAdbPoRozmowieJesliFirmowy() {
+        val ctx = appCtx ?: return
+        if (!NagrywanieUstawienia.czyAdbTylkoNaRozmowe(ctx)) return
+        if (czyPolaczenieWToku()) {
+            Log.i(TAG, "stop — pomijam ADB OFF (rozmowa/dzwonek trwa)")
+            return
+        }
+        rozgrzewkaGen++
+        rozgrzewkaJob?.cancel()
+        rozgrzewkaJob = null
+        AdbNaprawa.wylaczDlaFirmowki(ctx)
+        Log.i(TAG, "stop — ADB OFF (Portal Firmy)")
     }
 
     fun przelacz(ctx: Context, numer: String) {
@@ -150,14 +253,23 @@ object NagrywanieKontroler {
     private fun drabinka(ctx: Context): List<SilnikNagrywania> {
         val shell = ShellKlient.czyShellGotowy()
         val all = SilnikNagrywania.entries.toList()
-        // Hybryda/Dual: NIGDY nie wyrzucaj z cache „cicha” — inaczej zostaje vc_mono
-        // (tylko oni) jak w logu: drabinka=[vc_mono, playback, voice_com, mic].
+        // Hybryda/Dual/VC stereo: nie wyrzucaj za „cicha” (false positive po krótkim verify).
+        // Fail (otwarcie padło) nadal pomijamy.
         fun dopuszczony(s: SilnikNagrywania): Boolean = when (s) {
             SilnikNagrywania.HybrydaMicDownlink,
-            SilnikNagrywania.DualUpDown -> true
+            SilnikNagrywania.DualUpDown,
+            SilnikNagrywania.VoiceCallStereo,
+            SilnikNagrywania.MicOnly -> !ZdolnosciCache.czyFail(ctx, s)
             else -> !ZdolnosciCache.czyFail(ctx, s) && !ZdolnosciCache.czyCicha(ctx, s)
         }
         var filtered = all.filter(::dopuszczony).ifEmpty { all }
+        // Za krótka drabinka (same dual+hybryda) → dorzuć ciche z cache jako ostatnią deskę.
+        if (filtered.size < 4) {
+            val dopiski = all.filter {
+                it !in filtered && !ZdolnosciCache.czyFail(ctx, it)
+            }
+            filtered = (filtered + dopiski).ifEmpty { all }
+        }
         if (!shell) {
             return filtered.sortedBy { silnik ->
                 when (silnik) {
@@ -169,10 +281,11 @@ object NagrywanieKontroler {
             }
         }
         filtered = filtered.filter { it != SilnikNagrywania.LokalnyVoiceCall }.ifEmpty { filtered }
+        // Dual/VC stereo przed hybrydą — hybryda MIC łapie echo rozmówcy ze słuchawki.
         val head = listOf(
-            SilnikNagrywania.HybrydaMicDownlink,
             SilnikNagrywania.DualUpDown,
             SilnikNagrywania.VoiceCallStereo,
+            SilnikNagrywania.HybrydaMicDownlink,
         ).filter { it in filtered }
         val tail = filtered.filter { it !in head }.sortedBy {
             when (it) {
@@ -184,19 +297,25 @@ object NagrywanieKontroler {
             }
         }
         val pref = ZdolnosciCache.preferowana(ctx)
-        return if (pref != null && pref in head) {
-            listOf(pref) + head.filter { it != pref } + tail
+        // Nie faworyzuj hybrydy (echo rozmówcy ze słuchawki) nad Dual/VC stereo.
+        val prefOk = pref != null &&
+            pref in head &&
+            pref != SilnikNagrywania.HybrydaMicDownlink
+        return if (prefOk) {
+            listOf(pref!!) + head.filter { it != pref } + tail
         } else {
             head + tail
         }
     }
 
     private suspend fun uruchomDrabinke(ctx: Context, numer: String) {
-        // Krótko — pełne 20 s startu daemona ucina początek rozmowy.
-        val shellOk = withTimeoutOrNull(ZAPEWNIJ_W_ROZMOWIE_MS) {
-            runCatching { ShellKlient.zapewnij(ctx) }.getOrDefault(false)
+        val firmowy = NagrywanieUstawienia.czyAdbTylkoNaRozmowe(ctx)
+        val limitMs = if (firmowy) ZAPEWNIJ_W_ROZMOWIE_FIRM_MS else ZAPEWNIJ_W_ROZMOWIE_MS
+        // W trybie firmowym cold-start ADB — dłuższy limit; rozgrzej() zwykle już trwa.
+        val shellOk = withTimeoutOrNull(limitMs) {
+            runCatching { ShellKlient.zapewnij(ctx, autoWlacAdb = true) }.getOrDefault(false)
         } == true
-        Log.i(TAG, "zapewnij@${ZAPEWNIJ_W_ROZMOWIE_MS}ms → shell=$shellOk gotowy=${ShellKlient.czyShellGotowy()}")
+        Log.i(TAG, "zapewnij@${limitMs}ms firmowy=$firmowy → shell=$shellOk gotowy=${ShellKlient.czyShellGotowy()}")
 
         val ladder = drabinka(ctx)
         Log.i(TAG, "drabinka=${ladder.map { it.id }} shell=${ShellKlient.czyShellGotowy()}")
@@ -257,10 +376,32 @@ object NagrywanieKontroler {
                     }
                     if (zatrzymajFlaga.get() || !currentCoroutineContext().isActive) return
                     // Wymaga obu stron, a jest tylko downlink (oni) / tylko uplink (ja)
-                    // → NIE zostawiaj (user: „słyszę drugą osobę, siebie nie”). Soft-switch.
+                    // → soft-switch. Ale przy jednej żywej stronie daj downlinkowi jeszcze chwilę
+                    // (ColorOS po ACTIVE / cold ADB często milczy 1–3 s na drugiej ścieżce).
                     if (!slychac && silnik != SilnikNagrywania.MicOnly) {
                         val jedna =
                             wynik.wymagaObuStron && wynik.miernik.slychac(PROG_RMS)
+                        if (jedna) {
+                            Log.i(
+                                TAG,
+                                "${silnik.id} jedna strona OK " +
+                                    "L=${wynik.miernik.rmsL()} R=${wynik.miernik.rmsR()} " +
+                                    "— dopinek ${VERIFY_OBU_MS}ms",
+                            )
+                            delay(VERIFY_OBU_MS)
+                            if (zatrzymajFlaga.get() || !currentCoroutineContext().isActive) return
+                            if (wynik.miernik.obieStrony(PROG_RMS)) {
+                                Log.i(TAG, "${silnik.id} obie strony po dopinku")
+                                zachowanyPreroll = ByteArray(0)
+                                ZdolnosciCache.zapiszSukces(ctx, silnik)
+                                while (currentCoroutineContext().isActive &&
+                                    !zatrzymajFlaga.get() && nagrywa
+                                ) {
+                                    delay(400)
+                                }
+                                return
+                            }
+                        }
                         Log.w(
                             TAG,
                             if (jedna) {
@@ -270,9 +411,10 @@ object NagrywanieKontroler {
                                 "${silnik.id} ciche → soft-switch"
                             },
                         )
-                        // Hybryda/Dual — bez trwałego banu (krótki verify / cichy user).
+                        // Hybryda/Dual/VC stereo — bez trwałego banu (krótki verify / cichy user).
                         if (silnik != SilnikNagrywania.HybrydaMicDownlink &&
-                            silnik != SilnikNagrywania.DualUpDown
+                            silnik != SilnikNagrywania.DualUpDown &&
+                            silnik != SilnikNagrywania.VoiceCallStereo
                         ) {
                             ZdolnosciCache.oznaczCicha(ctx, silnik)
                         }
@@ -330,8 +472,59 @@ object NagrywanieKontroler {
                 }
             }
         }
+        // Lepsze jednostronne / mic niż zero pliku po soft-switchach.
+        if (zachowanyPreroll.isNotEmpty() &&
+            currentCoroutineContext().isActive &&
+            !zatrzymajFlaga.get()
+        ) {
+            Log.w(
+                TAG,
+                "drabinka wyczerpana — fallback z preroll ${zachowanyPreroll.size} B",
+            )
+            val fallbacki = listOf(
+                SilnikNagrywania.DualUpDown,
+                SilnikNagrywania.HybrydaMicDownlink,
+                SilnikNagrywania.VoiceCallStereo,
+                SilnikNagrywania.MicOnly,
+            )
+            for (silnik in fallbacki) {
+                if (zatrzymajFlaga.get() || !currentCoroutineContext().isActive) return
+                if (silnik != SilnikNagrywania.MicOnly &&
+                    silnik != SilnikNagrywania.HybrydaMicDownlink &&
+                    !ShellKlient.czyShellGotowy()
+                ) {
+                    continue
+                }
+                stan = StanNagrywania.Probuje(silnik.etykieta + " (fallback)")
+                Log.i(TAG, "fallback ${silnik.id}")
+                val wynik = when (silnik) {
+                    SilnikNagrywania.DualUpDown -> otworzShellDual(ctx, numer)
+                    SilnikNagrywania.HybrydaMicDownlink -> otworzHybryda(ctx, numer)
+                    SilnikNagrywania.VoiceCallStereo -> otworzShellVoiceCallStereo(ctx, numer)
+                    SilnikNagrywania.MicOnly -> otworzShellSingle(
+                        ctx, numer, MediaRecorder.AudioSource.MIC,
+                        AudioFormat.CHANNEL_IN_MONO, 1,
+                    )
+                    else -> Otwarcie.Fail("skip")
+                }
+                if (wynik is Otwarcie.Ok) {
+                    nagrywa = true
+                    aktywnyPlik = wynik.plik
+                    ostatniSilnik = silnik.etykieta + " (fallback)"
+                    stan = StanNagrywania.Aktywne(wynik.plik, ostatniSilnik)
+                    // Bez soft-switch — trzymamy cokolwiek nagrywa do końca rozmowy.
+                    while (currentCoroutineContext().isActive &&
+                        !zatrzymajFlaga.get() && nagrywa
+                    ) {
+                        delay(400)
+                    }
+                    return
+                }
+            }
+        }
         stan = StanNagrywania.Blad("Żaden silnik nie oddał audio na tym urządzeniu")
         nagrywa = false
+        Log.e(TAG, "drabinka wyczerpana — brak nagrania")
     }
 
     /**
@@ -698,7 +891,11 @@ object NagrywanieKontroler {
         return null
     }
 
-    /** MIC (L/ja, podbite) + DOWNLINK (R/oni) → mono mix. */
+    /**
+     * MIC (ja) + DOWNLINK (oni) → mono.
+     * MIC łapie słuchawkę → „pusty pokój / echo” rozmówcy; stąd AEC (opóźniony DN
+     * odejmowany z MIC) + twarde duck gdy oni mówią.
+     */
     private fun mieszajMicIPipeDoMono(
         mic: AudioRecord,
         fdDn: ParcelFileDescriptor,
@@ -709,6 +906,7 @@ object NagrywanieKontroler {
         val bufMic = ByteArray(4096)
         val bufDn = ByteArray(4096)
         val mono = ByteArray(4096)
+        val aec = AnulatorEchaSluchawki(SAMPLE_RATE)
         try {
             mic.startRecording()
             while (!zatrzymajFlaga.get()) {
@@ -721,11 +919,21 @@ object NagrywanieKontroler {
                     val surowy = if (i * 2 + 1 < nMic) {
                         ((bufMic[i * 2].toInt() and 0xff) or (bufMic[i * 2 + 1].toInt() shl 8)).toShort()
                     } else 0
-                    // MIC bywa cichszy od downlinku — podbij „mnie”.
-                    val lu = wzmocnij(surowy, 2.0f)
                     val rd = if (i * 2 + 1 < nDn) {
                         ((bufDn[i * 2].toInt() and 0xff) or (bufDn[i * 2 + 1].toInt() shl 8)).toShort()
                     } else 0
+                    // 1) Odejmij z MIC echo słuchawki (opóźniony DOWNLINK).
+                    val bezEcha = aec.oczysc(surowy, rd)
+                    // 2) Gdy oni mówią — prawie nie mieszaj MIC (zostaje czysty DN).
+                    val dnAbs = abs(rd.toInt())
+                    val micGain = when {
+                        dnAbs > 2000 -> 0.04f
+                        dnAbs > 1000 -> 0.12f
+                        dnAbs > 500 -> 0.40f
+                        dnAbs > 250 -> 0.85f
+                        else -> 1.55f
+                    }
+                    val lu = wzmocnij(bezEcha, micGain)
                     val mix = mieszajSample(lu, rd)
                     mono[o++] = (mix.toInt() and 0xff).toByte()
                     mono[o++] = ((mix.toInt() shr 8) and 0xff).toByte()
@@ -742,6 +950,47 @@ object NagrywanieKontroler {
             runCatching { mic.stop(); mic.release() }
             if (lokalnyRecord === mic) lokalnyRecord = null
             runCatching { wav.close() }
+        }
+    }
+
+    /**
+     * Prosty AEC: opóźniony DOWNLINK (~18–35 ms ścieżka akustyczna słuchawki→MIC)
+     * odejmowany z MIC (NLMS 1-tap po kilku opóźnieniach).
+     */
+    private class AnulatorEchaSluchawki(sampleRate: Int) {
+        // Bufor ~40 ms — typowe opóźnienie earpiece → mic.
+        private val maxDelay = (sampleRate * 40 / 1000).coerceAtLeast(64)
+        private val buf = ShortArray(maxDelay)
+        private var write = 0
+        // Kilka tapów (12 / 20 / 28 ms) — OEM różnie opóźnia.
+        private val taps = intArrayOf(
+            (sampleRate * 12 / 1000).coerceIn(1, maxDelay - 1),
+            (sampleRate * 20 / 1000).coerceIn(1, maxDelay - 1),
+            (sampleRate * 28 / 1000).coerceIn(1, maxDelay - 1),
+        )
+        private val w = FloatArray(taps.size) { 0.22f }
+
+        fun oczysc(mic: Short, dn: Short): Short {
+            buf[write] = dn
+            write = (write + 1) % maxDelay
+            var echo = 0f
+            for (t in taps.indices) {
+                val idx = (write - taps[t] + maxDelay) % maxDelay
+                echo += w[t] * buf[idx]
+            }
+            val err = mic.toInt() - echo
+            // Adaptacja tylko gdy rozmówca mówi (DN głośny) — nie zjadaj „mnie”.
+            val dnAbs = abs(dn.toInt())
+            if (dnAbs > 400) {
+                val mu = 0.00004f
+                for (t in taps.indices) {
+                    val idx = (write - taps[t] + maxDelay) % maxDelay
+                    w[t] = (w[t] + mu * err * buf[idx]).coerceIn(0.02f, 0.95f)
+                }
+            }
+            return err.toInt()
+                .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+                .toShort()
         }
     }
 
@@ -886,7 +1135,7 @@ object NagrywanieKontroler {
         while (!zatrzymajFlaga.get()) {
             val elapsed = System.currentTimeMillis() - start
             val obie = miernik.obieStrony(PROG_RMS)
-            when (JakoscNagrywania.werdyktProbe(elapsed, obie, GRACE_MS, VERIFY_MS + 400L)) {
+            when (JakoscNagrywania.werdyktProbe(elapsed, obie, GRACE_OBU_MS, VERIFY_OBU_MS)) {
                 JakoscNagrywania.Werdykt.Czekaj -> delay(150)
                 JakoscNagrywania.Werdykt.Slychac -> return true
                 JakoscNagrywania.Werdykt.Ciche -> {

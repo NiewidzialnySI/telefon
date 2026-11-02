@@ -5,10 +5,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.provider.Settings
+import android.util.Log
 import androidx.core.content.FileProvider
 import androidx.core.content.edit
 import dialer.dominik.pl.BuildConfig
+import dialer.dominik.pl.nagranie.ShellKlient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,7 +28,7 @@ import java.net.URL
  *
  * 1) Pobiera manifest → porównuje [BuildConfig.VERSION_CODE]
  * 2) Pobiera APK do cache
- * 3) „Zainstaluj” → chooser (system / Shizuku / inne instalatory)
+ * 3) Instalacja: najpierw cicho przez daemon ADB (`pm install`), inaczej systemowy chooser
  */
 object AktualizacjaAplikacji {
 
@@ -116,7 +119,11 @@ object AktualizacjaAplikacji {
     ): Stan = withContext(Dispatchers.IO) {
         _stan.value = Stan.Sprawdzanie
         try {
-            val json = pobierzTekst(manifestUrl(context), githubToken(context))
+            // Cache-bust: raw.githubusercontent.com ma max-age=300 + czasem stary edge.
+            val bazowy = manifestUrl(context)
+            val sep = if (bazowy.contains('?')) '&' else '?'
+            val url = "$bazowy${sep}_=${System.currentTimeMillis()}"
+            val json = pobierzTekst(url, githubToken(context))
             val info = parsujManifest(json)
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
                 putLong(K_OSTATNIE, System.currentTimeMillis())
@@ -178,10 +185,55 @@ object AktualizacjaAplikacji {
             Uri.parse("package:${context.packageName}")
         ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
+    /** Czy daemon ADB potrafi cicho zainstalować (wersja usługi ≥ 4). */
+    fun czyAdbInstallDostepny(): Boolean {
+        val svc = ShellKlient.usluga() ?: return false
+        return runCatching { svc.wersja >= 4 }.getOrDefault(false)
+    }
+
     /**
-     * Otwiera systemowy chooser — można wybrać instalator (systemowy, Shizuku itd.).
+     * Instalacja: 1) cicho przez ADB shell (`pm install -r`) gdy daemon żyje,
+     * 2) inaczej systemowy chooser (jak wcześniej).
      */
-    fun zainstaluj(context: Context, plik: File) {
+    suspend fun zainstaluj(context: Context, plik: File) = withContext(Dispatchers.IO) {
+        if (!plik.exists() || plik.length() < 1024L) {
+            _stan.value = Stan.Blad("Brak pobranego APK — pobierz ponownie")
+            return@withContext
+        }
+        if (czyAdbInstallDostepny()) {
+            val blad = zainstalujPrzezAdb(plik)
+            if (blad == null) {
+                // Proces zwykle ginie przy podmianie pakietu — stan i tak się zresetuje.
+                _stan.value = Stan.GotowaDoInstalacji(plik, InfoWersji(
+                    BuildConfig.VERSION_CODE,
+                    BuildConfig.VERSION_NAME,
+                    "",
+                    "Zainstalowano przez ADB",
+                ))
+                return@withContext
+            }
+            Log.w(TAG, "ADB install fail → system: $blad")
+        }
+        withContext(Dispatchers.Main) {
+            zainstalujSystemowo(context, plik)
+        }
+    }
+
+    /**
+     * @return null = Success, inaczej komunikat błędu
+     */
+    private fun zainstalujPrzezAdb(plik: File): String? {
+        val svc = ShellKlient.usluga() ?: return "Brak daemona ADB"
+        return runCatching {
+            ParcelFileDescriptor.open(plik, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
+                val err = svc.installApk(fd)?.trim().orEmpty()
+                if (err.isEmpty()) null else err
+            }
+        }.getOrElse { it.message ?: "ADB install fail" }
+    }
+
+    /** Systemowy chooser — gdy brak ADB albo `pm install` padło. */
+    fun zainstalujSystemowo(context: Context, plik: File) {
         if (!plik.exists() || plik.length() < 1024L) {
             _stan.value = Stan.Blad("Brak pobranego APK — pobierz ponownie")
             return
@@ -200,7 +252,6 @@ object AktualizacjaAplikacji {
                 )
                 clipData = ClipData.newRawUri("apk", uri)
             }
-            // Uprawnienie URI dla wszystkich aplikacji z choosera (m.in. Shizuku).
             val handlery = context.packageManager.queryIntentActivities(
                 view,
                 PackageManager.MATCH_DEFAULT_ONLY
@@ -214,7 +265,6 @@ object AktualizacjaAplikacji {
             }
             val chooser = Intent.createChooser(view, "Zainstaluj APK").apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                // ClipData + GRANT na chooserze — uprawnienie przechodzi do wybranej apki.
                 clipData = ClipData.newRawUri("apk", uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
@@ -225,6 +275,8 @@ object AktualizacjaAplikacji {
             )
         }
     }
+
+    private const val TAG = "Aktualizacja"
 
     private fun parsujManifest(json: String): InfoWersji {
         val o = JSONObject(json)
@@ -290,7 +342,10 @@ object AktualizacjaAplikacji {
             connectTimeout = 20_000
             readTimeout = 120_000
             instanceFollowRedirects = true
+            useCaches = false
             setRequestProperty("Accept", "application/json, application/octet-stream, */*")
+            setRequestProperty("Cache-Control", "no-cache")
+            setRequestProperty("Pragma", "no-cache")
             setRequestProperty("User-Agent", "Telefon-AutoUpdate/${BuildConfig.VERSION_NAME}")
             if (token.isNotBlank()) {
                 setRequestProperty("Authorization", "Bearer $token")

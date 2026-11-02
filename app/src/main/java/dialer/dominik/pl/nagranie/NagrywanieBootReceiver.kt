@@ -11,9 +11,14 @@ class NagrywanieBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val a = intent?.action ?: return
         if (a != Intent.ACTION_BOOT_COMPLETED && a != Intent.ACTION_LOCKED_BOOT_COMPLETED) return
+        val app = context.applicationContext
+        if (NagrywanieUstawienia.czyPortalFirmyAuto(app)) {
+            Handler(Looper.getMainLooper()).postDelayed({
+                PortalFirmyDetektor.zsynchronizujJesliAuto(app)
+            }, 8_000L)
+        }
         if (!NagrywanieUstawienia.czyWlaczone(context)) return
         if (!NagrywanieUstawienia.czyPowiadomieniaNagrywania(context)) return
-        val app = context.applicationContext
         Handler(Looper.getMainLooper()).postDelayed({
             NagrywanieStraznik.sprawdz(app, forceAlert = true)
         }, 45_000L)

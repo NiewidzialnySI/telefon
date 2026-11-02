@@ -4,7 +4,7 @@ import android.os.ParcelFileDescriptor;
 
 /**
  * Most IPC: dialer ↔ daemon shell (UID 2000) z Wireless ADB.
- * Wersja 3: + grantPermission (pm grant z UID shell).
+ * Wersja 5: + ustawWifi (svc wifi enable/disable z UID shell).
  */
 interface INagrywanieShell {
 
@@ -50,6 +50,16 @@ interface INagrywanieShell {
 
     /** `pm grant` z UID shell — WRITE_SECURE_SETTINGS i runtime. */
     boolean grantPermission(String packageName, String permission) = 13;
+
+    /**
+     * Cicha aktualizacja / instalacja APK (UID shell = jak ADB).
+     * FD z aplikacji → `/data/local/tmp` → `pm install -r -t`.
+     * @return pusty string = Success, inaczej komunikat błędu
+     */
+    String installApk(in ParcelFileDescriptor apkFd) = 14;
+
+    /** `svc wifi enable|disable` — UID shell, bez panelu ustawień. */
+    boolean ustawWifi(boolean on) = 15;
 
     void destroy() = 16777114;
 }

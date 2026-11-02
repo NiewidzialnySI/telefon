@@ -16,10 +16,10 @@ object ShellKlient {
         if (ShellAdbBootstrap.usluga() != null) "ADB OK — obie strony"
         else ShellAdbBootstrap.zdiagnozuj(ctx).krotkiStatus()
 
-    suspend fun zapewnij(ctx: Context): Boolean {
+    suspend fun zapewnij(ctx: Context, autoWlacAdb: Boolean = true): Boolean {
         if (czyShellGotowy()) return true
         if (!ShellAdbBootstrap.czySparowane(ctx)) return false
-        return runCatching { ShellAdbBootstrap.uruchom(ctx) }
+        return runCatching { ShellAdbBootstrap.uruchom(ctx, autoWlacAdb = autoWlacAdb) }
             .onFailure { Log.w(TAG, "adb uruchom", it) }
             .getOrDefault(false)
     }

@@ -202,8 +202,15 @@ internal fun wykonajPolaczenie(context: Context, numer: String) {
     StanPolaczenia.buforDtmf = ""
     StanPolaczenia.wyciszony = false
     StanPolaczenia.glosnik = false
-    StanPolaczenia.bluetoothAktywny = false
-    StanPolaczenia.zadanaTrasa = null
+    // Podłączone BT słuchawki → od razu zaplanuj trasę (przychodzące system bierze sam;
+    // wychodzące wcześniej forsowaliśmy EARPIECE i BT znikało).
+    if (dialer.dominik.pl.call.czyBluetoothSluchawkiPodlaczone(context)) {
+        StanPolaczenia.bluetoothAktywny = true
+        StanPolaczenia.zadanaTrasa = android.telecom.CallAudioState.ROUTE_BLUETOOTH
+    } else {
+        StanPolaczenia.bluetoothAktywny = false
+        StanPolaczenia.zadanaTrasa = null
+    }
     EkranRozmowy.pokaz(context)
 
     // Odraczamy faktyczne nawiązanie, żeby użytkownik mógł w tym czasie
@@ -307,11 +314,23 @@ internal fun wykonajFaktycznePolaczenie(context: Context, numer: String) {
             usunNajnowszyWpisZLogu(context, StanPolaczenia.numerRozmowy)
         }
 
-        // 5) Zresetuj stan i zamknij ekran.
+        // 5) Zresetuj UI. NIE kasuj czasStartu / czyByloAktywne — onCallRemoved
+        // musi je zobaczyć (inaczej fałszywe „nieodebrane” po odebranej rozmowie).
+        // Przy samym anulowaniu 3…2…1 nie było Call → onCallRemoved nie przyjdzie,
+        // więc tu zerujemy flagi tylko gdy nie było żywego Call.
+        val bylCall = aktywne != null || rozlaczono
         StanPolaczenia.polaczenie = null
         StanPolaczenia.stan = StanPolaczenia.Stan.Brak
-        StanPolaczenia.czasStartu = 0L
+        if (!bylCall) {
+            StanPolaczenia.czasStartu = 0L
+            StanPolaczenia.czyByloAktywne = false
+        }
         EkranRozmowy.zamknij(context)
+
+        // 6) Anulowanie 3…2…1 / Rozłącz przed ACTIVE — nie ma onCallRemoved,
+        // więc tu gasimy ADB (tryb Portal Firmy). Przy żywej rozmowie stop()
+        // też zgasi; podwójne poRozlaczeniu jest bezpieczne.
+        dialer.dominik.pl.nagranie.NagrywanieKontroler.poRozlaczeniu(context)
     }
 
     /** Usuwa najnowszy wpis z CallLog dla podanego numeru (jeśli istnieje). */

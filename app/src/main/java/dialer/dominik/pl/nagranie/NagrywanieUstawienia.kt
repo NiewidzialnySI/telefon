@@ -13,6 +13,13 @@ object NagrywanieUstawienia {
     private const val K_ZGODA_PRAWNA = "zgoda_prawna"
     /** Legacy key — wcześniej „powiadomienia_shizuku”. */
     private const val K_POWIADOMIENIA = "powiadomienia_shizuku"
+    /**
+     * ADB (Wireless+USB) tylko na czas rozmowy — między połączeniami oba OFF
+     * (aplikacje firmowe / bankowe). Daemon startuje przy dzwonku, ginie po rozłączeniu.
+     */
+    private const val K_ADB_TYLKO_ROZMOWA = "adb_tylko_na_rozmowe"
+    /** Synchronizuj tryb Portal Firmy ze stanem systemowego work profile. */
+    private const val K_PORTAL_FIRMY_AUTO = "portal_firmy_auto"
 
     private val _wlaczoneUi = MutableStateFlow(false)
     /** Do UI (pasek zakładek) — odświeżane przez [odswiezUi] / [ustawWlaczone]. */
@@ -51,5 +58,20 @@ object NagrywanieUstawienia {
 
     fun ustawPowiadomieniaNagrywania(ctx: Context, v: Boolean) {
         prefs(ctx).edit().putBoolean(K_POWIADOMIENIA, v).apply()
+    }
+
+    /** Domyślnie ON — aplikacje firmowe wymagają wyłączonego debugowania. */
+    fun czyAdbTylkoNaRozmowe(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(K_ADB_TYLKO_ROZMOWA, true)
+
+    fun ustawAdbTylkoNaRozmowe(ctx: Context, v: Boolean) {
+        prefs(ctx).edit().putBoolean(K_ADB_TYLKO_ROZMOWA, v).apply()
+    }
+
+    fun czyPortalFirmyAuto(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(K_PORTAL_FIRMY_AUTO, false)
+
+    fun ustawPortalFirmyAuto(ctx: Context, v: Boolean) {
+        prefs(ctx).edit().putBoolean(K_PORTAL_FIRMY_AUTO, v).apply()
     }
 }

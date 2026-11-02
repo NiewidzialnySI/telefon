@@ -1141,6 +1141,12 @@ private fun SekcjaNagrywaniaRozmow(context: Context) {
     var auto by remember {
         mutableStateOf(NagrywanieUstawienia.czyAuto(context))
     }
+    var adbTylkoRozmowa by remember {
+        mutableStateOf(NagrywanieUstawienia.czyAdbTylkoNaRozmowe(context))
+    }
+    var portalAuto by remember {
+        mutableStateOf(NagrywanieUstawienia.czyPortalFirmyAuto(context))
+    }
     var diag by remember { mutableStateOf(ShellAdbBootstrap.zdiagnozuj(context)) }
     var busy by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
@@ -1154,23 +1160,51 @@ private fun SekcjaNagrywaniaRozmow(context: Context) {
         scope.launch {
             odswiezDiag()
             if (ShellKlient.czyShellGotowy()) {
-                // Usługa OK — wyłącz Wireless debugging jeśli zostało włączone.
-                runCatching {
-                    ShellAdbBootstrap.sprobujWylaczycAdbWifiPoStarcie(context)
+                if (NagrywanieUstawienia.czyAdbTylkoNaRozmowe(context)) {
+                    // Tryb firmowy: po sparowaniu zgaś ADB — Portal Firmy.
+                    dialer.dominik.pl.nagranie.AdbNaprawa.wylaczDlaFirmowki(context)
+                    toast = "Sparowane — ADB OFF (Portal Firmy OK)"
+                } else {
+                    runCatching {
+                        ShellAdbBootstrap.sprobujWylaczycAdbWifiPoStarcie(context)
+                    }
+                    toast = "Usługa OK — USB debugging zostaje ON"
                 }
                 odswiezDiag()
-                toast = null
                 return@launch
             }
             busy = true
             toast = null
+            // Przycisk „Włącz Wi‑Fi” / start bez sieci — API lub panel systemowy.
+            if (!diag.wifi) {
+                toast = "Włączam Wi‑Fi…"
+                odswiezDiag()
+                val wifiOk = dialer.dominik.pl.nagranie.AdbNaprawa.zapewnijWifi(
+                    context,
+                    timeoutMs = 20_000L,
+                )
+                odswiezDiag()
+                if (!wifiOk) {
+                    toast = "Nie włączyłem Wi‑Fi automatycznie — włącz ręcznie i kliknij ponownie"
+                    busy = false
+                    return@launch
+                }
+                toast = null
+            }
             if (!diag.prefsSparowane) {
                 // adb_wifi + a11y (WRITE_SECURE) + nawigacja do okna z kodem + pair + powrót.
                 AdbParowanieService.startujIOtworzUstawienia(context)
                 toast = "Auto‑parowanie w toku…"
             } else {
                 when (val w = ShellAdbBootstrap.uruchomZOpisem(context)) {
-                    is ShellAdbBootstrap.WynikUruchom.Ok -> toast = null
+                    is ShellAdbBootstrap.WynikUruchom.Ok -> {
+                        if (NagrywanieUstawienia.czyAdbTylkoNaRozmowe(context)) {
+                            dialer.dominik.pl.nagranie.AdbNaprawa.wylaczDlaFirmowki(context)
+                            toast = "Usługa OK — ADB OFF (Portal Firmy OK)"
+                        } else {
+                            toast = "Usługa OK — USB debugging zostaje ON (bez Wi‑Fi też)"
+                        }
+                    }
                     is ShellAdbBootstrap.WynikUruchom.Blad -> {
                         toast = w.komunikat.take(80)
                         if (w.wymagaParowania) {
@@ -1184,6 +1218,42 @@ private fun SekcjaNagrywaniaRozmow(context: Context) {
             odswiezDiag()
             busy = false
         }
+    }
+
+    fun zastosujTrybFirmowy(on: Boolean, zAuto: Boolean = false) {
+        adbTylkoRozmowa = on
+        NagrywanieUstawienia.ustawAdbTylkoNaRozmowe(context, on)
+        if (on) {
+            dialer.dominik.pl.nagranie.AdbNaprawa.wylaczDlaFirmowki(context)
+            toast = if (zAuto) {
+                "Portal ON (auto) — ADB OFF"
+            } else {
+                "ADB OFF — Portal Firmy OK; włączy się przy rozmowie"
+            }
+            odswiezDiag()
+            if (!dialer.dominik.pl.nagranie.adb.AdbPowiadomienieListener.czyWlaczony(context)) {
+                dialer.dominik.pl.nagranie.adb.AdbPowiadomienieListener.otworzUstawienia(context)
+                toast = "Włącz dostęp do powiadomień — chroni baner połączenia"
+            }
+        } else {
+            toast = if (zAuto) {
+                "Portal OFF (auto) — startuję usługę (USB ON)…"
+            } else {
+                "Startuję usługę (USB ADB zostanie ON)…"
+            }
+            automatyzujStart()
+        }
+    }
+
+    fun syncPortalAuto(pokazBrak: Boolean = false) {
+        if (!NagrywanieUstawienia.czyPortalFirmyAuto(context)) return
+        if (!dialer.dominik.pl.nagranie.PortalFirmyDetektor.czyPortalIstnieje(context)) {
+            if (pokazBrak) toast = "Brak profilu firmowego w systemie"
+            return
+        }
+        val portalOn = dialer.dominik.pl.nagranie.PortalFirmyDetektor.czyPortalWlaczony(context)
+        if (adbTylkoRozmowa == portalOn) return
+        zastosujTrybFirmowy(portalOn, zAuto = true)
     }
 
     fun wlacNagrywanie(on: Boolean) {
@@ -1209,6 +1279,7 @@ private fun SekcjaNagrywaniaRozmow(context: Context) {
 
     LaunchedEffect(Unit) {
         odswiezDiag()
+        if (portalAuto) syncPortalAuto()
     }
 
     // Lekki polling statusu gdy kafelek otwarty i włączone (parowanie w tle).
@@ -1221,15 +1292,17 @@ private fun SekcjaNagrywaniaRozmow(context: Context) {
             if (ShellKlient.czyShellGotowy()) {
                 toast = null
                 busy = false
-                // Po starcie: stabilizuj raz, tylko gdy oba debugi jeszcze ON
-                // (świeży start). Wireless-only / Oba OFF zostaw w spokoju.
                 if (!wylaczonoAdbWifi &&
                     dialer.dominik.pl.nagranie.AdbNaprawa.czyAdbWifi(context) &&
                     dialer.dominik.pl.nagranie.AdbNaprawa.czyAdbUsb(context)
                 ) {
                     wylaczonoAdbWifi = true
-                    runCatching {
-                        ShellAdbBootstrap.sprobujWylaczycAdbWifiPoStarcie(context)
+                    if (NagrywanieUstawienia.czyAdbTylkoNaRozmowe(context)) {
+                        dialer.dominik.pl.nagranie.AdbNaprawa.wylaczDlaFirmowki(context)
+                    } else {
+                        runCatching {
+                            ShellAdbBootstrap.sprobujWylaczycAdbWifiPoStarcie(context)
+                        }
                     }
                     odswiezDiag()
                 }
@@ -1241,6 +1314,9 @@ private fun SekcjaNagrywaniaRozmow(context: Context) {
         val obs = LifecycleEventObserver { _, e ->
             if (e == Lifecycle.Event.ON_RESUME) {
                 odswiezDiag()
+                adbTylkoRozmowa = NagrywanieUstawienia.czyAdbTylkoNaRozmowe(context)
+                portalAuto = NagrywanieUstawienia.czyPortalFirmyAuto(context)
+                if (portalAuto) syncPortalAuto()
             }
         }
         lifecycleOwner.lifecycle.addObserver(obs)
@@ -1305,6 +1381,51 @@ private fun SekcjaNagrywaniaRozmow(context: Context) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Tryb Portal Firmy",
+                        color = paleta.naTle,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = "Auto",
+                        color = paleta.tekstDrugorzedny,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(end = 8.dp),
+                    )
+                    Switch(
+                        checked = portalAuto,
+                        onCheckedChange = {
+                            portalAuto = it
+                            NagrywanieUstawienia.ustawPortalFirmyAuto(context, it)
+                            if (it) {
+                                syncPortalAuto(pokazBrak = true)
+                            } else {
+                                toast = "Auto OFF — tryb ustawiasz ręcznie"
+                            }
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = akcent,
+                            checkedTrackColor = akcentMorski.copy(alpha = 0.55f),
+                        ),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Switch(
+                        checked = adbTylkoRozmowa,
+                        enabled = !portalAuto,
+                        onCheckedChange = { zastosujTrybFirmowy(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = akcent,
+                            checkedTrackColor = akcentMorski.copy(alpha = 0.55f),
+                        ),
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -1335,28 +1456,24 @@ private fun SekcjaNagrywaniaRozmow(context: Context) {
 
                 val etykieta = when {
                     busy -> "Łączę…"
-                    shellOk || diag.uslugaZyje -> diag.krotkiStatus()
+                    shellOk || diag.uslugaZyje -> null
+                    adbTylkoRozmowa && diag.prefsSparowane &&
+                        !diag.adbWifi && !diag.adbUsb -> null
                     !diag.wifi -> "Włącz Wi‑Fi"
                     !diag.prefsSparowane -> "Sparuj (zostań na oknie z kodem)"
                     !diag.adbWifi -> "Uruchom Wireless debugging"
                     else -> "Uruchom usługę"
                 }
-                val gotowe = shellOk || diag.uslugaZyje
+                val gotowe = shellOk || diag.uslugaZyje ||
+                    (adbTylkoRozmowa && diag.prefsSparowane)
                 if (!gotowe) {
                     PrzyciskPostepu(
-                        tytul = etykieta,
+                        tytul = etykieta ?: "Uruchom usługę",
                         postep = 0f,
                         aktywnyPostep = busy,
                         enabled = !busy,
                         onKlik = { automatyzujStart() },
                         modifier = Modifier.fillMaxWidth(),
-                    )
-                } else {
-                    Text(
-                        text = etykieta,
-                        color = akcent,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
                     )
                 }
 
@@ -1541,12 +1658,15 @@ private fun SekcjaAktualizacji(context: Context) {
                 )
             }
             is AktualizacjaAplikacji.Stan.GotowaDoInstalacji -> {
+                val adb = AktualizacjaAplikacji.czyAdbInstallDostepny()
                 PrzyciskPostepu(
-                    tytul = "Zainstaluj",
+                    tytul = if (adb) "Zainstaluj (ADB)" else "Zainstaluj",
                     postep = 0f,
                     aktywnyPostep = false,
                     enabled = true,
-                    onKlik = { AktualizacjaAplikacji.zainstaluj(context, s.plik) },
+                    onKlik = {
+                        scope.launch { AktualizacjaAplikacji.zainstaluj(context, s.plik) }
+                    },
                     modifier = Modifier.fillMaxWidth()
                 )
             }

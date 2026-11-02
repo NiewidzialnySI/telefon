@@ -89,14 +89,13 @@ object ZdolnosciCache {
 /**
  * Silniki — kolejność = naturalna drabinka (preferowany wskakuje na początek).
  *
- * Przewaga dialera: [HybrydaMicDownlink] miesza MIC w naszym procesie
- * (mamy RECORD_AUDIO + timing InCallService) z DOWNLINK w shell.
+ * Hybryda MIC+DOWNLINK: fallback gdy OEM blokuje UPLINK — MIC może łapać echo
+ * rozmówcy ze słuchawki (dlatego Dual/VC stereo mają pierwszeństwo w drabince).
  */
 enum class SilnikNagrywania(val id: String, val etykieta: String) {
-    // Hybryda pierwsza: MIC łapie „mnie”, gdy OEM blokuje VOICE_UPLINK (tylko oni w Dual).
-    HybrydaMicDownlink("hybryda", "Hybryda MIC+DOWNLINK"),
     DualUpDown("dual_up_dn", "Shell UPLINK+DOWNLINK"),
     VoiceCallStereo("vc_stereo", "Shell VOICE_CALL stereo"),
+    HybrydaMicDownlink("hybryda", "Hybryda MIC+DOWNLINK"),
     VoiceCallMono("vc_mono", "Shell VOICE_CALL mono"),
     PlaybackPolicy("playback", "Shell AudioPolicy (VoIP)"),
     LokalnyVoiceCall("lokalny_vc", "Lokalny VOICE_CALL"),

@@ -31,8 +31,14 @@ object NagrywanieStraznik {
         sprawdzWToku = true
         scope.launch {
             try {
+                // Tryb firmowy: ADB ma być OFF między rozmowami — nie budź daemona ani alertów.
+                if (NagrywanieUstawienia.czyAdbTylkoNaRozmowe(app)) {
+                    PowiadomieniaNagrywania.anulujBrak(app)
+                    return@launch
+                }
                 if (ShellAdbBootstrap.czySparowane(app) || ShellAdbBootstrap.usluga() != null) {
-                    runCatching { ShellKlient.zapewnij(app) }
+                    // Powrót do apki: tylko republish — nie włączaj Wireless/USB za użytkownika.
+                    runCatching { ShellKlient.zapewnij(app, autoWlacAdb = false) }
                         .onFailure { Log.w(TAG, "zapewnij", it) }
                 }
                 if (ShellKlient.czyShellGotowy()) {

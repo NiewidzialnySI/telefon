@@ -35,6 +35,15 @@ data class OpiniaUzytkownika(
     val zrodlo: String = "siec"
 )
 
+/** Czy treść opinii jest realna (nie pusta / nie JSON-owy „null”). */
+fun String?.czyMaTrescOpinii(): Boolean {
+    val t = this?.trim().orEmpty()
+    if (t.isEmpty()) return false
+    return !t.equals("null", ignoreCase = true) &&
+        !t.equals("undefined", ignoreCase = true) &&
+        !t.equals("nil", ignoreCase = true)
+}
+
 /** Wynik analizy wiarygodności numeru telefonu. */
 data class WynikWeryfikacjiNumeru(
     val numer: String,
@@ -365,7 +374,7 @@ object WeryfikacjaNumeru {
                     .replace(Regex("\\s+"), " ")
                     .trim()
                 val data = m.groupValues[3].trim()
-                if (tresc.isNotBlank()) {
+                if (tresc.czyMaTrescOpinii()) {
                     opinie.add(
                         OpiniaUzytkownika(
                             autor = "nieznanynumer.pl",
@@ -388,7 +397,7 @@ object WeryfikacjaNumeru {
                         .replace(Regex("<[^>]*>"), "")
                         .replace("&nbsp;", " ")
                         .trim()
-                    if (tresc.isNotBlank()) {
+                    if (tresc.czyMaTrescOpinii()) {
                         opinie.add(
                             OpiniaUzytkownika(
                                 autor = "nieznanynumer.pl",
@@ -511,12 +520,15 @@ object WeryfikacjaNumeru {
             if (arr != null) {
                 for (i in 0 until arr.length()) {
                     val x = arr.optJSONObject(i) ?: continue
+                    // optString na JSON null → literał „null” — odrzucamy.
+                    val tresc = if (x.isNull("c")) "" else x.optString("c")
+                    if (!tresc.czyMaTrescOpinii()) continue
                     opinie.add(
                         OpiniaUzytkownika(
                             autor = x.optString("a"),
                             data = x.optString("d"),
                             typOceny = x.optString("t"),
-                            tresc = x.optString("c"),
+                            tresc = tresc,
                             zrodlo = x.optString("z", "siec")
                         )
                     )

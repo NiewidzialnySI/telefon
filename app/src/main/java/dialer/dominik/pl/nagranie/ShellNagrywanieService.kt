@@ -6,13 +6,15 @@ import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.util.Log
 import androidx.annotation.Keep
+import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.system.exitProcess
 
 /**
  * Usługa w `app_process` UID 2000 (shell) — start przez Wireless ADB.
- * v3: + grantPermission (pm grant).
+ * v5: + ustawWifi (svc wifi).
  */
 @Keep
 class ShellNagrywanieService : INagrywanieShell.Stub {
@@ -171,6 +173,55 @@ class ShellNagrywanieService : INagrywanieShell.Stub {
             .getOrDefault(false)
     }
 
+    /**
+     * Jak adv-install / Obtainium (ścieżka shell): stage w `/data/local/tmp` + `pm install -r`.
+     * FD przychodzi z UID aplikacji — shell nie czyta prywatnego cache apki.
+     */
+    override fun installApk(apkFd: ParcelFileDescriptor): String {
+        val tmp = File("/data/local/tmp/telefon_update_${Process.myPid()}.apk")
+        return runCatching {
+            ParcelFileDescriptor.AutoCloseInputStream(apkFd).use { input ->
+                FileOutputStream(tmp).use { output ->
+                    input.copyTo(output, 64 * 1024)
+                    output.fd.sync()
+                }
+            }
+            if (!tmp.isFile || tmp.length() < 1024L) {
+                return@runCatching "APK za mały po zapisie (${tmp.length()} B)"
+            }
+            // -r replace, -t allow test/debug, -g grant runtime perms
+            val p = ProcessBuilder(
+                "pm", "install", "-r", "-t", "-g", tmp.absolutePath,
+            )
+                .redirectErrorStream(true)
+                .start()
+            val out = p.inputStream.bufferedReader().use { it.readText() }.trim()
+            val code = p.waitFor()
+            Log.i(TAG, "pm install → code=$code out=$out size=${tmp.length()}")
+            when {
+                code == 0 && out.contains("Success", ignoreCase = true) -> ""
+                out.isNotBlank() -> out.take(300)
+                else -> "pm install exit=$code"
+            }
+        }.onFailure { Log.e(TAG, "installApk", it) }
+            .getOrElse { it.message ?: "installApk fail" }
+            .also { runCatching { tmp.delete() } }
+    }
+
+    override fun ustawWifi(on: Boolean): Boolean {
+        val arg = if (on) "enable" else "disable"
+        return runCatching {
+            val p = ProcessBuilder("svc", "wifi", arg)
+                .redirectErrorStream(true)
+                .start()
+            val out = p.inputStream.bufferedReader().readText().trim()
+            val code = p.waitFor()
+            Log.i(TAG, "svc wifi $arg → code=$code out=$out")
+            code == 0
+        }.onFailure { Log.e(TAG, "ustawWifi($on)", it) }
+            .getOrDefault(false)
+    }
+
     override fun destroy() {
         Log.i(TAG, "destroy")
         runCatching { stop() }
@@ -179,7 +230,7 @@ class ShellNagrywanieService : INagrywanieShell.Stub {
 
     companion object {
         private const val TAG = "NagrywanieShell"
-        const val WERSJA = 3
+        const val WERSJA = 5
         private const val STAN_IDLE = 0
         private const val STAN_STARTING = 1
         private const val STAN_DUAL = 2

@@ -1,5 +1,6 @@
 package dialer.dominik.pl.call
 
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
 import android.os.OutcomeReceiver
@@ -21,6 +22,19 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.concurrent.Executor
+
+/**
+ * Czy podłączone są słuchawki Bluetooth (SCO/A2DP) — do auto-trasy przy wychodzącym.
+ * Przychodzące system i tak bierze BT; wychodzące nasze [ustawTrase] EARPIECE to gasiło.
+ */
+internal fun czyBluetoothSluchawkiPodlaczone(ctx: Context): Boolean {
+    val am = ctx.getSystemService(AudioManager::class.java) ?: return false
+    return am.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { d ->
+        d.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+            d.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+            (Build.VERSION.SDK_INT >= 31 && d.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
+    }
+}
 
 /**
  * Stan aktualnego połączenia — jeden wspólny obiekt dla InCallService i UI.
@@ -48,6 +62,12 @@ object StanPolaczenia {
 
     /** Czas rozpoczęcia rozmowy (millis) — do licznika trwania. */
     var czasStartu: Long by mutableStateOf(0L)
+
+    /**
+     * True od momentu odebrania / ACTIVE — nie kasować w [rozlaczRozmowe]
+     * przed [TelefonInCallService.onCallRemoved] (inaczej fałszywe „nieodebrane”).
+     */
+    var czyByloAktywne: Boolean by mutableStateOf(false)
 
     /** Czy mikrofon jest wyciszony. */
     var wyciszony: Boolean by mutableStateOf(false)
@@ -137,6 +157,43 @@ internal fun czyPolaczeniePrzychodzace(call: Call): Boolean {
 }
 
 /**
+ * Odebranie przychodzącego: answer + od razu oznacz jako aktywne i podnieś ADB/nagrywanie.
+ * Nie czekamy wyłącznie na callback ACTIVE (na lock screen bywa opóźniony / gubi się
+ * względem Rozłącz → fałszywe nieodebrane i brak nagrania).
+ */
+internal fun odbierzPolaczenie(context: Context, call: Call? = StanPolaczenia.polaczenie) {
+    val c = call ?: return
+    try {
+        c.answer(0)
+    } catch (e: Exception) {
+        e.printStackTrace()
+        return
+    }
+    oznaczOdebraneINagrywaj(context)
+}
+
+/** Flaga odebrania + auto-start nagrywania (albo sama rozgrzewka). Nie wołaj obu naraz. */
+internal fun oznaczOdebraneINagrywaj(context: Context) {
+    StanPolaczenia.czyByloAktywne = true
+    if (StanPolaczenia.czasStartu == 0L) {
+        StanPolaczenia.czasStartu = System.currentTimeMillis()
+    }
+    if (StanPolaczenia.stan == StanPolaczenia.Stan.Dzwoni) {
+        StanPolaczenia.stan = StanPolaczenia.Stan.Rozmowa
+    }
+    val nag = dialer.dominik.pl.nagranie.NagrywanieKontroler
+    // start() sam robi zapewnij — równoległy rozgrzej psuł connectTls/shell.
+    if (dialer.dominik.pl.nagranie.NagrywanieUstawienia.czyWlaczone(context) &&
+        dialer.dominik.pl.nagranie.NagrywanieUstawienia.czyAuto(context) &&
+        !nag.nagrywa
+    ) {
+        nag.start(context, StanPolaczenia.numerRozmowy, auto = true)
+    } else {
+        nag.rozgrzej(context)
+    }
+}
+
+/**
  * Jedna kolejka akcji audio/mute na połączenie dialing → active.
  * Nowe żądanie anuluje poprzednie oczekiwanie (ostatni wybór usera wygrywa).
  */
@@ -206,6 +263,9 @@ object OczekiwanieNaPolaczenie {
         anuluj()
         czyOczekuje = true
         odliczanie = LICZBA_POCZATKOWA
+        // Już przy 3…2…1 podnieś ADB — cold-start gotowy na początek rozmowy.
+        // Anulowanie → rozlaczRozmowe → poRozlaczeniu gasi ADB.
+        dialer.dominik.pl.nagranie.NagrywanieKontroler.rozgrzej(context)
         // Co sekundę zmniejszamy licznik, aż do zera. Przy każdym kroku aktualizujemy
         // UI (mutableStateOf), więc przycisk Rozłącz widzi aktualną cyfrę.
         val zadanie = object : Runnable {
@@ -280,6 +340,9 @@ class TelefonInCallService : InCallService() {
         super.onAvailableCallEndpointsChanged(availableEndpoints)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             dostepneEndpointy = availableEndpoints.toList()
+            // Wychodzące: BT endpoint często pojawia się dopiero po DIALING —
+            // jeśli user nie wybrał głośnika, przełącz na słuchawki.
+            autoBluetoothJesliWychodzace()
         }
     }
 
@@ -319,6 +382,8 @@ class TelefonInCallService : InCallService() {
         }
         // Każda rozmowa zaczyna z pustą notatką — zapis trafia do konkretnego wpisu CallLog.
         StanPolaczenia.notatkaRozmowy = ""
+        StanPolaczenia.czasStartu = 0L
+        StanPolaczenia.czyByloAktywne = false
         val nazwa = WeryfikacjaNumeru.pobierzNazweKontaktu(this, numer)
         val pseudonim = nazwa?.let { pobierzPseudonim(this, it) }
         StanPolaczenia.rozmowca = pseudonim
@@ -329,13 +394,18 @@ class TelefonInCallService : InCallService() {
         aktualizujStan(call, call.state)
 
         // Nie ruszaj trasy audio przy RINGING — setAudioRoute na przychodzącym bywa
-        // interpretowane przez OEM jak „zajęcie” linii; trasa i tak przy ACTIVE.
-        // Nie resetuj do EARPIECE, gdy user już wybrał głośnik/BT podczas dzwonienia.
+        // interpretowane przez OEM jak „zajęcie” linii; system sam bierze BT.
+        // Wychodzące: NIE forsuj EARPIECE (to wyłączało podłączone słuchawki BT).
+        // Zamiast tego — jeśli BT jest dostępne, zapamiętaj i wymuś przy ACTIVE.
         if (!zachowajTrase && call.state != Call.STATE_RINGING) {
-            try {
-                ustawTrase(CallAudioState.ROUTE_WIRED_OR_EARPIECE)
-            } catch (e: Exception) {
-                e.printStackTrace()
+            if (czyBluetoothDostepnyDlaRozmowy()) {
+                StanPolaczenia.zadanaTrasa = CallAudioState.ROUTE_BLUETOOTH
+                StanPolaczenia.bluetoothAktywny = true
+                try {
+                    ustawTrase(CallAudioState.ROUTE_BLUETOOTH)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
         }
         // Nie kasuj kolejki dialing — kolejkujGdyGotowa ma wykonać mute/trasę po ACTIVE.
@@ -377,16 +447,24 @@ class TelefonInCallService : InCallService() {
 
         val czyPrzychodzace = StanPolaczenia.czyPrzychodzace
         val czasStartu = StanPolaczenia.czasStartu
+        val byloAktywne = StanPolaczenia.czyByloAktywne
         val rozmowca = StanPolaczenia.rozmowca
         val numer = StanPolaczenia.numerRozmowy
+        val cause = runCatching { call.details.disconnectCause.code }.getOrNull()
 
-        // Powiadomienie o nieodebranym połączeniu
-        if (czyPrzychodzace && czasStartu == 0L && numer.isNotBlank()) {
+        // Nieodebrane tylko gdy NIGDY nie było ACTIVE/odebrania.
+        // Nie polegaj samym na czasStartu — rozlaczRozmowe bywa wcześniej i zeruje pola.
+        val odrzucone = cause == android.telecom.DisconnectCause.REJECTED ||
+            cause == android.telecom.DisconnectCause.BUSY
+        if (czyPrzychodzace && !byloAktywne && czasStartu == 0L &&
+            !odrzucone && numer.isNotBlank()
+        ) {
             PowiadomieniaNieodebranych.dodajIPokaz(this, rozmowca, numer)
         }
 
-        // Zatrzymaj nagrywanie przy końcu rozmowy.
+        // Zatrzymaj nagrywanie przy końcu rozmowy (+ ADB OFF w trybie firmowym).
         dialer.dominik.pl.nagranie.NagrywanieKontroler.stop()
+        dialer.dominik.pl.nagranie.NagrywanieKontroler.poRozlaczeniu(this)
         // Rozmowa się skończyła — zamknij własny dymek (nakładka), jeśli jest.
         DymekRozmowyService.stop(this)
         // Notatka → konkretny wpis CallLog (nie kafelek numeru). CallLog bywa
@@ -427,6 +505,7 @@ class TelefonInCallService : InCallService() {
             StanPolaczenia.polaczenie = null
             StanPolaczenia.stan = StanPolaczenia.Stan.Brak
             StanPolaczenia.czasStartu = 0L
+            StanPolaczenia.czyByloAktywne = false
             // Zamknij ekran rozmowy — połączenie się skończyło
             EkranRozmowy.zamknij(this)
         }
@@ -614,7 +693,9 @@ class TelefonInCallService : InCallService() {
                 ustawTrase(trasa)
             } else if (StanPolaczenia.glosnik) {
                 ustawTrase(CallAudioState.ROUTE_SPEAKER)
-            } else if (StanPolaczenia.bluetoothAktywny) {
+            } else if (StanPolaczenia.bluetoothAktywny || czyBluetoothDostepnyDlaRozmowy()) {
+                StanPolaczenia.bluetoothAktywny = true
+                StanPolaczenia.zadanaTrasa = CallAudioState.ROUTE_BLUETOOTH
                 ustawTrase(CallAudioState.ROUTE_BLUETOOTH)
             }
         } catch (e: Exception) {
@@ -625,8 +706,65 @@ class TelefonInCallService : InCallService() {
         mainExecutor.execute {
             android.os.Handler(mainLooper).postDelayed({
                 odswiezPrzyciskiZBiezacejTrasy()
+                // Druga szansa — endpoint BT bywa opóźniony na ColorOS przy wychodzącym.
+                autoBluetoothJesliWychodzace()
             }, 600L)
         }
+        mainExecutor.execute {
+            android.os.Handler(mainLooper).postDelayed({
+                autoBluetoothJesliWychodzace()
+            }, 1_500L)
+        }
+    }
+
+    /** Endpoint BT / supportedRouteMask / urządzenia AudioManager. */
+    private fun czyBluetoothDostepnyDlaRozmowy(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            if (dostepneEndpointy.any { it.endpointType == CallEndpoint.TYPE_BLUETOOTH }) {
+                return true
+            }
+        }
+        @Suppress("DEPRECATION")
+        val cas = callAudioState
+        if (cas != null &&
+            (cas.supportedRouteMask and CallAudioState.ROUTE_BLUETOOTH) != 0
+        ) {
+            return true
+        }
+        return czyBluetoothSluchawkiPodlaczone(this)
+    }
+
+    /**
+     * Wychodzące + podłączone BT + brak wyboru głośnika → przełącz na słuchawki.
+     * (Przychodzące: system zwykle sam wybiera BT; nie ruszamy przy RINGING.)
+     */
+    private fun autoBluetoothJesliWychodzace() {
+        if (StanPolaczenia.czyPrzychodzace) return
+        if (StanPolaczenia.glosnik) return
+        if (StanPolaczenia.stan != StanPolaczenia.Stan.Dzwoni &&
+            StanPolaczenia.stan != StanPolaczenia.Stan.Rozmowa
+        ) {
+            return
+        }
+        // User świadomie wybrał ucho (nie BT) — nie nadpisuj.
+        if (StanPolaczenia.zadanaTrasa == CallAudioState.ROUTE_WIRED_OR_EARPIECE ||
+            StanPolaczenia.zadanaTrasa == CallAudioState.ROUTE_EARPIECE
+        ) {
+            return
+        }
+        if (!czyBluetoothDostepnyDlaRozmowy()) return
+        if (StanPolaczenia.bluetoothAktywny &&
+            StanPolaczenia.zadanaTrasa == CallAudioState.ROUTE_BLUETOOTH
+        ) {
+            // Już zaplanowane — dociśnij trasę (DIALING mógł zignorować).
+            if (StanPolaczenia.stan == StanPolaczenia.Stan.Rozmowa) {
+                runCatching { ustawTrase(CallAudioState.ROUTE_BLUETOOTH) }
+            }
+            return
+        }
+        StanPolaczenia.zadanaTrasa = CallAudioState.ROUTE_BLUETOOTH
+        StanPolaczenia.bluetoothAktywny = true
+        runCatching { ustawTrase(CallAudioState.ROUTE_BLUETOOTH) }
     }
 
     private fun odswiezPrzyciskiZBiezacejTrasy() {
@@ -646,16 +784,29 @@ class TelefonInCallService : InCallService() {
         StanPolaczenia.czyPrzychodzace = czyPolaczeniePrzychodzace(call)
         StanPolaczenia.stan = when (stan) {
             Call.STATE_NEW, Call.STATE_CONNECTING, Call.STATE_DIALING -> {
-                // Podnieś daemon ADB zanim rozmowa będzie ACTIVE (~11 s delay).
-                dialer.dominik.pl.nagranie.NagrywanieKontroler.rozgrzej(this@TelefonInCallService)
+                // Tylko wychodzące: podnieś ADB w trakcie dzwonienia.
+                // Przychodzące — NIE (Wireless debugging zabija baner CallStyle
+                // → brak odbierania z powiadomienia → fałszywe „nieodebrane”).
+                if (!StanPolaczenia.czyPrzychodzace) {
+                    dialer.dominik.pl.nagranie.NagrywanieKontroler
+                        .rozgrzej(this@TelefonInCallService)
+                }
                 StanPolaczenia.Stan.Dzwoni
             }
             Call.STATE_RINGING -> {
-                dialer.dominik.pl.nagranie.NagrywanieKontroler.rozgrzej(this@TelefonInCallService)
+                // Odblokowany + CallStyle: nie włączaj ADB (baner Wireless zabija Odbierz).
+                // Zablokowany ekran → pełny UI (bez CallStyle) — wolno rozgrzewać od razu.
+                val locked = getSystemService(android.app.KeyguardManager::class.java)
+                    ?.isKeyguardLocked == true
+                if (locked) {
+                    dialer.dominik.pl.nagranie.NagrywanieKontroler
+                        .rozgrzej(this@TelefonInCallService)
+                }
                 StanPolaczenia.Stan.Dzwoni
             }
             Call.STATE_ACTIVE -> {
                 ZarzadcaDzwonka.zatrzymaj()
+                StanPolaczenia.czyByloAktywne = true
                 if (StanPolaczenia.czasStartu == 0L) {
                     StanPolaczenia.czasStartu = System.currentTimeMillis()
                 }
@@ -666,16 +817,8 @@ class TelefonInCallService : InCallService() {
                     StanPolaczenia.rozmowca,
                     StanPolaczenia.wyciszony
                 )
-                // Auto-nagrywanie — tylko gdy włączone w ustawieniach.
-                dialer.dominik.pl.nagranie.NagrywanieKontroler.let { nag ->
-                    val ctx = this@TelefonInCallService
-                    if (dialer.dominik.pl.nagranie.NagrywanieUstawienia.czyWlaczone(ctx) &&
-                        dialer.dominik.pl.nagranie.NagrywanieUstawienia.czyAuto(ctx) &&
-                        !nag.nagrywa
-                    ) {
-                        nag.start(ctx, StanPolaczenia.numerRozmowy, auto = true)
-                    }
-                }
+                // Odebrane / ACTIVE — ADB + auto-nagrywanie (także gdy answer() już odpalił).
+                oznaczOdebraneINagrywaj(this@TelefonInCallService)
                 StanPolaczenia.Stan.Rozmowa
             }
             Call.STATE_HOLDING -> StanPolaczenia.Stan.Zawieszone

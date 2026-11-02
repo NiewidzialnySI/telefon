@@ -13,7 +13,7 @@ class AkcjaPolaczeniaReceiver : BroadcastReceiver() {
 
         when (intent.action) {
             "AKCJA_ODBIERZ" -> {
-                StanPolaczenia.polaczenie?.answer(0)
+                odbierzPolaczenie(context, StanPolaczenia.polaczenie)
                 EkranRozmowy.pokaz(context)
             }
             "AKCJA_ODRZUC" -> {

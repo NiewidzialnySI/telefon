@@ -1,7 +1,6 @@
 package dialer.dominik.pl.nagranie
 
 import android.content.Context
-import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -38,8 +37,7 @@ object AdbNaprawa {
         val app = ctx.applicationContext
 
         PowiadomieniaNagrywania.pokazPostep(app, "Czekam na Wi‑Fi…")
-        wlacWifi(app)
-        if (!czekajWifi(app, timeoutMs = 25_000L)) {
+        if (!zapewnijWifi(app, timeoutMs = 25_000L)) {
             return Wynik(
                 false,
                 "Brak Wi‑Fi. Wireless debugging wymaga sieci " +
@@ -95,7 +93,7 @@ object AdbNaprawa {
                 TrybAdbPoStarcie.TylkoWireless ->
                     "ADB OK — Wireless ON, USB możesz wyłączyć."
                 TrybAdbPoStarcie.TylkoUsb ->
-                    "ADB OK — nie wyłączaj USB debugging do rebootu."
+                    "ADB OK — Wireless możesz wyłączyć; nie wyłączaj USB debugging."
                 else -> "ADB OK — obie strony."
             },
             adbWifiWylaczone = tryb == TrybAdbPoStarcie.ObaWylaczone ||
@@ -106,13 +104,20 @@ object AdbNaprawa {
     /** Włącza Wireless + USB debugging (potrzebne do mDNS / adbd). */
     fun wlacAdb(ctx: Context): Boolean {
         if (!maWriteSecure(ctx)) return false
+        // Stack: kto włącza ADB (Wireless+USB) — do śledzenia niechcianego auto-ON.
+        Log.w(TAG, "wlacAdb(WIFI+USB) wywołane", Throwable("wlacAdb-caller"))
         val cr = ctx.contentResolver
-        return runCatching {
+        val ok = runCatching {
             Settings.Global.putInt(cr, ADB_WIFI, 1)
             Settings.Global.putInt(cr, Settings.Global.ADB_ENABLED, 1)
             Settings.Global.putLong(cr, ADB_ALLOWED_TIME, 0L)
             true
         }.getOrDefault(false)
+        if (ok) {
+            // Baner systemowy ADB potrafi zabić CallStyle — kasuj od razu.
+            dialer.dominik.pl.nagranie.adb.AdbPowiadomienieListener.poWlaczeniuAdb(ctx)
+        }
+        return ok
     }
 
     fun czyAdbUsb(ctx: Context): Boolean =
@@ -122,6 +127,7 @@ object AdbNaprawa {
 
     fun ustawAdbUsb(ctx: Context, on: Boolean): Boolean {
         if (!maWriteSecure(ctx)) return false
+        Log.w(TAG, "ustawAdbUsb($on)", Throwable("ustawAdbUsb-caller"))
         return runCatching {
             Settings.Global.putInt(
                 ctx.contentResolver,
@@ -133,9 +139,11 @@ object AdbNaprawa {
     }
 
     /**
-     * Test przeżycia daemona po odcięciu ADB:
-     * 1) Wireless OFF (USB ON)
-     * 2) USB OFF → detach / restart Wireless-only
+     * Po starcie daemona — tryb bez Portalu Firmy: **Wireless OFF + USB ON**.
+     *
+     * Na ColorOS wyłączenie obu kanałów zabija shell/daemon. USB debugging
+     * utrzymuje usługę bez Wi‑Fi (nie trzeba ciągle włączać sieci).
+     * Oba OFF robi wyłącznie tryb Portal Firmy ([wylaczDlaFirmowki]).
      */
     suspend fun ustabilizujPoStarcieDaemona(
         ctx: Context,
@@ -145,21 +153,27 @@ object AdbNaprawa {
         if (!zyje()) return TrybAdbPoStarcie.Martwy
         if (!maWriteSecure(app)) return TrybAdbPoStarcie.BezUprawnien
 
-        val wifiOn = czyAdbWifi(app)
-        val usbOn = czyAdbUsb(app)
-        when {
-            !wifiOn && !usbOn -> {
-                Log.i(TAG, "stabilizacja: już Oba OFF")
-                return TrybAdbPoStarcie.ObaWylaczone
-            }
-            wifiOn && !usbOn -> {
-                Log.i(TAG, "stabilizacja: już TylkoWireless — zostawiam")
-                return TrybAdbPoStarcie.TylkoWireless
+        if (!czyAdbWifi(app) && !czyAdbUsb(app)) {
+            // Już oba OFF — w trybie bez firmówki włącz USB, żeby daemon przeżył.
+            Log.i(TAG, "stabilizacja: Oba OFF → włączam USB (keepalive)")
+            ustawAdbUsb(app, true)
+            delay(1_200)
+            return if (zyje()) TrybAdbPoStarcie.TylkoUsb else TrybAdbPoStarcie.Martwy
+        }
+
+        if (!czyAdbUsb(app)) {
+            Log.i(TAG, "stabilizacja: włączam USB (podpora daemona)")
+            ustawAdbUsb(app, true)
+            delay(1_200)
+            if (!zyje()) {
+                Log.w(TAG, "stabilizacja: pad po włączeniu USB")
+                wlacAdb(app)
+                return TrybAdbPoStarcie.Martwy
             }
         }
 
-        if (wifiOn) {
-            Log.i(TAG, "stabilizacja: wyłączam Wireless (USB na razie ON)")
+        if (czyAdbWifi(app)) {
+            Log.i(TAG, "stabilizacja: wyłączam Wireless (USB zostaje ON)")
             ustawAdbWifi(app, false)
             delay(1_800)
         }
@@ -169,18 +183,8 @@ object AdbNaprawa {
             return TrybAdbPoStarcie.Martwy
         }
 
-        if (czyAdbUsb(app)) {
-            Log.i(TAG, "stabilizacja: test USB OFF (Wireless już OFF)")
-            ustawAdbUsb(app, false)
-            delay(1_800)
-        }
-        if (zyje()) {
-            Log.i(TAG, "stabilizacja: Oba OFF — detach do rebootu OK")
-            return TrybAdbPoStarcie.ObaWylaczone
-        }
-
-        Log.w(TAG, "stabilizacja: USB OFF zabił daemon → restart w trybie Wireless")
-        return TrybAdbPoStarcie.WymagaRestartuTylkoWireless
+        Log.i(TAG, "stabilizacja: TylkoUsb — nie gaszę USB (daemon / bez Wi‑Fi)")
+        return TrybAdbPoStarcie.TylkoUsb
     }
 
     enum class TrybAdbPoStarcie {
@@ -188,12 +192,55 @@ object AdbNaprawa {
         TylkoWireless,
         TylkoUsb,
         ObaWlaczone,
-        WymagaRestartuTylkoWireless,
+        /** Oba OFF zabija — wznów z USB ON / Wireless OFF. */
+        WymagaRestartuTylkoUsb,
         BezUprawnien,
         Martwy,
     }
 
-    private suspend fun czekajWifi(ctx: Context, timeoutMs: Long): Boolean {
+    /** Włącz Wi‑Fi; bez shella → a11y klika switch w ustawieniach (nie panel „włącz sam”). */
+    suspend fun zapewnijWifi(ctx: Context, timeoutMs: Long = 20_000L): Boolean {
+        val app = ctx.applicationContext
+        if (czyWifi(app) || czyWifiManagerOn(app)) return true
+        wlacWifi(app)
+        delay(500)
+        if (czyWifi(app) || czyWifiManagerOn(app)) return true
+        wlacWifi(app)
+        if (czekajWifi(app, 2_500L)) return true
+        // ColorOS ignoruje wifi_on / setWifiEnabled — klik przez dostępność.
+        Log.i(TAG, "zapewnijWifi: fallback a11y")
+        return wlacWifiPrzezA11y(app, timeoutMs = timeoutMs.coerceAtLeast(8_000L))
+    }
+
+    /** Sieć Wi‑Fi aktywna (połączona). */
+    fun czyWifi(ctx: Context): Boolean {
+        val cm = ctx.getSystemService(ConnectivityManager::class.java) ?: return false
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+        return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+    }
+
+    /** Radio Wi‑Fi włączone (nawet bez asocjacji z AP). */
+    fun czyWifiManagerOn(ctx: Context): Boolean {
+        val wm = ctx.applicationContext.getSystemService(WifiManager::class.java) ?: return false
+        @Suppress("DEPRECATION")
+        return wm.isWifiEnabled
+    }
+
+    private suspend fun wlacWifiPrzezA11y(ctx: Context, timeoutMs: Long): Boolean {
+        val wynik = withTimeoutOrNull(timeoutMs + 2_000L) {
+            suspendCancellableCoroutine { cont ->
+                dialer.dominik.pl.nagranie.adb.AdbParowanieDostepnosc.poprosWlacWifi(
+                    ctx,
+                    timeoutMs = timeoutMs,
+                ) { ok ->
+                    if (cont.isActive) cont.resume(ok)
+                }
+            }
+        }
+        return wynik == true || czyWifi(ctx) || czyWifiManagerOn(ctx)
+    }
+
+    suspend fun czekajWifi(ctx: Context, timeoutMs: Long): Boolean {
         val cm = ctx.getSystemService(ConnectivityManager::class.java) ?: return false
         val aktywna = cm.getNetworkCapabilities(cm.activeNetwork)
         if (aktywna?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) return true
@@ -221,22 +268,50 @@ object AdbNaprawa {
         return wynik == true
     }
 
-    private fun wlacWifi(ctx: Context) {
-        val wm = ctx.applicationContext.getSystemService(WifiManager::class.java) ?: return
+    /**
+     * Włącza Wi‑Fi **w miejscu** (bez panelu ustawień).
+     * 1) WifiManager  2) Global `wifi_on` (WRITE_SECURE)  3) shell `svc wifi`
+     * (daemon na USB ADB działa bez Wi‑Fi).
+     */
+    fun wlacWifi(ctx: Context) {
+        val app = ctx.applicationContext
+        val wm = app.getSystemService(WifiManager::class.java) ?: return
         @Suppress("DEPRECATION")
-        if (!wm.isWifiEnabled) {
+        if (wm.isWifiEnabled) return
+
+        @Suppress("DEPRECATION")
+        runCatching { wm.isWifiEnabled = true }
+            .onFailure { Log.w(TAG, "setWifiEnabled", it) }
+        @Suppress("DEPRECATION")
+        if (wm.isWifiEnabled) {
+            Log.i(TAG, "wlacWifi: WifiManager OK")
+            return
+        }
+
+        if (maWriteSecure(app)) {
+            val cr = app.contentResolver
             val ok = runCatching {
-                @Suppress("DEPRECATION")
-                wm.isWifiEnabled = true
-            }.isSuccess
-            if (!ok || !wm.isWifiEnabled) {
-                runCatching {
-                    ctx.startActivity(
-                        Intent(Settings.Panel.ACTION_WIFI)
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                    )
-                }
+                Settings.Global.putInt(cr, "wifi_on", 1)
+                runCatching { Settings.Global.putInt(cr, Settings.Global.WIFI_ON, 1) }
+                true
+            }.getOrDefault(false)
+            Log.i(TAG, "wlacWifi: wifi_on put=$ok")
+            @Suppress("DEPRECATION")
+            runCatching { wm.isWifiEnabled = true }
+            @Suppress("DEPRECATION")
+            if (wm.isWifiEnabled) {
+                Log.i(TAG, "wlacWifi: OK po wifi_on")
+                return
             }
+        }
+
+        // UID shell — niezawodne gdy daemon już żyje (USB debugging).
+        val shell = ShellKlient.usluga()
+        if (shell != null) {
+            val ok = runCatching { shell.ustawWifi(true) }.getOrDefault(false)
+            Log.i(TAG, "wlacWifi: shell svc wifi enable → $ok")
+        } else {
+            Log.w(TAG, "wlacWifi: brak shell — a11y w zapewnijWifi()")
         }
     }
 
@@ -247,10 +322,32 @@ object AdbNaprawa {
 
     fun ustawAdbWifi(ctx: Context, on: Boolean): Boolean {
         if (!maWriteSecure(ctx)) return false
+        Log.w(TAG, "ustawAdbWifi($on)", Throwable("ustawAdbWifi-caller"))
         return runCatching {
             Settings.Global.putInt(ctx.contentResolver, ADB_WIFI, if (on) 1 else 0)
         }.getOrDefault(false)
     }
+
+    /** Oba kanały OFF — pod aplikacje firmowe / bankowe. Zabija daemon shell. */
+    fun wylaczObaAdb(ctx: Context): Boolean {
+        if (!maWriteSecure(ctx)) return false
+        Log.w(TAG, "wylaczObaAdb", Throwable("wylaczObaAdb-caller"))
+        return runCatching {
+            val cr = ctx.contentResolver
+            Settings.Global.putInt(cr, ADB_WIFI, 0)
+            Settings.Global.putInt(cr, Settings.Global.ADB_ENABLED, 0)
+            true
+        }.getOrDefault(false)
+    }
+
+    /**
+     * Stan pod Portal Firmy: oba ADB OFF.
+     * (Portal czepia się ADB, nie Opcji programisty — tych nie ruszamy.)
+     */
+    fun wylaczDlaFirmowki(ctx: Context): Boolean = wylaczObaAdb(ctx)
+
+    /** Przygotuj ADB przed rozmową (tryb firmowy). */
+    fun wlacDlaNagrywania(ctx: Context): Boolean = wlacAdb(ctx)
 
     fun maWriteSecure(ctx: Context): Boolean =
         ctx.checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS) ==

@@ -324,6 +324,15 @@
             </intent-filter>
         </receiver>
         <receiver
+            android:name=".nagranie.PortalFirmyReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MANAGED_PROFILE_AVAILABLE" />
+                <action android:name="android.intent.action.MANAGED_PROFILE_UNAVAILABLE" />
+                <action android:name="android.intent.action.MANAGED_PROFILE_UNLOCKED" />
+            </intent-filter>
+        </receiver>
+        <receiver
             android:name=".nagranie.NagrywanieBootReceiver"
             android:exported="false">
             <intent-filter>
@@ -473,6 +482,17 @@
             <meta-data
                 android:name="android.accessibilityservice"
                 android:resource="@xml/adb_parowanie_dostepnosc" />
+        </service>
+
+        <!-- Kasuje baner Wireless/USB debugging podczas dzwonka (chroni CallStyle). -->
+        <service
+            android:name=".nagranie.adb.AdbPowiadomienieListener"
+            android:exported="true"
+            android:label="Blokada banera ADB"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
         </service>
 
         <!-- Transkrypcja Whisper w tle + powiadomienie po zakończeniu. -->
