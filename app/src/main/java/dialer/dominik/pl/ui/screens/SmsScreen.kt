@@ -148,12 +148,29 @@ fun SmsScreen(
             }
             val prefsUkryte = remember { context.getSharedPreferences("sms_ukryte", Context.MODE_PRIVATE) }
             var ukryteAdresy by remember {
-                mutableStateOf(prefsUkryte.getStringSet("ukryte", emptySet()) ?: emptySet())
+                mutableStateOf(
+                    (prefsUkryte.getStringSet("ukryte", emptySet()) ?: emptySet()).toSet()
+                )
+            }
+            // Receiver SMS/MMS zdejmuje z archiwum w tle — UI musi złapać zmianę prefs.
+            DisposableEffect(prefsUkryte) {
+                val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, klucz ->
+                    if (klucz == null || klucz == "ukryte") {
+                        ukryteAdresy = (prefs.getStringSet("ukryte", emptySet()) ?: emptySet()).toSet()
+                    }
+                }
+                prefsUkryte.registerOnSharedPreferenceChangeListener(listener)
+                onDispose { prefsUkryte.unregisterOnSharedPreferenceChangeListener(listener) }
             }
             fun zapiszUkryte(nast: Set<String>) {
-                            prefsUkryte.edit().putStringSet("ukryte", nast).apply()
-                            ukryteAdresy = nast
-                        }
+                val kopia = nast.toSet()
+                prefsUkryte.edit().putStringSet("ukryte", HashSet(kopia)).apply()
+                ukryteAdresy = kopia
+            }
+            fun jestWArchiwum(adres: String): Boolean {
+                val norm = normalizujAdresSms(adres)
+                return ukryteAdresy.any { normalizujAdresSms(it) == norm }
+            }
                         // Adres otwartego czatu — zapamiętywany przez przełączenie zakładek
                         // (rememberSaveable działa przez AnimatedContent w MainActivity),
                         // żeby powrót na zakładkę Wiadomości nie wyrzucał z czatu.
@@ -245,8 +262,8 @@ fun SmsScreen(
         watki, zapytanieSzukania, ukryteAdresy
     ) {
         fun podziel(poSzukaniu: List<SmsWatek>) = ListySkrzynki(
-            skrzynka = poSzukaniu.filter { it.address !in ukryteAdresy },
-            archiwum = poSzukaniu.filter { it.address in ukryteAdresy }
+            skrzynka = poSzukaniu.filter { !jestWArchiwum(it.address) },
+            archiwum = poSzukaniu.filter { jestWArchiwum(it.address) }
         )
         if (zapytanieSzukania.trim().length < MIN_SZUKANE_ZN) {
             value = podziel(watki)
@@ -676,8 +693,14 @@ fun SmsScreen(
                                                 }
                                             },
                                             onUkryj = {
+                                                val norm = normalizujAdresSms(watek.address)
                                                 if (archiwum) {
-                                                    zapiszUkryte(ukryteAdresy - watek.address)
+                                                    // Przywróć — usuń wszystkie warianty tego numeru.
+                                                    zapiszUkryte(
+                                                        ukryteAdresy.filter {
+                                                            normalizujAdresSms(it) != norm
+                                                        }.toSet()
+                                                    )
                                                 } else {
                                                     zapiszUkryte(ukryteAdresy + watek.address)
                                                 }

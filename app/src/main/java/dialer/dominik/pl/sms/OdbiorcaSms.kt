@@ -196,12 +196,18 @@ class OdbiorcaSms : BroadcastReceiver() {
             try { Thread.yield() } catch (_: Exception) {}
             pokazPowiadomienie(context, nadawca, tresc, czas, otp)
             try {
+                // Archiwum ma nie zaśmiecać głównej — ale nowa wiadomość wraca na skrzynkę.
+                // Porównanie po normalizacji (+48… / 0… / same cyfry), nie String.equals.
                 val prefsUkryte = context.getSharedPreferences("sms_ukryte", Context.MODE_PRIVATE)
                 val zestaw = (prefsUkryte.getStringSet("ukryte", emptySet()) ?: emptySet()).toMutableSet()
-                if (nadawca in zestaw) {
-                    zestaw.remove(nadawca)
-                    prefsUkryte.edit().putStringSet("ukryte", zestaw).apply()
-                    Log.i(TAG, "Nowa wiadomość od archiwizowanego nadawcy $nadawca — cofnięto do skrzynki")
+                val norm = dialer.dominik.pl.ui.screens.normalizujAdresSms(nadawca)
+                val doUsuniecia = zestaw.filter {
+                    dialer.dominik.pl.ui.screens.normalizujAdresSms(it) == norm
+                }
+                if (doUsuniecia.isNotEmpty()) {
+                    zestaw.removeAll(doUsuniecia.toSet())
+                    prefsUkryte.edit().putStringSet("ukryte", HashSet(zestaw)).apply()
+                    Log.i(TAG, "Nowa wiadomość od archiwizowanego $nadawca — przywrócono na skrzynkę (${doUsuniecia.size})")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Błąd zdejmowania z archiwum", e)

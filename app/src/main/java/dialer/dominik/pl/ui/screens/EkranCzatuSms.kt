@@ -1094,8 +1094,10 @@ internal fun EkranCzatuSzczegoly(
                                     onWiadomoscWyslana()
                                     przewinDoNajnowszej(animacja = true)
                                     coroutineScope.launch {
-                                        val ok = withContext(Dispatchers.IO) {
-                                            doWyslania.mapIndexed { index, z ->
+                                        // Jak EkranNowejWiadomosci: sendMultimediaMessage z Main
+                                        // (kompresja JPEG wewnątrz wyslijMms; na ColorOS sam IO bywa zawodny).
+                                        val ok = doWyslania.mapIndexed { index, z ->
+                                            withContext(Dispatchers.Main) {
                                                 wyslijMms(
                                                     context = context,
                                                     numer = adres,
@@ -1517,9 +1519,11 @@ internal fun scalWiadomosciCzatu(
         }
     }
     val pendingLokalne = lokalne.filter { w ->
-        w.lokalnyKlucz != null &&
-            stanZKolumnSms(w.type, w.status) == StanWysylki.WYSYLANIE &&
-            wynik.none { b -> b.id == w.id || b.lokalnyKlucz == w.lokalnyKlucz }
+        if (w.lokalnyKlucz == null) return@filter false
+        if (wynik.any { b -> b.id == w.id || b.lokalnyKlucz == w.lokalnyKlucz }) return@filter false
+        // Zostaw też „wysłane” optymistyczne MMS — zanim outbox→sent wpadnie do query.
+        val stan = stanZKolumnSms(w.type, w.status)
+        stan == StanWysylki.WYSYLANIE || stan == StanWysylki.WYSŁANO
     }
     return (wynik + pendingLokalne)
         .distinctBy { it.lokalnyKlucz?.let { k -> "L$k" } ?: "I${it.id}" }

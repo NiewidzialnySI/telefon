@@ -36,7 +36,9 @@ class BubbleChatActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         val numer = intent?.getStringExtra(EXTRA_NUMER) ?: ""
-        val kontekst = applicationContext
+        // Activity — nie applicationContext: launcher galerii/kamery i SmsManager
+        // w dymku (multi-window) wymagają prawdziwego kontekstu Activity.
+        val aktywnosc = this
 
         setContent {
             TelefonTheme {
@@ -48,16 +50,16 @@ class BubbleChatActivity : ComponentActivity() {
                 // wątek, więc czat w dymku pokazuje najnowsze wiadomości.
                 androidx.compose.runtime.LaunchedEffect(odswiez, OdbiorcaSms.ostatniaWiadomosc?.czas) {
                     watek = withContext(Dispatchers.IO) {
-                        val wszystkie = pobierzWątkiSms(kontekst)
+                        val wszystkie = pobierzWątkiSms(aktywnosc)
                         val norm = dialer.dominik.pl.ui.screens.normalizujAdresSms(numer)
                         val znaleziony = wszystkie.firstOrNull {
                             it.address == numer ||
                                 dialer.dominik.pl.ui.screens.normalizujAdresSms(it.address) == norm
                         }
                         val nazwa = znaleziony?.contactName
-                            ?: resolveContactName(kontekst, numer)
+                            ?: resolveContactName(aktywnosc, numer)
                         val pseudo = znaleziony?.pseudonim
-                            ?: nazwa?.let { dialer.dominik.pl.ui.screens.pobierzPseudonim(kontekst, it) }
+                            ?: nazwa?.let { dialer.dominik.pl.ui.screens.pobierzPseudonim(aktywnosc, it) }
                         (znaleziony ?: SmsWatek(
                             address = numer,
                             contactName = nazwa,
@@ -80,7 +82,7 @@ class BubbleChatActivity : ComponentActivity() {
                         color = Color(0xFF0A100D)
                     ) {
                         EkranCzatuSzczegoly(
-                            context = kontekst,
+                            context = aktywnosc,
                             watek = aktualny,
                             pokazNaglowek = true,
                             onWiadomoscWyslana = {
