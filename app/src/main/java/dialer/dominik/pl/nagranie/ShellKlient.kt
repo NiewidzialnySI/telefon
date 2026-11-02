@@ -19,8 +19,12 @@ object ShellKlient {
     suspend fun zapewnij(ctx: Context, autoWlacAdb: Boolean = true): Boolean {
         if (czyShellGotowy()) return true
         if (!ShellAdbBootstrap.czySparowane(ctx)) return false
-        return runCatching { ShellAdbBootstrap.uruchom(ctx, autoWlacAdb = autoWlacAdb) }
-            .onFailure { Log.w(TAG, "adb uruchom", it) }
-            .getOrDefault(false)
+        // Nie używaj runCatching na suspend — wyjątek po resume obchodzi try (crash apki).
+        return try {
+            ShellAdbBootstrap.uruchom(ctx, autoWlacAdb = autoWlacAdb)
+        } catch (t: Throwable) {
+            Log.w(TAG, "adb uruchom", t)
+            false
+        }
     }
 }

@@ -38,8 +38,11 @@ object NagrywanieStraznik {
                 }
                 if (ShellAdbBootstrap.czySparowane(app) || ShellAdbBootstrap.usluga() != null) {
                     // Powrót do apki: tylko republish — nie włączaj Wireless/USB za użytkownika.
-                    runCatching { ShellKlient.zapewnij(app, autoWlacAdb = false) }
-                        .onFailure { Log.w(TAG, "zapewnij", it) }
+                    try {
+                        ShellKlient.zapewnij(app, autoWlacAdb = false)
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "zapewnij", t)
+                    }
                 }
                 if (ShellKlient.czyShellGotowy()) {
                     PowiadomieniaNagrywania.anulujBrak(app)
@@ -51,6 +54,8 @@ object NagrywanieStraznik {
                 val opis = ShellKlient.krotkiOpis(app)
                 Log.i(TAG, "alert: $opis")
                 PowiadomieniaNagrywania.pokazBrak(app, opis)
+            } catch (t: Throwable) {
+                Log.w(TAG, "sprawdz", t)
             } finally {
                 sprawdzWToku = false
             }

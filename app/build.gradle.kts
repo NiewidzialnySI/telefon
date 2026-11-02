@@ -20,8 +20,8 @@ android {
         applicationId = "dialer.dominik.pl"
         minSdk = 31
         targetSdk = 37
-        versionCode = 9
-        versionName = "1.7"
+        versionCode = 10
+        versionName = "1.7.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -40,9 +40,11 @@ android {
 
     buildTypes {
         release {
+            // Nie optymalizuj kotlin.** / kotlinx.** — R8 powodował
+            // IllegalAccessError (kotlin.text.*) i crash przy starcie po update.
             optimization {
                 enable = true
-                packageScope = setOf("androidx.**", "kotlin.**", "kotlinx.**")
+                packageScope = setOf("androidx.**")
             }
         }
     }
