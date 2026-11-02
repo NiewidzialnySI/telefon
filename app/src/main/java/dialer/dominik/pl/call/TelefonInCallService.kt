@@ -100,6 +100,15 @@ object StanPolaczenia {
      */
     var zadanaTrasa: Int? by mutableStateOf(null)
 
+    /**
+     * User świadomie odłączył BT (ucho / głośnik) — nie wolno wracać auto-BT
+     * (opóźnione callbacki OEM + autoBluetooth walczyły ze słuchawką).
+     */
+    var autoBtZablokowane: Boolean by mutableStateOf(false)
+
+    /** Jednorazowe auto-BT na to połączenie (bez powtórek 0.6s / 1.5s). */
+    var autoBtJuzProbowane: Boolean by mutableStateOf(false)
+
     /** Treść notatki wpisanej podczas rozmowy (wczytana dla tego numeru). */
     var notatkaRozmowy: String by mutableStateOf("")
 
@@ -379,6 +388,8 @@ class TelefonInCallService : InCallService() {
         if (!zachowajTrase) {
             StanPolaczenia.glosnik = false
             StanPolaczenia.bluetoothAktywny = false
+            StanPolaczenia.autoBtZablokowane = false
+            StanPolaczenia.autoBtJuzProbowane = false
         }
         // Każda rozmowa zaczyna z pustą notatką — zapis trafia do konkretnego wpisu CallLog.
         StanPolaczenia.notatkaRozmowy = ""
@@ -395,12 +406,15 @@ class TelefonInCallService : InCallService() {
 
         // Nie ruszaj trasy audio przy RINGING — setAudioRoute na przychodzącym bywa
         // interpretowane przez OEM jak „zajęcie” linii; system sam bierze BT.
-        // Wychodzące: NIE forsuj EARPIECE (to wyłączało podłączone słuchawki BT).
-        // Zamiast tego — jeśli BT jest dostępne, zapamiętaj i wymuś przy ACTIVE.
-        if (!zachowajTrase && call.state != Call.STATE_RINGING) {
+        // Wychodzące: jedna próba auto-BT (bez pętli przy ACTIVE — to flipowało BT↔ucho).
+        if (!zachowajTrase &&
+            !StanPolaczenia.autoBtZablokowane &&
+            call.state != Call.STATE_RINGING
+        ) {
             if (czyBluetoothDostepnyDlaRozmowy()) {
                 StanPolaczenia.zadanaTrasa = CallAudioState.ROUTE_BLUETOOTH
                 StanPolaczenia.bluetoothAktywny = true
+                StanPolaczenia.autoBtJuzProbowane = true
                 try {
                     ustawTrase(CallAudioState.ROUTE_BLUETOOTH)
                 } catch (e: Exception) {
@@ -501,6 +515,8 @@ class TelefonInCallService : InCallService() {
             }.start()
         }
         StanPolaczenia.zadanaTrasa = null
+        StanPolaczenia.autoBtZablokowane = false
+        StanPolaczenia.autoBtJuzProbowane = false
         if (StanPolaczenia.polaczenie === call) {
             StanPolaczenia.polaczenie = null
             StanPolaczenia.stan = StanPolaczenia.Stan.Brak
@@ -571,6 +587,16 @@ class TelefonInCallService : InCallService() {
                 StanPolaczenia.glosnik = zadana == CallAudioState.ROUTE_SPEAKER
                 return
             }
+            // Po dogonieniu: ucho/głośnik = świadomy wybór → nie wracaj auto-BT.
+            when (zadana) {
+                CallAudioState.ROUTE_WIRED_OR_EARPIECE,
+                CallAudioState.ROUTE_EARPIECE,
+                CallAudioState.ROUTE_WIRED_HEADSET,
+                CallAudioState.ROUTE_SPEAKER ->
+                    StanPolaczenia.autoBtZablokowane = true
+                CallAudioState.ROUTE_BLUETOOTH ->
+                    StanPolaczenia.autoBtZablokowane = false
+            }
             StanPolaczenia.zadanaTrasa = null
         }
         StanPolaczenia.bluetoothAktywny = bluetooth
@@ -580,7 +606,20 @@ class TelefonInCallService : InCallService() {
     /** Wybiera konkretne urządzenie Bluetooth (lub domyślną trasę BT). */
     fun wybierzBluetooth(device: android.bluetooth.BluetoothDevice?) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            val bt = dostepneEndpointy.firstOrNull { it.endpointType == CallEndpoint.TYPE_BLUETOOTH }
+            val kandidaci = dostepneEndpointy.filter {
+                it.endpointType == CallEndpoint.TYPE_BLUETOOTH
+            }
+            val nazwa = device?.let { bezpiecznaNazwaBluetooth(it) }.orEmpty()
+            val bt = when {
+                kandidaci.isEmpty() -> null
+                nazwa.isBlank() -> kandidaci.first()
+                else -> kandidaci.firstOrNull { ep ->
+                    val epNazwa = ep.endpointName?.toString().orEmpty()
+                    epNazwa.equals(nazwa, ignoreCase = true) ||
+                        epNazwa.contains(nazwa, ignoreCase = true) ||
+                        nazwa.contains(epNazwa, ignoreCase = true)
+                } ?: kandidaci.first()
+            }
             if (bt != null) {
                 zadajEndpoint(bt)
                 return
@@ -613,6 +652,22 @@ class TelefonInCallService : InCallService() {
 
     /** Przełącza między słuchawką, głośnikiem i Bluetooth (CallEndpoint na API 34+). */
     fun ustawTrase(trasa: Int) {
+        android.util.Log.i(
+            "TrasaAudio",
+            "ustawTrase=$trasa zadana=${StanPolaczenia.zadanaTrasa} " +
+                "autoBtBlok=${StanPolaczenia.autoBtZablokowane} " +
+                "btUi=${StanPolaczenia.bluetoothAktywny}"
+        )
+        // Świadomy wybór usera (UI ustawia zadanaTrasa przed wywołaniem).
+        when (trasa) {
+            CallAudioState.ROUTE_BLUETOOTH ->
+                StanPolaczenia.autoBtZablokowane = false
+            CallAudioState.ROUTE_SPEAKER,
+            CallAudioState.ROUTE_WIRED_OR_EARPIECE,
+            CallAudioState.ROUTE_EARPIECE,
+            CallAudioState.ROUTE_WIRED_HEADSET ->
+                StanPolaczenia.autoBtZablokowane = true
+        }
         // Przy zejściu z BT wyłącz SCO — inaczej OEM często zostaje na słuchawkach.
         if (trasa != CallAudioState.ROUTE_BLUETOOTH) {
             runCatching {
@@ -689,31 +744,33 @@ class TelefonInCallService : InCallService() {
         try {
             setMuted(StanPolaczenia.wyciszony)
             val trasa = StanPolaczenia.zadanaTrasa
-            if (trasa != null) {
-                ustawTrase(trasa)
-            } else if (StanPolaczenia.glosnik) {
-                ustawTrase(CallAudioState.ROUTE_SPEAKER)
-            } else if (StanPolaczenia.bluetoothAktywny || czyBluetoothDostepnyDlaRozmowy()) {
-                StanPolaczenia.bluetoothAktywny = true
-                StanPolaczenia.zadanaTrasa = CallAudioState.ROUTE_BLUETOOTH
-                ustawTrase(CallAudioState.ROUTE_BLUETOOTH)
+            when {
+                trasa != null -> ustawTrase(trasa)
+                StanPolaczenia.glosnik -> ustawTrase(CallAudioState.ROUTE_SPEAKER)
+                StanPolaczenia.autoBtZablokowane -> Unit
+                StanPolaczenia.bluetoothAktywny -> {
+                    // User / onCallAdded już wybrał BT — dociśnij raz, bez pętli.
+                    ustawTrase(CallAudioState.ROUTE_BLUETOOTH)
+                    StanPolaczenia.autoBtJuzProbowane = true
+                }
+                !StanPolaczenia.autoBtJuzProbowane && czyBluetoothDostepnyDlaRozmowy() -> {
+                    StanPolaczenia.bluetoothAktywny = true
+                    StanPolaczenia.zadanaTrasa = CallAudioState.ROUTE_BLUETOOTH
+                    StanPolaczenia.autoBtJuzProbowane = true
+                    ustawTrase(CallAudioState.ROUTE_BLUETOOTH)
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
-        // Po ACTIVE dociągnij realną trasę (auto-BT często już gra, a callback jeszcze nie).
+        // Po ACTIVE dociągnij UI z realnej trasy. Jedna opóźniona szansa na BT
+        // (ColorOS bywa późno z endpointem) — bez powtórek, które flipowały BT↔ucho.
         mainExecutor.execute { odswiezPrzyciskiZBiezacejTrasy() }
         mainExecutor.execute {
             android.os.Handler(mainLooper).postDelayed({
                 odswiezPrzyciskiZBiezacejTrasy()
-                // Druga szansa — endpoint BT bywa opóźniony na ColorOS przy wychodzącym.
                 autoBluetoothJesliWychodzace()
-            }, 600L)
-        }
-        mainExecutor.execute {
-            android.os.Handler(mainLooper).postDelayed({
-                autoBluetoothJesliWychodzace()
-            }, 1_500L)
+            }, 700L)
         }
     }
 
@@ -735,12 +792,15 @@ class TelefonInCallService : InCallService() {
     }
 
     /**
-     * Wychodzące + podłączone BT + brak wyboru głośnika → przełącz na słuchawki.
-     * (Przychodzące: system zwykle sam wybiera BT; nie ruszamy przy RINGING.)
+     * Wychodzące + podłączone BT + brak świadomego ucha/głośnika → raz przełącz na BT.
+     * Nie wołaj w pętli: po dogonieniu trasy `zadanaTrasa` jest null i stare
+     * opóźnienia 0.6/1.5 s znów forsowały BT → flip ze słuchawką telefonu.
      */
     private fun autoBluetoothJesliWychodzace() {
         if (StanPolaczenia.czyPrzychodzace) return
         if (StanPolaczenia.glosnik) return
+        if (StanPolaczenia.autoBtZablokowane) return
+        if (StanPolaczenia.autoBtJuzProbowane) return
         if (StanPolaczenia.stan != StanPolaczenia.Stan.Dzwoni &&
             StanPolaczenia.stan != StanPolaczenia.Stan.Rozmowa
         ) {
@@ -748,22 +808,22 @@ class TelefonInCallService : InCallService() {
         }
         // User świadomie wybrał ucho (nie BT) — nie nadpisuj.
         if (StanPolaczenia.zadanaTrasa == CallAudioState.ROUTE_WIRED_OR_EARPIECE ||
-            StanPolaczenia.zadanaTrasa == CallAudioState.ROUTE_EARPIECE
+            StanPolaczenia.zadanaTrasa == CallAudioState.ROUTE_EARPIECE ||
+            StanPolaczenia.zadanaTrasa == CallAudioState.ROUTE_WIRED_HEADSET ||
+            StanPolaczenia.zadanaTrasa == CallAudioState.ROUTE_SPEAKER
         ) {
             return
         }
         if (!czyBluetoothDostepnyDlaRozmowy()) return
-        if (StanPolaczenia.bluetoothAktywny &&
-            StanPolaczenia.zadanaTrasa == CallAudioState.ROUTE_BLUETOOTH
-        ) {
-            // Już zaplanowane — dociśnij trasę (DIALING mógł zignorować).
-            if (StanPolaczenia.stan == StanPolaczenia.Stan.Rozmowa) {
-                runCatching { ustawTrase(CallAudioState.ROUTE_BLUETOOTH) }
-            }
+        // Już gramy na BT wg Telecom — nic nie dociskaj (kolejne setAudioRoute = flipy).
+        if (StanPolaczenia.bluetoothAktywny && StanPolaczenia.zadanaTrasa == null) {
+            StanPolaczenia.autoBtJuzProbowane = true
             return
         }
+        StanPolaczenia.autoBtJuzProbowane = true
         StanPolaczenia.zadanaTrasa = CallAudioState.ROUTE_BLUETOOTH
         StanPolaczenia.bluetoothAktywny = true
+        android.util.Log.i("TrasaAudio", "autoBluetooth → BT (jednorazowo)")
         runCatching { ustawTrase(CallAudioState.ROUTE_BLUETOOTH) }
     }
 

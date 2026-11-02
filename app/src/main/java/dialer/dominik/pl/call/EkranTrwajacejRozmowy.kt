@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.os.Build
 import android.telecom.CallAudioState
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -38,9 +39,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -74,6 +79,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -104,6 +111,7 @@ private enum class FazaRozmowy {
  * Jedyny ekran rozmowy: stały shell (awatar + nazwa + status),
  * zmienia się tylko dolny chrome wg fazy Incoming / Dialing / Active.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun EkranTrwajacejRozmowy(
     context: Context,
@@ -226,6 +234,15 @@ internal fun EkranTrwajacejRozmowy(
     }
 
     suspend fun zwin() {
+        if (!android.provider.Settings.canDrawOverlays(context)) {
+            android.widget.Toast.makeText(
+                context,
+                "Brak uprawnienia nakładek — nie można zminimalizować",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            wroc()
+            return
+        }
         przygotujDaneDymka()
         val rozmiarDymkaPx = with(density) { 64.dp.roundToPx() }
         val sx = (bazaXAwatara() + ax.value - rozmiarDymkaPx / 2f).toInt()
@@ -272,9 +289,22 @@ internal fun EkranTrwajacejRozmowy(
 
     val gestMinimalizacji = faza == FazaRozmowy.Active
 
+    val imeWidoczna = WindowInsets.isImeVisible
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    // Wstecz: schowaj klawiaturę / fokus notatki — NIGDY nie zamykaj ekranu rozmowy.
+    BackHandler {
+        if (imeWidoczna) {
+            focusManager.clearFocus(force = true)
+            keyboard?.hide()
+        }
+    }
+
     val wysokoscEkranuDp = LocalConfiguration.current.screenHeightDp
     // Na niższych ekranach mniej miejsca pod awatarem — kontrolki bliżej dołu.
+    // Przy otwartej klawiaturze zero spacera: notatka ma zostać nad IME, bez ściskania przycisków.
     val spacerAwatara = when {
+        imeWidoczna -> 8.dp
         wysokoscEkranuDp < 700 -> 120.dp
         wysokoscEkranuDp < 800 -> 148.dp
         else -> 168.dp
@@ -290,7 +320,7 @@ internal fun EkranTrwajacejRozmowy(
                 if (it.width > 0) szerokoscPx = it.width
             }
             .then(
-                if (gestMinimalizacji) {
+                if (gestMinimalizacji && !imeWidoczna) {
                     Modifier.pointerInput(Unit) {
                         var dy = 0f
                         detectVerticalDragGestures(
@@ -356,6 +386,7 @@ internal fun EkranTrwajacejRozmowy(
             modifier = Modifier
                 .fillMaxSize()
                 .safeDrawingPadding()
+                .imePadding()
                 .padding(horizontal = 24.dp)
                 .padding(top = paddingGora, bottom = paddingDol)
                 .graphicsLayer { alpha = krycieDraw },
@@ -363,24 +394,36 @@ internal fun EkranTrwajacejRozmowy(
         ) {
             Spacer(modifier = Modifier.height(spacerAwatara))
 
-            Text(
-                text = stan.rozmowca.ifBlank { "Nieznany numer" },
-                color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle,
-                fontSize = if (wysokoscEkranuDp < 700) 22.sp else 26.sp,
-                fontWeight = FontWeight.SemiBold,
-                textAlign = TextAlign.Center
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
-            if (faza != FazaRozmowy.Incoming && wynikAnalizy != null) {
-                KartaReputacjiNumeru(
-                    context = context,
-                    numer = stan.numerRozmowy.ifBlank { stan.rozmowca },
-                    wynik = wynikAnalizy,
-                    kompakt = true,
-                    onWynikZmieniony = onWynikZmieniony
+            if (!imeWidoczna) {
+                Text(
+                    text = stan.rozmowca.ifBlank { "Nieznany numer" },
+                    color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle,
+                    fontSize = if (wysokoscEkranuDp < 700) 22.sp else 26.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(8.dp))
+
+                if (faza != FazaRozmowy.Incoming && wynikAnalizy != null) {
+                    KartaReputacjiNumeru(
+                        context = context,
+                        numer = stan.numerRozmowy.ifBlank { stan.rozmowca },
+                        wynik = wynikAnalizy,
+                        kompakt = true,
+                        onWynikZmieniony = onWynikZmieniony
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            } else {
+                Text(
+                    text = stan.rozmowca.ifBlank { "Nieznany numer" },
+                    color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1
+                )
+                Spacer(modifier = Modifier.height(4.dp))
             }
 
             AnimatedContent(
@@ -393,7 +436,7 @@ internal fun EkranTrwajacejRozmowy(
                 Text(
                     text = tekst,
                     color = statusKolor,
-                    fontSize = 16.sp,
+                    fontSize = if (imeWidoczna) 14.sp else 16.sp,
                     fontWeight = FontWeight.Medium,
                     letterSpacing = 1.2.sp
                 )
@@ -436,8 +479,10 @@ internal fun EkranTrwajacejRozmowy(
                         }
                         FazaRozmowy.Dialing, FazaRozmowy.Active -> {
                             if (biezacaFaza == FazaRozmowy.Active && !stan.klawiatura) {
-                                PrzyciskNagrywaniaRozmowy(context = context)
-                                Spacer(modifier = Modifier.height(10.dp))
+                                if (!imeWidoczna) {
+                                    PrzyciskNagrywaniaRozmowy(context = context)
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                }
                                 OutlinedTextField(
                                     value = stan.notatkaRozmowy,
                                     onValueChange = { nowa ->
@@ -455,7 +500,7 @@ internal fun EkranTrwajacejRozmowy(
                                     },
                                     singleLine = false,
                                     minLines = 1,
-                                    maxLines = 2,
+                                    maxLines = if (imeWidoczna) 4 else 2,
                                     textStyle = androidx.compose.ui.text.TextStyle(
                                         color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle,
                                         fontSize = 14.sp
@@ -474,7 +519,8 @@ internal fun EkranTrwajacejRozmowy(
 
                             PasekKontrolekRozmowy(
                                 context = context,
-                                fazaDialing = biezacaFaza == FazaRozmowy.Dialing
+                                fazaDialing = biezacaFaza == FazaRozmowy.Dialing,
+                                tylkoRozlacz = imeWidoczna
                             )
                         }
                     }
@@ -482,7 +528,8 @@ internal fun EkranTrwajacejRozmowy(
             }
         }
 
-        Box(
+        // Awatar chowamy przy klawiaturze — zwolnić miejsce nad polem notatki.
+        if (!imeWidoczna) Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -557,14 +604,16 @@ internal fun EkranTrwajacejRozmowy(
 @Composable
 private fun PasekKontrolekRozmowy(
     context: Context,
-    fazaDialing: Boolean
+    fazaDialing: Boolean,
+    /** Przy notatce + IME: tylko rozłącz (pełny rozmiar), bez ściskania opcji. */
+    tylkoRozlacz: Boolean = false
 ) {
     val stan = StanPolaczenia
     val usluga = TelefonInCallService.instancja
     val scope = rememberCoroutineScope()
 
     AnimatedVisibility(
-        visible = stan.klawiatura,
+        visible = stan.klawiatura && !tylkoRozlacz,
         enter = slideInVertically(tween(200, easing = FastOutSlowInEasing)) { it / 4 } + fadeIn(tween(180)),
         exit = slideOutVertically(tween(160, easing = FastOutSlowInEasing)) { it / 4 } + fadeOut(tween(140))
     ) {
@@ -589,66 +638,68 @@ private fun PasekKontrolekRozmowy(
         }
     }
 
-    Spacer(modifier = Modifier.height(if (stan.klawiatura) 12.dp else 0.dp))
+    if (!tylkoRozlacz) {
+        Spacer(modifier = Modifier.height(if (stan.klawiatura) 12.dp else 0.dp))
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceEvenly
-    ) {
-        PrzyciskOpcjiZLongClick(
-            ikona = IkonyAplikacji.MikrofonWylaczony,
-            etykieta = "Wycisz",
-            aktywny = stan.wyciszony,
-            onKlik = {
-                if (fazaDialing) {
-                    // Optymistycznie w UI; realne setMuted przy ACTIVE (zastosujWyboryPoOdebraniu).
-                    stan.wyciszony = !stan.wyciszony
-                } else {
-                    usluga?.przelaczWyciszenie()
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            PrzyciskOpcjiZLongClick(
+                ikona = IkonyAplikacji.MikrofonWylaczony,
+                etykieta = "Wycisz",
+                aktywny = stan.wyciszony,
+                onKlik = {
+                    if (fazaDialing) {
+                        // Optymistycznie w UI; realne setMuted przy ACTIVE (zastosujWyboryPoOdebraniu).
+                        stan.wyciszony = !stan.wyciszony
+                    } else {
+                        usluga?.przelaczWyciszenie()
+                    }
                 }
-            }
-        )
-        PrzyciskOpcjiZLongClick(
-            ikona = IkonyAplikacji.Bluetooth,
-            etykieta = "Bluetooth",
-            aktywny = stan.bluetoothAktywny,
-            onKlik = {
-                val wlacz = !stan.bluetoothAktywny
-                stan.bluetoothAktywny = wlacz
-                if (wlacz) stan.glosnik = false
-                val trasa = if (wlacz) {
-                    CallAudioState.ROUTE_BLUETOOTH
-                } else {
-                    CallAudioState.ROUTE_WIRED_OR_EARPIECE
+            )
+            PrzyciskOpcjiZLongClick(
+                ikona = IkonyAplikacji.Bluetooth,
+                etykieta = "Bluetooth",
+                aktywny = stan.bluetoothAktywny,
+                onKlik = {
+                    val wlacz = !stan.bluetoothAktywny
+                    stan.bluetoothAktywny = wlacz
+                    if (wlacz) stan.glosnik = false
+                    val trasa = if (wlacz) {
+                        CallAudioState.ROUTE_BLUETOOTH
+                    } else {
+                        CallAudioState.ROUTE_WIRED_OR_EARPIECE
+                    }
+                    stan.zadanaTrasa = trasa
+                    if (!fazaDialing) usluga?.ustawTrase(trasa)
+                },
+                onDlugieKlikniecie = { otworzWybiorce() }
+            )
+            PrzyciskOpcjiZLongClick(
+                ikona = IkonyAplikacji.Glosnik,
+                etykieta = "Głośnik",
+                aktywny = stan.glosnik,
+                onKlik = {
+                    val wlacz = !stan.glosnik
+                    stan.glosnik = wlacz
+                    if (wlacz) stan.bluetoothAktywny = false
+                    val trasa = if (wlacz) {
+                        CallAudioState.ROUTE_SPEAKER
+                    } else {
+                        CallAudioState.ROUTE_WIRED_OR_EARPIECE
+                    }
+                    stan.zadanaTrasa = trasa
+                    if (!fazaDialing) usluga?.ustawTrase(trasa)
                 }
-                stan.zadanaTrasa = trasa
-                if (!fazaDialing) usluga?.ustawTrase(trasa)
-            },
-            onDlugieKlikniecie = { otworzWybiorce() }
-        )
-        PrzyciskOpcjiZLongClick(
-            ikona = IkonyAplikacji.Glosnik,
-            etykieta = "Głośnik",
-            aktywny = stan.glosnik,
-            onKlik = {
-                val wlacz = !stan.glosnik
-                stan.glosnik = wlacz
-                if (wlacz) stan.bluetoothAktywny = false
-                val trasa = if (wlacz) {
-                    CallAudioState.ROUTE_SPEAKER
-                } else {
-                    CallAudioState.ROUTE_WIRED_OR_EARPIECE
-                }
-                stan.zadanaTrasa = trasa
-                if (!fazaDialing) usluga?.ustawTrase(trasa)
-            }
-        )
-        PrzyciskOpcjiZLongClick(
-            ikona = IkonyAplikacji.Klawiatura,
-            etykieta = "Klawiatura",
-            aktywny = stan.klawiatura,
-            onKlik = { stan.klawiatura = !stan.klawiatura }
-        )
+            )
+            PrzyciskOpcjiZLongClick(
+                ikona = IkonyAplikacji.Klawiatura,
+                etykieta = "Klawiatura",
+                aktywny = stan.klawiatura,
+                onKlik = { stan.klawiatura = !stan.klawiatura }
+            )
+        }
     }
 
     if (pokazWybiorceBluetooth) {

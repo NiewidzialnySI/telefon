@@ -108,33 +108,32 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         dialer.dominik.pl.nagranie.TranskrypcjaForegroundService.obsluzIntent(intent)
         obsluzNieodebraneSmsIntent(intent)
-        // Debug / automatyka testów:
-        // am start -n …/.MainActivity -a dialer.dominik.pl.adb.TEST_PAIR
-        // am start -n …/.MainActivity -a dialer.dominik.pl.adb.TEST_PAIR_CODE --es kod 123456 --ei port 37123
-        // am start -n …/.MainActivity -a dialer.dominik.pl.adb.TEST_URUCHOM
-        when (intent?.action) {
-            "dialer.dominik.pl.adb.TEST_PAIR" ->
-                dialer.dominik.pl.nagranie.adb.AdbParowanieService.startujIOtworzUstawienia(this)
-            "dialer.dominik.pl.adb.TEST_PAIR_CODE" -> {
-                dialer.dominik.pl.nagranie.adb.AdbParowanieService.startujIOtworzUstawienia(this)
-                val kod = intent.getStringExtra("kod").orEmpty()
-                val port = intent.getIntExtra("port", -1)
-                val host = intent.getStringExtra("host")
-                if (kod.length == 6) {
-                    window.decorView.postDelayed({
-                        dialer.dominik.pl.nagranie.adb.AdbParowanieService
-                            .dostarczKod(this, kod, port, host)
-                    }, 800)
+        // Debug / automatyka testów — TYLKO BuildConfig.DEBUG (nie w release).
+        if (BuildConfig.DEBUG) {
+            when (intent?.action) {
+                "dialer.dominik.pl.adb.TEST_PAIR" ->
+                    dialer.dominik.pl.nagranie.adb.AdbParowanieService.startujIOtworzUstawienia(this)
+                "dialer.dominik.pl.adb.TEST_PAIR_CODE" -> {
+                    dialer.dominik.pl.nagranie.adb.AdbParowanieService.startujIOtworzUstawienia(this)
+                    val kod = intent.getStringExtra("kod").orEmpty()
+                    val port = intent.getIntExtra("port", -1)
+                    val host = intent.getStringExtra("host")
+                    if (kod.length == 6) {
+                        window.decorView.postDelayed({
+                            dialer.dominik.pl.nagranie.adb.AdbParowanieService
+                                .dostarczKod(this, kod, port, host)
+                        }, 800)
+                    }
                 }
-            }
-            "dialer.dominik.pl.adb.TEST_URUCHOM" -> {
-                lifecycleScope.launch {
-                    val w = dialer.dominik.pl.nagranie.adb.ShellAdbBootstrap
-                        .uruchomZOpisem(this@MainActivity)
-                    android.util.Log.i(
-                        "ShellAdbBootstrap",
-                        "TEST_URUCHOM → $w diag=${dialer.dominik.pl.nagranie.adb.ShellAdbBootstrap.zdiagnozuj(this@MainActivity).linie()}",
-                    )
+                "dialer.dominik.pl.adb.TEST_URUCHOM" -> {
+                    lifecycleScope.launch {
+                        val w = dialer.dominik.pl.nagranie.adb.ShellAdbBootstrap
+                            .uruchomZOpisem(this@MainActivity)
+                        android.util.Log.i(
+                            "ShellAdbBootstrap",
+                            "TEST_URUCHOM → $w diag=${dialer.dominik.pl.nagranie.adb.ShellAdbBootstrap.zdiagnozuj(this@MainActivity).linie()}",
+                        )
+                    }
                 }
             }
         }
@@ -175,14 +174,16 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         dialer.dominik.pl.nagranie.TranskrypcjaForegroundService.obsluzIntent(intent)
         obsluzNieodebraneSmsIntent(intent)
-        when (intent.action) {
-            "dialer.dominik.pl.adb.TEST_PAIR" ->
-                dialer.dominik.pl.nagranie.adb.AdbParowanieService.startujIOtworzUstawienia(this)
-            "dialer.dominik.pl.adb.TEST_URUCHOM" -> {
-                lifecycleScope.launch {
-                    val w = dialer.dominik.pl.nagranie.adb.ShellAdbBootstrap
-                        .uruchomZOpisem(this@MainActivity)
-                    android.util.Log.i("ShellAdbBootstrap", "TEST_URUCHOM → $w")
+        if (BuildConfig.DEBUG) {
+            when (intent.action) {
+                "dialer.dominik.pl.adb.TEST_PAIR" ->
+                    dialer.dominik.pl.nagranie.adb.AdbParowanieService.startujIOtworzUstawienia(this)
+                "dialer.dominik.pl.adb.TEST_URUCHOM" -> {
+                    lifecycleScope.launch {
+                        val w = dialer.dominik.pl.nagranie.adb.ShellAdbBootstrap
+                            .uruchomZOpisem(this@MainActivity)
+                        android.util.Log.i("ShellAdbBootstrap", "TEST_URUCHOM → $w")
+                    }
                 }
             }
         }

@@ -35,13 +35,27 @@ data class OpiniaUzytkownika(
     val zrodlo: String = "siec"
 )
 
-/** Czy treść opinii jest realna (nie pusta / nie JSON-owy „null”). */
-fun String?.czyMaTrescOpinii(): Boolean {
+/**
+ * JSONObject.optString zamienia JSON `null` na literał „null”.
+ * Zwraca pusty string zamiast takich śmieci.
+ */
+fun String?.bezLiteraluNull(): String {
     val t = this?.trim().orEmpty()
-    if (t.isEmpty()) return false
-    return !t.equals("null", ignoreCase = true) &&
-        !t.equals("undefined", ignoreCase = true) &&
-        !t.equals("nil", ignoreCase = true)
+    if (t.isEmpty()) return ""
+    if (t.equals("null", ignoreCase = true) ||
+        t.equals("undefined", ignoreCase = true) ||
+        t.equals("nil", ignoreCase = true)
+    ) return ""
+    return t
+}
+
+/** Czy treść opinii jest realna (nie pusta / nie JSON-owy „null”). */
+fun String?.czyMaTrescOpinii(): Boolean = !this.bezLiteraluNull().isEmpty()
+
+/** Bezpieczny odczyt stringa z JSON (JSON null / literał „null” → default). */
+private fun JSONObject.tekst(klucz: String, default: String = ""): String {
+    if (isNull(klucz)) return default
+    return optString(klucz, default).bezLiteraluNull().ifBlank { default }
 }
 
 /** Wynik analizy wiarygodności numeru telefonu. */
@@ -74,7 +88,8 @@ object WeryfikacjaNumeru {
 
     private const val TAG = "WeryfikacjaNumeru"
     private const val CACHE_TTL_MS = 24L * 60 * 60 * 1000
-    private const val PREFS_CACHE = "weryfikacja_cache_v1"
+    /** v2: czyści cache z literałem „null” z JSONObject.optString. */
+    private const val PREFS_CACHE = "weryfikacja_cache_v2"
 
     private data class CacheWpis(val wynik: WynikWeryfikacjiNumeru, val zapisanoMs: Long)
 
@@ -190,15 +205,16 @@ object WeryfikacjaNumeru {
                 numertel?.poziom ?: PoziomZagrozenia.NEUTRALNY,
                 nieznany?.poziom ?: PoziomZagrozenia.NEUTRALNY
             )
-            val kategoria = numertel?.kategoria
-                ?: nieznany?.kategoria
+            val kategoria = listOfNotNull(numertel?.kategoria, nieznany?.kategoria)
+                .map { it.bezLiteraluNull() }
+                .firstOrNull { it.isNotBlank() }
                 ?: "Numer w bazach społeczności"
-            val ocena = when {
-                numertel?.ocenaTekst?.isNotBlank() == true -> numertel.ocenaTekst
-                nieznany?.ocenaTekst?.isNotBlank() == true -> nieznany.ocenaTekst
-                else -> ""
-            }
+            val ocena = listOfNotNull(numertel?.ocenaTekst, nieznany?.ocenaTekst)
+                .map { it.bezLiteraluNull() }
+                .firstOrNull { it.isNotBlank() }
+                .orEmpty()
             val opis = listOfNotNull(numertel?.opis, nieznany?.opis)
+                .map { it.bezLiteraluNull() }
                 .firstOrNull { it.isNotBlank() }
                 ?: "Sprawdzono w publicznych bazach opinii"
             val opinie = (nieznany?.opinie.orEmpty()).take(5)
@@ -245,16 +261,16 @@ object WeryfikacjaNumeru {
             val body = conn.inputStream.bufferedReader().use(BufferedReader::readText)
             conn.disconnect()
             val json = JSONObject(body)
-            val label = json.optString("spam_label", "brak_danych")
+            val label = json.tekst("spam_label", "brak_danych")
             val score = if (json.isNull("score_avg")) null else json.optDouble("score_avg")
             val total = json.optInt("total_opinions", 0)
             val isDno = json.optBoolean("is_dno", false)
-            val dnoNote = json.optString("dno_note", "").takeIf { it.isNotBlank() }
-            val operator = json.optString("operator", "").takeIf { it.isNotBlank() }
+            val dnoNote = json.tekst("dno_note").takeIf { it.isNotBlank() }
+            val operator = json.tekst("operator").takeIf { it.isNotBlank() }
             val whitelist = json.optJSONObject("whitelist")
-            val institution = whitelist?.optString("institution")?.takeIf { it.isNotBlank() }
-            val wlLabel = whitelist?.optString("label")?.takeIf { it.isNotBlank() }
-            val pageUrl = json.optString("url", "").takeIf { it.isNotBlank() }
+            val institution = whitelist?.tekst("institution")?.takeIf { it.isNotBlank() }
+            val wlLabel = whitelist?.tekst("label")?.takeIf { it.isNotBlank() }
+            val pageUrl = json.tekst("url").takeIf { it.isNotBlank() }
                 ?: "https://numertel.pl/numer/$dziewiec"
 
             val poziom = when {
@@ -520,33 +536,32 @@ object WeryfikacjaNumeru {
             if (arr != null) {
                 for (i in 0 until arr.length()) {
                     val x = arr.optJSONObject(i) ?: continue
-                    // optString na JSON null → literał „null” — odrzucamy.
-                    val tresc = if (x.isNull("c")) "" else x.optString("c")
+                    val tresc = x.tekst("c")
                     if (!tresc.czyMaTrescOpinii()) continue
                     opinie.add(
                         OpiniaUzytkownika(
-                            autor = x.optString("a"),
-                            data = x.optString("d"),
-                            typOceny = x.optString("t"),
+                            autor = x.tekst("a").ifBlank { "Anonim" },
+                            data = x.tekst("d").ifBlank { "—" },
+                            typOceny = x.tekst("t").ifBlank { "Opinia" },
                             tresc = tresc,
-                            zrodlo = x.optString("z", "siec")
+                            zrodlo = x.tekst("z", "siec").ifBlank { "siec" }
                         )
                     )
                 }
             }
             val poziom = runCatching {
-                PoziomZagrozenia.valueOf(o.optString("poziom", PoziomZagrozenia.NEUTRALNY.name))
+                PoziomZagrozenia.valueOf(o.tekst("poziom", PoziomZagrozenia.NEUTRALNY.name))
             }.getOrDefault(PoziomZagrozenia.NEUTRALNY)
             CacheWpis(
                 WynikWeryfikacjiNumeru(
                     numer = klucz,
                     poziomZagrozenia = poziom,
-                    kategoria = o.optString("kategoria"),
-                    ocenaLiczbowa = o.optString("ocena"),
-                    opisZagrozenia = o.optString("opis"),
+                    kategoria = o.tekst("kategoria").ifBlank { "Opinie społeczności" },
+                    ocenaLiczbowa = o.tekst("ocena"),
+                    opisZagrozenia = o.tekst("opis"),
                     opinie = opinie,
-                    urlSiec = o.optString("url").takeIf { it.isNotBlank() },
-                    atrybucja = o.optString("atrybucja").takeIf { it.isNotBlank() }
+                    urlSiec = o.tekst("url").takeIf { it.isNotBlank() },
+                    atrybucja = o.tekst("atrybucja").takeIf { it.isNotBlank() }
                 ),
                 ms
             )

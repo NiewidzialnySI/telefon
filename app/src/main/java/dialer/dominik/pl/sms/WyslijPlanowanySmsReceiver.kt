@@ -1,17 +1,17 @@
 package dialer.dominik.pl.sms
 
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.provider.Telephony
-import android.telephony.SmsManager
 import android.util.Log
 
 /**
  * Odbiera alarm zaplanowanej wiadomości SMS (scheduled send) i wysyła ją.
  * Wiadomość odczytujemy z SharedPreferences "sms_planowane" po id, wysyłamy
- * przez SmsManager, a następnie usuwamy wpis (żeby nie wysłać powtórnie).
+ * przez SmsManager (domyślna subskrypcja + SENT/DELIVERED), a następnie usuwamy wpis.
  */
 class WyslijPlanowanySmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -30,20 +30,37 @@ class WyslijPlanowanySmsReceiver : BroadcastReceiver() {
         val numer = parts[0]
         val tresc = parts.subList(2, parts.size).joinToString("\t")
         val ok = try {
-            val sms = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                context.getSystemService(SmsManager::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                SmsManager.getDefault()
-            }
+            val sms = smsManagerDlaDomyslnejSubskrypcji(context)
             val czesci = sms.divideMessage(tresc)
             if (czesci.isNullOrEmpty()) {
                 false
-            } else if (czesci.size == 1) {
-                sms.sendTextMessage(numer, null, czesci[0], null, null)
-                true
             } else {
-                sms.sendMultipartTextMessage(numer, null, czesci, null, null)
+                val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+                val sentIntents = ArrayList<PendingIntent>(czesci.size)
+                val deliveredIntents = ArrayList<PendingIntent>(czesci.size)
+                for (i in czesci.indices) {
+                    val sent = Intent(context, SmsStatusSentReceiver::class.java).apply {
+                        action = SmsStatusSentReceiver.ACTION
+                        putExtra("plan_id", id)
+                        putExtra("part", i)
+                    }
+                    val del = Intent(context, SmsStatusDeliveredReceiver::class.java).apply {
+                        action = SmsStatusDeliveredReceiver.ACTION
+                        putExtra("plan_id", id)
+                        putExtra("part", i)
+                    }
+                    sentIntents.add(
+                        PendingIntent.getBroadcast(context, (id.hashCode() xor i), sent, flags)
+                    )
+                    deliveredIntents.add(
+                        PendingIntent.getBroadcast(context, (id.hashCode() xor (i + 1000)), del, flags)
+                    )
+                }
+                if (czesci.size == 1) {
+                    sms.sendTextMessage(numer, null, czesci[0], sentIntents[0], deliveredIntents[0])
+                } else {
+                    sms.sendMultipartTextMessage(numer, null, czesci, sentIntents, deliveredIntents)
+                }
                 true
             }
         } catch (e: Exception) {
@@ -67,7 +84,7 @@ class WyslijPlanowanySmsReceiver : BroadcastReceiver() {
             Log.e(TAG, "Błąd zapisu planowanego SMS do Sent", e)
         }
         prefs.edit().remove(id).apply()
-        Log.i(TAG, "Wysłano zaplanowany SMS na $numer: ${tresc.take(30)}")
+        Log.i(TAG, "Wysłano zaplanowany SMS na $numer (${tresc.length} znaków)")
     }
 
     companion object {

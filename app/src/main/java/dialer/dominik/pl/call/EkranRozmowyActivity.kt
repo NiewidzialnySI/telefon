@@ -11,7 +11,9 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.ui.platform.LocalContext
@@ -41,8 +43,8 @@ class EkranRozmowyActivity : ComponentActivity() {
                 }
                 return
             }
-            // Przy głośniku nie gasimy ekranu (rozmowa głośnomówiąca).
-            if (StanPolaczenia.glosnik) {
+            // Przy głośniku / BT nie gasimy ekranu (audio nie w uchu telefonu).
+            if (StanPolaczenia.glosnik || StanPolaczenia.bluetoothAktywny) {
                 if (zblizenieAktywne) {
                     zblizenieAktywne = false
                     ustawZblizenie(false)
@@ -137,6 +139,21 @@ class EkranRozmowyActivity : ComponentActivity() {
 
         @Suppress("UNUSED_VARIABLE")
         val menedzerBlokady = getSystemService(KeyguardManager::class.java)
+
+        // Wstecz nie zamyka ekranu rozmowy (tylko chowa IME, jeśli otwarte).
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    val fokus = currentFocus
+                    val imm = getSystemService(InputMethodManager::class.java)
+                    if (fokus != null && imm != null) {
+                        imm.hideSoftInputFromWindow(fokus.windowToken, 0)
+                        fokus.clearFocus()
+                    }
+                }
+            }
+        )
 
         setContent {
             TelefonTheme {

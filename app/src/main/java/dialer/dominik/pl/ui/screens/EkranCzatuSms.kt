@@ -1067,40 +1067,52 @@ internal fun EkranCzatuSzczegoly(
                                 if (zalaczniki.isNotEmpty()) {
                                     val doWyslania = zalaczniki
                                     val tekst = tresc
-                                    val noweWpisy = doWyslania.mapIndexed { index, z ->
-                                        val klucz = System.nanoTime() + index
-                                        // Nie przekazuj miniatury (512 px) — wyslijMms ładuje pełną jakość z URI.
-                                        wyslijMms(
-                                            context = context,
-                                            numer = adres,
-                                            contentUri = z.uri,
-                                            tekst = if (index == 0) tekst else "",
-                                            lokalnyKlucz = klucz
-                                        )
-                                        SmsWpis(
-                                            id = -klucz,
-                                            address = adres,
-                                            body = when {
-                                                index == 0 && tekst.isNotBlank() -> tekst
-                                                else -> "📷 [MMS]"
-                                            },
-                                            date = System.currentTimeMillis() + index,
-                                            type = Telephony.Sms.MESSAGE_TYPE_OUTBOX,
-                                            read = true,
-                                            bitmap = z.podglad,
-                                            status = Telephony.Sms.STATUS_PENDING,
-                                            lokalnyKlucz = klucz
-                                        )
-                                    }
-                                    // reverseLayout: index 0 = dół czatu → lista musi być DESC po dacie
-                                    wiadomosci = (wiadomosci + noweWpisy).sortedByDescending { it.date }
-                                    uniewaznijCacheWatku(adres)
-                                    usunDraftCzatu(context, adres)
-                                    cytowanaWiadomosc = null
+                                    // Kompresja JPEG / mmslib na IO — nie blokuj UI (ANR).
                                     tresc = ""
                                     zalaczniki = emptyList()
-                                    onWiadomoscWyslana()
-                                    przewinDoNajnowszej(animacja = true)
+                                    cytowanaWiadomosc = null
+                                    usunDraftCzatu(context, adres)
+                                    coroutineScope.launch(Dispatchers.IO) {
+                                        val noweWpisy = doWyslania.mapIndexedNotNull { index, z ->
+                                            val klucz = System.nanoTime() + index
+                                            val wynik = wyslijMms(
+                                                context = context,
+                                                numer = adres,
+                                                contentUri = z.uri,
+                                                tekst = if (index == 0) tekst else "",
+                                                lokalnyKlucz = klucz
+                                            ) ?: return@mapIndexedNotNull null
+                                            SmsWpis(
+                                                id = -klucz,
+                                                address = adres,
+                                                body = when {
+                                                    index == 0 && tekst.isNotBlank() -> tekst
+                                                    else -> "📷 [MMS]"
+                                                },
+                                                date = System.currentTimeMillis() + index,
+                                                type = Telephony.Sms.MESSAGE_TYPE_OUTBOX,
+                                                read = true,
+                                                bitmap = z.podglad,
+                                                status = Telephony.Sms.STATUS_PENDING,
+                                                lokalnyKlucz = wynik.lokalnyKlucz
+                                            )
+                                        }
+                                        withContext(Dispatchers.Main) {
+                                            if (noweWpisy.isEmpty()) {
+                                                android.widget.Toast.makeText(
+                                                    context,
+                                                    "Nie udało się wysłać MMS",
+                                                    android.widget.Toast.LENGTH_SHORT
+                                                ).show()
+                                                return@withContext
+                                            }
+                                            wiadomosci =
+                                                (wiadomosci + noweWpisy).sortedByDescending { it.date }
+                                            uniewaznijCacheWatku(adres)
+                                            onWiadomoscWyslana()
+                                            przewinDoNajnowszej(animacja = true)
+                                        }
+                                    }
                                 } else if (planCzasMs != null) {
                                     val czas = planCzasMs ?: 0L
                                     zaplanujWiadomosc(context, adres, tresc, czas)

@@ -83,6 +83,8 @@ object NagrywanieKontroler {
 
     private val zatrzymajFlaga = AtomicBoolean(false)
     private var job: Job? = null
+    /** Join przed kolejnym [start] — unikaj dwóch torów PCM / ADB wyścigów. */
+    private var cleanupJob: Job? = null
     /** Anuluje in-flight [rozgrzej], żeby po szybkim Rozłącz nie włączał ADB z powrotem. */
     @Volatile private var rozgrzewkaGen = 0
     private var rozgrzewkaJob: Job? = null
@@ -161,6 +163,8 @@ object NagrywanieKontroler {
         appCtx = ctx.applicationContext
         zatrzymajFlaga.set(false)
         job = scope.launch {
+            // Poczekaj aż poprzedni stop() domknie PCM/shell — inaczej dual_up_dn → 0.
+            cleanupJob?.join()
             try {
                 uruchomDrabinke(ctx.applicationContext, numer)
             } catch (t: Throwable) {
@@ -178,7 +182,7 @@ object NagrywanieKontroler {
         zatrzymajFlaga.set(true)
         job?.cancel()
         job = null
-        scope.launch {
+        cleanupJob = scope.launch {
             withContext(Dispatchers.IO) {
                 keepalive?.stop()
                 keepalive = null

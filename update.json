@@ -1,6 +1,6 @@
 {
-  "versionCode": 11,
-  "versionName": "1.7.2",
-  "apkUrl": "https://github.com/NiewidzialnySI/telefon/releases/download/v1.7.2/telefon-v1.7.2.apk",
-  "changelog": "Test autoaktualizacji po hotfixie 1.7.1."
+  "versionCode": 12,
+  "versionName": "1.7.3",
+  "apkUrl": "https://github.com/NiewidzialnySI/telefon/releases/download/v1.7.3/telefon-v1.7.3.apk",
+  "changelog": "Audyt: weryfikacja podpisu APK, https-only update, MMS off-UI + twardszy receiver, planowane SMS, blokada auto-BT flip, proximity/BT, backup bez sekretów ADB."
 }

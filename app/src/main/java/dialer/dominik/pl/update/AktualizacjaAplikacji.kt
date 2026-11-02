@@ -4,7 +4,9 @@ import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
 import android.net.Uri
+import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.provider.Settings
 import android.util.Log
@@ -16,6 +18,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
@@ -64,17 +68,24 @@ object AktualizacjaAplikacji {
 
     private val _stan = MutableStateFlow<Stan>(Stan.Bezczynny)
     val stan: StateFlow<Stan> = _stan.asStateFlow()
+    private val mutex = Mutex()
 
     fun manifestUrl(context: Context): String {
+        // Release: tylko BuildConfig (prefs URL = wektor supply-chain).
+        if (!BuildConfig.DEBUG) {
+            return BuildConfig.UPDATE_MANIFEST_URL.ifBlank { DOMYSLNY_MANIFEST }
+        }
         val zPrefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(K_URL, null)?.trim().orEmpty()
-        if (zPrefs.isNotBlank()) return zPrefs
+        if (zPrefs.isNotBlank() && zPrefs.startsWith("https://")) return zPrefs
         return BuildConfig.UPDATE_MANIFEST_URL.ifBlank { DOMYSLNY_MANIFEST }
     }
 
     fun ustawManifestUrl(context: Context, url: String) {
+        val u = url.trim()
+        require(u.isEmpty() || u.startsWith("https://")) { "manifest URL musi być https" }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-            putString(K_URL, url.trim())
+            putString(K_URL, u)
         }
     }
 
@@ -117,36 +128,42 @@ object AktualizacjaAplikacji {
         context: Context,
         cichyGdyAktualna: Boolean = false
     ): Stan = withContext(Dispatchers.IO) {
-        _stan.value = Stan.Sprawdzanie
-        try {
-            // Cache-bust: raw.githubusercontent.com ma max-age=300 + czasem stary edge.
-            val bazowy = manifestUrl(context)
-            val sep = if (bazowy.contains('?')) '&' else '?'
-            val url = "$bazowy${sep}_=${System.currentTimeMillis()}"
-            val json = pobierzTekst(url, githubToken(context))
-            val info = parsujManifest(json)
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
-                putLong(K_OSTATNIE, System.currentTimeMillis())
+        mutex.withLock {
+            when (_stan.value) {
+                is Stan.Sprawdzanie, is Stan.Pobieranie -> return@withLock _stan.value
+                else -> Unit
             }
-            val pominiety = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getInt(K_POMINIETY, -1)
-            val wynik = when {
-                info.versionCode > BuildConfig.VERSION_CODE &&
-                    info.versionCode != pominiety -> Stan.Dostepna(info)
-                info.versionCode > BuildConfig.VERSION_CODE -> Stan.Aktualna // pominięta
-                else -> Stan.Aktualna
+            _stan.value = Stan.Sprawdzanie
+            try {
+                // Cache-bust: raw.githubusercontent.com ma max-age=300 + czasem stary edge.
+                val bazowy = manifestUrl(context)
+                val sep = if (bazowy.contains('?')) '&' else '?'
+                val url = "$bazowy${sep}_=${System.currentTimeMillis()}"
+                val json = pobierzTekst(url, githubToken(context))
+                val info = parsujManifest(json)
+                context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
+                    putLong(K_OSTATNIE, System.currentTimeMillis())
+                }
+                val pominiety = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getInt(K_POMINIETY, -1)
+                val wynik = when {
+                    info.versionCode > BuildConfig.VERSION_CODE &&
+                        info.versionCode != pominiety -> Stan.Dostepna(info)
+                    info.versionCode > BuildConfig.VERSION_CODE -> Stan.Aktualna // pominięta
+                    else -> Stan.Aktualna
+                }
+                if (cichyGdyAktualna && wynik is Stan.Aktualna) {
+                    _stan.value = Stan.Bezczynny
+                } else {
+                    _stan.value = wynik
+                }
+                wynik
+            } catch (e: Exception) {
+                val blad = Stan.Blad(e.message?.takeIf { it.isNotBlank() } ?: "Błąd sprawdzania")
+                if (!cichyGdyAktualna) _stan.value = blad
+                else _stan.value = Stan.Bezczynny
+                blad
             }
-            if (cichyGdyAktualna && wynik is Stan.Aktualna) {
-                _stan.value = Stan.Bezczynny
-            } else {
-                _stan.value = wynik
-            }
-            wynik
-        } catch (e: Exception) {
-            val blad = Stan.Blad(e.message?.takeIf { it.isNotBlank() } ?: "Błąd sprawdzania")
-            if (!cichyGdyAktualna) _stan.value = blad
-            else _stan.value = Stan.Bezczynny
-            blad
         }
     }
 
@@ -160,19 +177,23 @@ object AktualizacjaAplikacji {
     /** Pobiera APK do cache — bez otwierania instalatora. */
     suspend fun pobierz(context: Context, info: InfoWersji): Boolean =
         withContext(Dispatchers.IO) {
-            try {
-                _stan.value = Stan.Pobieranie(0.02f, info)
-                val dir = File(context.cacheDir, "apk").apply { mkdirs() }
-                val plik = File(dir, "telefon-update.apk")
-                if (plik.exists()) plik.delete()
-                pobierzPlik(info.apkUrl, plik, githubToken(context)) { p ->
-                    _stan.value = Stan.Pobieranie(p, info)
+            mutex.withLock {
+                if (_stan.value is Stan.Pobieranie) return@withLock false
+                try {
+                    _stan.value = Stan.Pobieranie(0.02f, info)
+                    val dir = File(context.cacheDir, "apk").apply { mkdirs() }
+                    val plik = File(dir, "telefon-update.apk")
+                    if (plik.exists()) plik.delete()
+                    pobierzPlik(info.apkUrl, plik, githubToken(context)) { p ->
+                        _stan.value = Stan.Pobieranie(p, info)
+                    }
+                    weryfikujPodpisApk(context, plik)
+                    _stan.value = Stan.GotowaDoInstalacji(plik, info)
+                    true
+                } catch (e: Exception) {
+                    _stan.value = Stan.Blad(e.message?.takeIf { it.isNotBlank() } ?: "Błąd pobierania")
+                    false
                 }
-                _stan.value = Stan.GotowaDoInstalacji(plik, info)
-                true
-            } catch (e: Exception) {
-                _stan.value = Stan.Blad(e.message?.takeIf { it.isNotBlank() } ?: "Błąd pobierania")
-                false
             }
         }
 
@@ -198,6 +219,12 @@ object AktualizacjaAplikacji {
     suspend fun zainstaluj(context: Context, plik: File) = withContext(Dispatchers.IO) {
         if (!plik.exists() || plik.length() < 1024L) {
             _stan.value = Stan.Blad("Brak pobranego APK — pobierz ponownie")
+            return@withContext
+        }
+        try {
+            weryfikujPodpisApk(context, plik)
+        } catch (e: Exception) {
+            _stan.value = Stan.Blad(e.message ?: "APK odrzucony — zły podpis")
             return@withContext
         }
         if (czyAdbInstallDostepny()) {
@@ -280,12 +307,63 @@ object AktualizacjaAplikacji {
 
     private fun parsujManifest(json: String): InfoWersji {
         val o = JSONObject(json)
-        val code = o.getInt("versionCode")
-        val name = o.optString("versionName", code.toString())
-        val apk = o.getString("apkUrl").trim()
-        require(apk.startsWith("http")) { "apkUrl musi być https" }
+        val code = o.optInt("versionCode", -1)
+        require(code > 0) { "Niepoprawny manifest — brak versionCode" }
+        val name = o.optString("versionName", code.toString()).ifBlank { code.toString() }
+        val apk = o.optString("apkUrl", "").trim()
+        require(apk.startsWith("https://")) { "apkUrl musi być https://" }
+        val host = runCatching { URL(apk).host.lowercase() }.getOrNull().orEmpty()
+        require(
+            host == "github.com" || host.endsWith(".github.com") ||
+                host == "objects.githubusercontent.com" ||
+                host.endsWith(".githubusercontent.com")
+        ) { "apkUrl spoza zaufanego hosta GitHub" }
         val log = o.optString("changelog", "")
         return InfoWersji(code, name, apk, log)
+    }
+
+    /**
+     * APK musi mieć ten sam signing certificate co zainstalowana aplikacja
+     * (chroni przed MITM / podmienionym artefaktem przy cichej instalacji ADB).
+     */
+    private fun weryfikujPodpisApk(context: Context, apk: File) {
+        val pm = context.packageManager
+        @Suppress("DEPRECATION")
+        val archiwum = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            pm.getPackageArchiveInfo(apk.absolutePath, GET_SIGNING_CERTIFICATES)
+        } else {
+            pm.getPackageArchiveInfo(apk.absolutePath, PackageManager.GET_SIGNATURES)
+        } ?: error("Nie można odczytać APK (uszkodzony plik?)")
+        require(archiwum.packageName == context.packageName) {
+            "APK ma inny package (${archiwum.packageName})"
+        }
+        val nasze = podpisaneCerty(pm, context.packageName, zainstalowany = true)
+        val zApk = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            archiwum.signingInfo?.apkContentsSigners?.map { it.toByteArray() }.orEmpty()
+        } else {
+            @Suppress("DEPRECATION")
+            archiwum.signatures?.map { it.toByteArray() }.orEmpty()
+        }
+        require(nasze.isNotEmpty() && zApk.isNotEmpty()) { "Brak certyfikatów podpisu" }
+        require(nasze.any { a -> zApk.any { b -> a.contentEquals(b) } }) {
+            "Podpis APK nie pasuje do zainstalowanej aplikacji"
+        }
+    }
+
+    private fun podpisaneCerty(
+        pm: PackageManager,
+        pkg: String,
+        zainstalowany: Boolean
+    ): List<ByteArray> {
+        if (!zainstalowany) return emptyList()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            pm.getPackageInfo(pkg, GET_SIGNING_CERTIFICATES)
+                .signingInfo?.apkContentsSigners?.map { it.toByteArray() }.orEmpty()
+        } else {
+            @Suppress("DEPRECATION")
+            pm.getPackageInfo(pkg, PackageManager.GET_SIGNATURES)
+                .signatures?.map { it.toByteArray() }.orEmpty()
+        }
     }
 
     private fun pobierzTekst(url: String, token: String): String {

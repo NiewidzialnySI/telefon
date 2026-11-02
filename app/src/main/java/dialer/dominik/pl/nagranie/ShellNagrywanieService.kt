@@ -161,6 +161,15 @@ class ShellNagrywanieService : INagrywanieShell.Stub {
 
     override fun grantPermission(packageName: String, permission: String): Boolean {
         if (packageName.isBlank() || permission.isBlank()) return false
+        // Tylko własny pakiet + znana lista uprawnień dialera (nie dowolny app).
+        if (packageName != "dialer.dominik.pl") {
+            Log.w(TAG, "grantPermission odrzucony — obcy pakiet=$packageName")
+            return false
+        }
+        if (permission !in DOZWOLONE_GRANT) {
+            Log.w(TAG, "grantPermission odrzucony — permission=$permission")
+            return false
+        }
         return runCatching {
             val p = ProcessBuilder("pm", "grant", packageName, permission)
                 .redirectErrorStream(true)
@@ -231,6 +240,23 @@ class ShellNagrywanieService : INagrywanieShell.Stub {
     companion object {
         private const val TAG = "NagrywanieShell"
         const val WERSJA = 5
+        private val DOZWOLONE_GRANT = setOf(
+            "android.permission.RECORD_AUDIO",
+            "android.permission.READ_PHONE_STATE",
+            "android.permission.READ_CALL_LOG",
+            "android.permission.WRITE_CALL_LOG",
+            "android.permission.READ_SMS",
+            "android.permission.SEND_SMS",
+            "android.permission.RECEIVE_SMS",
+            "android.permission.RECEIVE_MMS",
+            "android.permission.READ_CONTACTS",
+            "android.permission.WRITE_CONTACTS",
+            "android.permission.POST_NOTIFICATIONS",
+            "android.permission.BLUETOOTH_CONNECT",
+            "android.permission.READ_PHONE_NUMBERS",
+            "android.permission.ANSWER_PHONE_CALLS",
+            "android.permission.CALL_PHONE",
+        )
         private const val STAN_IDLE = 0
         private const val STAN_STARTING = 1
         private const val STAN_DUAL = 2

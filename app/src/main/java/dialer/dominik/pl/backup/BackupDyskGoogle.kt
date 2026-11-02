@@ -31,6 +31,12 @@ import java.util.TimeZone
 object BackupDyskGoogle {
 
     private const val TAG = "BackupDyskGoogle"
+
+    /** Prefs z tokenami / sekretami — poza Drive i Auto Backup. */
+    private val PREFS_WRAZLIWE = setOf(
+        "adb_shell_nagranie",
+        "aktualizacja_prefs",
+    )
     const val NAZWA_FOLDERU = "Telefon-Backup-data"
     private const val MIME_FOLDER = "application/vnd.google-apps.folder"
     private const val MIME_JSON = "application/json"
@@ -433,6 +439,8 @@ object BackupDyskGoogle {
         dir.listFiles()?.filter { it.name.endsWith(".xml") }?.forEach { plik ->
             val nazwa = plik.name.removeSuffix(".xml")
             if (nazwa == "backup_meta") return@forEach
+            // Sekrety ADB / update — nie w kopii Drive.
+            if (nazwa in PREFS_WRAZLIWE) return@forEach
             val sp = context.getSharedPreferences(nazwa, Context.MODE_PRIVATE)
             prefsObj.put(nazwa, serializujPrefs(sp))
             prefsNazwy += nazwa
@@ -551,6 +559,10 @@ object BackupDyskGoogle {
         if (root.optInt("wersja", 0) > WERSJA_FORMATU) {
             throw IllegalStateException("Nieobsługiwana wersja kopii")
         }
+        val aplikacja = root.optString("aplikacja", "")
+        if (aplikacja.isNotBlank() && aplikacja != context.packageName) {
+            throw IllegalStateException("Kopia z innej aplikacji ($aplikacja)")
+        }
         val prefs = root.optJSONObject("prefs") ?: throw IllegalStateException("Brak sekcji prefs")
         // Druga bariera: nie przywracaj, jeśli cała kopia jest pusta.
         val ocena = ocenBackupJson(json)
@@ -560,7 +572,7 @@ object BackupDyskGoogle {
         val klucze = prefs.keys()
         while (klucze.hasNext()) {
             val nazwa = klucze.next()
-            if (nazwa == "backup_meta") continue
+            if (nazwa == "backup_meta" || nazwa in PREFS_WRAZLIWE) continue
             val wpisy = prefs.getJSONObject(nazwa)
             // Pusta sekcja w JSON + lokalne dane → zostaw lokalne (nie clear()).
             if (wpisy.length() == 0 && prefsLokalnieMaDane(context, nazwa)) {

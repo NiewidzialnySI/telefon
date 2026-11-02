@@ -36,11 +36,12 @@ class MmsPobranyIZapisanyReceiver : BroadcastReceiver() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != null &&
-            intent.action != MmsReceivedReceiver.MMS_RECEIVED &&
-            intent.action != "com.klinker.android.messaging.MMS_RECEIVED"
+        val akcja = intent.action
+        if (akcja != MmsReceivedReceiver.MMS_RECEIVED &&
+            akcja != "com.klinker.android.messaging.MMS_RECEIVED"
         ) {
-            // Explicit broadcast z DownloadManager i tak ustawia action MMS_RECEIVED.
+            Log.w(TAG, "Odrzucono broadcast MMS z akcją=$akcja")
+            return
         }
         val pending = goAsync()
         val appCtx = context.applicationContext
@@ -88,6 +89,17 @@ class MmsPobranyIZapisanyReceiver : BroadcastReceiver() {
             return
         }
         val plik = File(path)
+        // Tylko pliki z cache/files aplikacji — nie arbitrażowe ścieżki z zewnątrz.
+        val dozwolone = listOf(
+            context.cacheDir.canonicalPath,
+            context.filesDir.canonicalPath,
+            context.externalCacheDir?.canonicalPath,
+        ).filterNotNull()
+        val kanoniczna = runCatching { plik.canonicalPath }.getOrNull()
+        if (kanoniczna == null || dozwolone.none { kanoniczna.startsWith(it) }) {
+            Log.e(TAG, "Odrzucono PDU poza sandboxem: $path")
+            return
+        }
         if (!plik.exists() || plik.length() == 0L) {
             Log.w(TAG, "Pusty plik PDU: $path")
             if (!location.isNullOrBlank()) {

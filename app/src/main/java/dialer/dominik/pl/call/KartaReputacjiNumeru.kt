@@ -134,17 +134,19 @@ fun KartaReputacjiNumeru(
                     Spacer(Modifier.width(8.dp))
                 }
                 Column(modifier = Modifier.weight(1f)) {
+                    val kategoriaUi = wynik.kategoria.bezLiteraluNull()
+                        .ifBlank { "Opinie społeczności" }
                     Text(
-                        text = if (wynik.laduje) "Szukam w sieci…" else wynik.kategoria,
+                        text = if (wynik.laduje) "Szukam w sieci…" else kategoriaUi,
                         color = paleta.naTle,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    if (wynik.ocenaLiczbowa.isNotBlank()) {
+                    if (wynik.ocenaLiczbowa.czyMaTrescOpinii()) {
                         Text(
-                            text = wynik.ocenaLiczbowa,
+                            text = wynik.ocenaLiczbowa.bezLiteraluNull(),
                             color = kolorBadge,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Medium
@@ -174,10 +176,10 @@ fun KartaReputacjiNumeru(
             }
         }
 
-        if (!wynik.laduje && wynik.opisZagrozenia.isNotBlank()) {
+        if (!wynik.laduje && wynik.opisZagrozenia.czyMaTrescOpinii()) {
             Spacer(Modifier.height(4.dp))
             Text(
-                text = wynik.opisZagrozenia,
+                text = wynik.opisZagrozenia.bezLiteraluNull(),
                 color = paleta.naTle.copy(alpha = 0.65f),
                 fontSize = 11.sp,
                 maxLines = if (rozwiniety) 3 else 1,
