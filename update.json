@@ -1,6 +1,6 @@
 {
-  "versionCode": 10,
-  "versionName": "1.7.1",
-  "apkUrl": "https://github.com/NiewidzialnySI/telefon/releases/download/v1.7.1/telefon-v1.7.1.apk",
-  "changelog": "Hotfix: crash przy starcie po update (R8 + kotlin.text). Apka znów się otwiera."
+  "versionCode": 11,
+  "versionName": "1.7.2",
+  "apkUrl": "https://github.com/NiewidzialnySI/telefon/releases/download/v1.7.2/telefon-v1.7.2.apk",
+  "changelog": "Test autoaktualizacji po hotfixie 1.7.1."
 }
