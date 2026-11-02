@@ -1,6 +1,6 @@
 {
-  "versionCode": 14,
-  "versionName": "1.7.5",
-  "apkUrl": "https://github.com/NiewidzialnySI/telefon/releases/download/v1.7.5/telefon-v1.7.5.apk",
-  "changelog": "Fix: MMS z czatu/dymka (outbox→sent); archiwum — nowa wiadomość wraca na główną skrzynkę (normalizacja numeru + odświeżenie UI)."
+  "versionCode": 15,
+  "versionName": "1.7.6",
+  "apkUrl": "https://github.com/NiewidzialnySI/telefon/releases/download/v1.7.6/telefon-v1.7.6.apk",
+  "changelog": "Fix MMS: fałszywy błąd code=0 (ColorOS) + FAILED nie wygląda jak przychodzący."
 }

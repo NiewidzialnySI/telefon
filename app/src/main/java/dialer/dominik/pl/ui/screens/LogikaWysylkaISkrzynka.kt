@@ -290,7 +290,7 @@ internal fun pobierzSkrzynkeSms(context: Context, odswiez: Boolean = false): Lis
                 if (date < 10000000000L) date *= 1000L // konwersja sekund na ms
                 val box = if (boxIdx != -1) mmsCursor.getInt(boxIdx) else 1
                 val read = if (readIdx != -1) mmsCursor.getInt(readIdx) == 1 else true
-                val type = if (box == 2 || box == 4) Telephony.Sms.MESSAGE_TYPE_SENT else Telephony.Sms.MESSAGE_TYPE_INBOX
+                val type = typSmsDlaMmsBox(box)
 
                 val address = pobierzAdresMms(context, id, box) ?: continue
                 val textBody = pobierzTekstMms(context, id)
@@ -308,7 +308,12 @@ internal fun pobierzSkrzynkeSms(context: Context, odswiez: Boolean = false): Lis
                         type = type,
                         read = read,
                         bitmap = null,
-                        mmsMsgId = id
+                        mmsMsgId = id,
+                        status = if (box == Telephony.Mms.MESSAGE_BOX_FAILED) {
+                            Telephony.Sms.STATUS_FAILED
+                        } else {
+                            Telephony.Sms.STATUS_NONE
+                        }
                     )
                 )
             }
@@ -548,7 +553,7 @@ internal fun pobierzMmsZdjeciaDlaAdresu(
                 if (date < 10000000000L) date *= 1000L
                 val box = if (boxIdx != -1) mms.getInt(boxIdx) else 1
                 val read = if (readIdx != -1) mms.getInt(readIdx) == 1 else true
-                val type = if (box == 2 || box == 4) Telephony.Sms.MESSAGE_TYPE_SENT else Telephony.Sms.MESSAGE_TYPE_INBOX
+                val type = typSmsDlaMmsBox(box)
 
                 val mmsAddress = pobierzAdresMms(context, id, box) ?: continue
                 if (tid == null && normalizujAdresSms(mmsAddress) != normTarget) continue
@@ -569,7 +574,12 @@ internal fun pobierzMmsZdjeciaDlaAdresu(
                         type = type,
                         read = read,
                         bitmap = null,
-                        mmsMsgId = id
+                        mmsMsgId = id,
+                        status = if (box == Telephony.Mms.MESSAGE_BOX_FAILED) {
+                            Telephony.Sms.STATUS_FAILED
+                        } else {
+                            Telephony.Sms.STATUS_NONE
+                        }
                     )
                 )
             }
@@ -954,15 +964,27 @@ internal fun dolaczRoboczeDoWatkow(context: Context, watki: List<SmsWatek>): Lis
 // ===== MMS / ZAŁĄCZNIKI (zdjęcia) =====
 
 /**
+ * Mapuje Telephony.Mms.MESSAGE_BOX_* na typ dymka SMS.
+ * FAILED/OUTBOX/SENT = wychodzące — wcześniej FAILED padało do INBOX i MMS
+ * wyglądał jak „od drugiej osoby”.
+ */
+internal fun typSmsDlaMmsBox(msgBox: Int): Int = when (msgBox) {
+    Telephony.Mms.MESSAGE_BOX_INBOX -> Telephony.Sms.MESSAGE_TYPE_INBOX
+    Telephony.Mms.MESSAGE_BOX_FAILED -> Telephony.Sms.MESSAGE_TYPE_FAILED
+    Telephony.Mms.MESSAGE_BOX_OUTBOX -> Telephony.Sms.MESSAGE_TYPE_OUTBOX
+    Telephony.Mms.MESSAGE_BOX_DRAFTS -> Telephony.Sms.MESSAGE_TYPE_DRAFT
+    else -> Telephony.Sms.MESSAGE_TYPE_SENT // SENT (2) i nieznane
+}
+
+/**
  * Adres rozmówcy MMS.
- * Inbox (msg_box=1): FROM = 137; Sent/Outbox: TO = 151.
+ * Inbox (msg_box=1): FROM = 137; Sent/Outbox/Failed: TO = 151.
  * Niektóre OEM-y zapisują typy odwrotnie / tylko jeden wpis — dlatego fallback
  * po „drugim” typie, a na końcu pierwszy sensowny adres (bez insert-address-token).
  */
 internal fun pobierzAdresMms(context: Context, msgId: Long, msgBox: Int): String? {
     try {
-        val preferFrom = msgBox == Telephony.Mms.MESSAGE_BOX_INBOX ||
-            msgBox == Telephony.Mms.MESSAGE_BOX_ALL
+        val preferFrom = msgBox == Telephony.Mms.MESSAGE_BOX_INBOX
         val primaryType = if (preferFrom) 137 else 151   // FROM / TO (PduHeaders)
         val secondaryType = if (preferFrom) 151 else 137
 
