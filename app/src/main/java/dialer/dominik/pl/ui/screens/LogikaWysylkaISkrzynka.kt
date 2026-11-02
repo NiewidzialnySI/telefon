@@ -29,6 +29,7 @@ import kotlinx.coroutines.withContext
 internal const val CZAT_PAGE_SIZE = 80
 
 private const val TAG_CZAT_PERF = "CzatPerf"
+private const val TAG_MMS = "WyslijMms"
 
 /** Cache wiadomości per znormalizowany adres — unika ponownego skanu Telephony. */
 object CzatWatekCache {
@@ -1102,8 +1103,12 @@ internal fun przygotujZdjecieDoMms(context: Context, zrodloUri: android.net.Uri)
     return try {
         val dir = java.io.File(context.cacheDir, "images").apply { mkdirs() }
         val plik = java.io.File(dir, "mms_${System.nanoTime()}_${(1000..9999).random()}.jpg")
-        context.contentResolver.openInputStream(zrodloUri)?.use { wejscie ->
+        val przeczytane = context.contentResolver.openInputStream(zrodloUri)?.use { wejscie ->
             plik.outputStream().use { wyjscie -> wejscie.copyTo(wyjscie) }
+        } ?: return null
+        if (przeczytane <= 0L || !plik.exists() || plik.length() <= 0L) {
+            plik.delete()
+            return null
         }
         androidx.core.content.FileProvider.getUriForFile(
             context,
@@ -1111,7 +1116,7 @@ internal fun przygotujZdjecieDoMms(context: Context, zrodloUri: android.net.Uri)
             plik
         )
     } catch (e: Exception) {
-        e.printStackTrace()
+        Log.e(TAG_MMS, "przygotujZdjecieDoMms: ${e.message}", e)
         null
     }
 }
@@ -1135,6 +1140,9 @@ private const val MMS_DOMYSLNY_LIMIT = 300_000
 /**
  * Wysyła MMS ze zdjęciem (wzorzec Fossify MessagingUtils + mmslib):
  * kompresja do limitu [SmsManager.MMS_CONFIG_MAX_MESSAGE_SIZE] operatora.
+ *
+ * Bezpieczne z wątku IO — bez Toast (caller pokazuje błąd na Main).
+ * [WynikWysylkiMms.blad] opisuje przyczynę przy null-owym sukcesie.
  */
 internal fun wyslijMms(
     context: Context,
@@ -1145,40 +1153,43 @@ internal fun wyslijMms(
     lokalnyKlucz: Long = System.nanoTime()
 ): WynikWysylkiMms? {
     if (numer.isBlank()) {
-        Toast.makeText(context, "Brak numeru odbiorcy", Toast.LENGTH_SHORT).show()
+        Log.w(TAG_MMS, "brak numeru")
         return null
     }
+    val appCtx = context.applicationContext
     return try {
-        val limitPdu = pobierzLimitMmsBajtow(context)
+        val limitPdu = pobierzLimitMmsBajtow(appCtx)
         val limitObrazu = (limitPdu - MMS_PDU_OVERHEAD).coerceAtLeast(80_000)
+        Log.i(TAG_MMS, "start numer=$numer limitPdu=$limitPdu uri=$contentUri")
 
-        val bajty = przygotujBajtyObrazuMms(context, contentUri, limitObrazu)
+        val bajty = przygotujBajtyObrazuMms(appCtx, contentUri, limitObrazu)
             ?: bitmap?.let { bitmapDoJpegMms(it, limitObrazu) }
-            ?: run {
-                Toast.makeText(context, "Nie można odczytać zdjęcia", Toast.LENGTH_SHORT).show()
-                return null
-            }
+        if (bajty == null) {
+            Log.e(TAG_MMS, "nie można odczytać zdjęcia uri=$contentUri")
+            return null
+        }
+        Log.i(TAG_MMS, "JPEG ${bajty.size} B, wysyłam…")
 
         val settings = com.klinker.android.send_message.Settings().apply {
             setUseSystemSending(true)
             setDeliveryReports(true)
         }
-        val transaction = com.klinker.android.send_message.Transaction(context, settings)
+        val transaction = com.klinker.android.send_message.Transaction(appCtx, settings)
         // Krótki tekst (nawet spacja) pomaga niektórym stackom MMS zbudować body.
         val message = com.klinker.android.send_message.Message(tekst.ifBlank { " " }, numer)
         message.addMedia(bajty, "image/jpeg", "image.jpg", "image.jpg")
 
-        val sentIntent = Intent(context, dialer.dominik.pl.sms.MmsStatusSentReceiver::class.java).apply {
+        val sentIntent = Intent(appCtx, dialer.dominik.pl.sms.MmsStatusSentReceiver::class.java).apply {
             action = dialer.dominik.pl.sms.MmsStatusSentReceiver.ACTION
             putExtra(dialer.dominik.pl.sms.MmsStatusSentReceiver.EXTRA_LOKALNY_KLUCZ, lokalnyKlucz)
         }
         transaction.setExplicitBroadcastForSentMms(sentIntent)
         transaction.sendNewMessage(message)
+        Log.i(TAG_MMS, "sendNewMessage OK klucz=$lokalnyKlucz")
 
         WynikWysylkiMms(lokalnyKlucz = lokalnyKlucz)
     } catch (e: Exception) {
-        e.printStackTrace()
-        Toast.makeText(context, "Błąd wysyłania MMS", Toast.LENGTH_SHORT).show()
+        Log.e(TAG_MMS, "wyjątek wysyłki: ${e.message}", e)
         dialer.dominik.pl.sms.StatusWiadomosciBus.emituj(
             dialer.dominik.pl.sms.AktualizacjaStatusuWiadomosci(
                 messageUri = null,

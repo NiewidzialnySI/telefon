@@ -1067,50 +1067,62 @@ internal fun EkranCzatuSzczegoly(
                                 if (zalaczniki.isNotEmpty()) {
                                     val doWyslania = zalaczniki
                                     val tekst = tresc
-                                    // Kompresja JPEG / mmslib na IO — nie blokuj UI (ANR).
+                                    // Optymistyczny dymek od razu; kompresja/wysyłka na IO.
+                                    val optymistyczne = doWyslania.mapIndexed { index, z ->
+                                        val klucz = System.nanoTime() + index
+                                        SmsWpis(
+                                            id = -klucz,
+                                            address = adres,
+                                            body = when {
+                                                index == 0 && tekst.isNotBlank() -> tekst
+                                                else -> "📷 [MMS]"
+                                            },
+                                            date = System.currentTimeMillis() + index,
+                                            type = Telephony.Sms.MESSAGE_TYPE_OUTBOX,
+                                            read = true,
+                                            bitmap = z.podglad,
+                                            status = Telephony.Sms.STATUS_PENDING,
+                                            lokalnyKlucz = klucz
+                                        )
+                                    }
+                                    wiadomosci =
+                                        (wiadomosci + optymistyczne).sortedByDescending { it.date }
                                     tresc = ""
                                     zalaczniki = emptyList()
                                     cytowanaWiadomosc = null
                                     usunDraftCzatu(context, adres)
-                                    coroutineScope.launch(Dispatchers.IO) {
-                                        val noweWpisy = doWyslania.mapIndexedNotNull { index, z ->
-                                            val klucz = System.nanoTime() + index
-                                            val wynik = wyslijMms(
-                                                context = context,
-                                                numer = adres,
-                                                contentUri = z.uri,
-                                                tekst = if (index == 0) tekst else "",
-                                                lokalnyKlucz = klucz
-                                            ) ?: return@mapIndexedNotNull null
-                                            SmsWpis(
-                                                id = -klucz,
-                                                address = adres,
-                                                body = when {
-                                                    index == 0 && tekst.isNotBlank() -> tekst
-                                                    else -> "📷 [MMS]"
-                                                },
-                                                date = System.currentTimeMillis() + index,
-                                                type = Telephony.Sms.MESSAGE_TYPE_OUTBOX,
-                                                read = true,
-                                                bitmap = z.podglad,
-                                                status = Telephony.Sms.STATUS_PENDING,
-                                                lokalnyKlucz = wynik.lokalnyKlucz
-                                            )
-                                        }
-                                        withContext(Dispatchers.Main) {
-                                            if (noweWpisy.isEmpty()) {
-                                                android.widget.Toast.makeText(
-                                                    context,
-                                                    "Nie udało się wysłać MMS",
-                                                    android.widget.Toast.LENGTH_SHORT
-                                                ).show()
-                                                return@withContext
+                                    onWiadomoscWyslana()
+                                    przewinDoNajnowszej(animacja = true)
+                                    coroutineScope.launch {
+                                        val ok = withContext(Dispatchers.IO) {
+                                            doWyslania.mapIndexed { index, z ->
+                                                wyslijMms(
+                                                    context = context,
+                                                    numer = adres,
+                                                    contentUri = z.uri,
+                                                    tekst = if (index == 0) tekst else "",
+                                                    lokalnyKlucz = optymistyczne[index].lokalnyKlucz
+                                                        ?: (System.nanoTime() + index)
+                                                ) != null
                                             }
-                                            wiadomosci =
-                                                (wiadomosci + noweWpisy).sortedByDescending { it.date }
+                                        }
+                                        val nieudane = ok.withIndex().filterNot { it.value }.map { it.index }
+                                        if (nieudane.isNotEmpty()) {
+                                            val kluczePadlo = nieudane.mapNotNull {
+                                                optymistyczne[it].lokalnyKlucz
+                                            }.toSet()
+                                            wiadomosci = wiadomosci.filterNot {
+                                                it.lokalnyKlucz != null && it.lokalnyKlucz in kluczePadlo
+                                            }
+                                            zalaczniki = nieudane.map { doWyslania[it] }
+                                            if (tekst.isNotBlank()) tresc = tekst
+                                            Toast.makeText(
+                                                context,
+                                                "Nie udało się wysłać MMS",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        } else {
                                             uniewaznijCacheWatku(adres)
-                                            onWiadomoscWyslana()
-                                            przewinDoNajnowszej(animacja = true)
                                         }
                                     }
                                 } else if (planCzasMs != null) {

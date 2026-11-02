@@ -18,6 +18,7 @@ class MmsStatusSentReceiver : BroadcastReceiver() {
         val messageId = intent.getLongExtra(EXTRA_MESSAGE_ID, -1L).takeIf { it >= 0 }
 
         if (resultCode == Activity.RESULT_OK) {
+            Log.i(TAG, "MMS wysłany OK klucz=$lokalny uri=${intent.getStringExtra(EXTRA_CONTENT_URI)}")
             StatusWiadomosciBus.emituj(
                 AktualizacjaStatusuWiadomosci(
                     messageUri = intent.getStringExtra(EXTRA_CONTENT_URI),

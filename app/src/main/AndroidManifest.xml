@@ -85,6 +85,15 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+        <!-- mmslib: openFile(File(cache, uri.path)) gubi PDU przy path z '/' — usuwamy i podmieniamy. -->
+        <provider
+            android:name="com.klinker.android.send_message.MmsFileProvider"
+            tools:node="remove" />
+        <provider
+            android:name=".sms.NaprawionyMmsFileProvider"
+            android:authorities="${applicationId}.MmsFileProvider"
+            android:exported="false"
+            android:grantUriPermissions="true" />
 
         <!-- Własne ADB: shell app_process publikuje INagrywanieShell. -->
         <provider
