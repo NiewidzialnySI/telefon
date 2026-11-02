@@ -9,7 +9,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * W procesie Shizuku UserService nie ma Application — Context systemowy
+ * W procesie daemon shell nie ma Application — Context systemowy
  * bierzemy z ActivityThread przez refleksję.
  *
  * systemMain() tworzy Handler, więc musi lecieć na wątku z Looperem
@@ -49,7 +49,7 @@ internal object KontekstSystemowy {
         }
 
         val main = Looper.getMainLooper()
-            ?: error("Brak main Looper — Shizuku UserService źle skonfigurowany")
+            ?: error("Brak main Looper — daemon shell źle skonfigurowany")
 
         if (Thread.currentThread() === main.thread) {
             val at = cls.getMethod("systemMain").invoke(null)

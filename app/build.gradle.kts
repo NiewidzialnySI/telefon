@@ -20,8 +20,8 @@ android {
         applicationId = "dialer.dominik.pl"
         minSdk = 31
         targetSdk = 37
-        versionCode = 7
-        versionName = "1.5"
+        versionCode = 8
+        versionName = "1.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -79,14 +79,11 @@ dependencies {
     implementation("com.google.android.gms:play-services-auth:21.3.0")
     // Motyw: seed color → paleta Material 3 (light/dark + animate)
     implementation("com.materialkolor:material-kolor:2.1.1")
-    // Nagrywanie rozmów przez Shizuku (UserService = UID shell)
-    implementation("dev.rikka.shizuku:api:13.1.5")
-    implementation("dev.rikka.shizuku:provider:13.1.5")
     // Refleksja ActivityThread / AttributionSource w procesie shell
     implementation("org.lsposed.hiddenapibypass:hiddenapibypass:4.3")
     // Offline transkrypcja (Whisper.cpp AAR; model PL ~488 MB przy pierwszym użyciu)
     implementation("dev.ffmpegkit-maintained:whisper-android:1.0.0")
-    // Własne ADB (Wireless debugging) → shell UID bez Shizuku (jak CallVault)
+    // Własne ADB (Wireless debugging) → shell UID
     implementation("com.github.MuntashirAkon:libadb-android:3.1.1")
     implementation("com.github.MuntashirAkon:sun-security-android:1.1")
     implementation("org.conscrypt:conscrypt-android:2.5.3")

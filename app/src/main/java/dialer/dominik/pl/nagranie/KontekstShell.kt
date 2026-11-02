@@ -15,7 +15,7 @@ import android.view.Display
 
 /**
  * Context, który AudioFlinger / AppOps widzą jako prawdziwy pakiet systemowy
- * `com.android.shell` (UID 2000) — ten sam UID, w którym działa Shizuku UserService.
+ * `com.android.shell` (UID 2000) — ten sam UID, w którym działa daemon ADB.
  *
  * Samo bycie UID 2000 nie wystarcza: bramka sprawdza parę (uid, package)
  * względem package DB. `com.android.shell` ma signature-level RECORD_AUDIO /

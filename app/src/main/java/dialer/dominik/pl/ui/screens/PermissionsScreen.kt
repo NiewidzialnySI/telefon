@@ -97,7 +97,7 @@ private data class Uprawnienie(
  * + role (dialer / SMS / screening)
  * + ustawienia specjalne (nakładka, pełny ekran, exact alarm, instalacja APK, a11y).
  *
- * WRITE_SECURE_SETTINGS nie da się nadać dialogiem — pojawia się później przez ADB/Shizuku.
+ * WRITE_SECURE_SETTINGS nie da się nadać dialogiem — pojawia się później przez ADB.
  */
 private fun zbudujListeUprawnien(): List<Uprawnienie> = buildList {
     add(

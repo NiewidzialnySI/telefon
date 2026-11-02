@@ -762,8 +762,6 @@ private fun PrzyciskNagrywaniaRozmowy(context: android.content.Context) {
             if (ctrl.nagrywa) {
                 ctrl.stop()
             } else {
-                dialer.dominik.pl.nagranie.ShizukuKlient.dolacz(context)
-                dialer.dominik.pl.nagranie.ShizukuKlient.odswiez()
                 if (!dialer.dominik.pl.nagranie.NagrywanieUstawienia.czyZgodaPrawna(context) ||
                     !dialer.dominik.pl.nagranie.NagrywanieUstawienia.czyWlaczone(context)
                 ) {

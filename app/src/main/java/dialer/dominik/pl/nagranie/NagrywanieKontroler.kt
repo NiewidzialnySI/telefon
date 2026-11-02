@@ -37,7 +37,7 @@ sealed class StanNagrywania {
 }
 
 /**
- * Multi-silnik nagrywania rozmów — własna drabinka dialera + Shizuku.
+ * Multi-silnik nagrywania rozmów — własna drabinka dialera + daemon ADB.
  *
  * Kolejność (po cache preferowanej, ze shellem):
  * 1. Hybryda MIC+DOWNLINK — „ja” z mikrofonu, gdy OEM blokuje UPLINK
@@ -83,7 +83,7 @@ object NagrywanieKontroler {
     @Volatile private var zachowanyPreroll: ByteArray = ByteArray(0)
 
     /**
-     * Rozgrzewka przed ACTIVE (DIALING / RINGING): podnieś daemon ADB/Shizuku,
+     * Rozgrzewka przed ACTIVE (DIALING / RINGING): podnieś daemon ADB,
      * żeby przy odebraniu nie czekać ~10–20 s na shell.
      */
     fun rozgrzej(ctx: Context) {
@@ -408,7 +408,7 @@ object NagrywanieKontroler {
         data class Fail(val powod: String) : Otwarcie()
     }
 
-    /** Silnik 1: AudioRecord w procesie dialera — bez Shizuku. */
+    /** Silnik 1: AudioRecord w procesie dialera — bez UID shell. */
     @android.annotation.SuppressLint("MissingPermission")
     private fun otworzLokalny(ctx: Context, numer: String): Otwarcie {
         if (ctx.checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
@@ -469,13 +469,8 @@ object NagrywanieKontroler {
         return Otwarcie.Ok(plik, miernik)
     }
 
-    private fun wymagajShell(ctx: Context): INagrywanieShell? {
-        ShizukuKlient.dolacz(ctx)
-        ShizukuKlient.odswiez()
-        val svc = ShellKlient.usluga()
-        if (svc == null) return null
-        return svc
-    }
+    private fun wymagajShell(ctx: Context): INagrywanieShell? =
+        ShellKlient.usluga()
 
     private fun otworzShellDual(ctx: Context, numer: String): Otwarcie {
         val svc = wymagajShell(ctx) ?: return Otwarcie.Fail(ShellKlient.krotkiOpis(ctx))

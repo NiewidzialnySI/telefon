@@ -385,7 +385,7 @@ class TelefonInCallService : InCallService() {
             PowiadomieniaNieodebranych.dodajIPokaz(this, rozmowca, numer)
         }
 
-        // Zatrzymaj nagrywanie Shizuku przy końcu rozmowy.
+        // Zatrzymaj nagrywanie przy końcu rozmowy.
         dialer.dominik.pl.nagranie.NagrywanieKontroler.stop()
         // Rozmowa się skończyła — zamknij własny dymek (nakładka), jeśli jest.
         DymekRozmowyService.stop(this)

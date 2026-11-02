@@ -3,8 +3,8 @@ package dialer.dominik.pl.nagranie;
 import android.os.ParcelFileDescriptor;
 
 /**
- * Most IPC: dialer ↔ Shizuku UserService (UID 2000 = shell).
- * Wersja 2: + playback capture (AudioPolicy, bez MediaProjection).
+ * Most IPC: dialer ↔ daemon shell (UID 2000) z Wireless ADB.
+ * Wersja 3: + grantPermission (pm grant z UID shell).
  */
 interface INagrywanieShell {
 
@@ -47,6 +47,9 @@ interface INagrywanieShell {
 
     @nullable
     String getOstatniBlad() = 12;
+
+    /** `pm grant` z UID shell — WRITE_SECURE_SETTINGS i runtime. */
+    boolean grantPermission(String packageName, String permission) = 13;
 
     void destroy() = 16777114;
 }

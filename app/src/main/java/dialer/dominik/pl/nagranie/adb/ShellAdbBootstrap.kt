@@ -10,8 +10,8 @@ import android.util.Log
 import dialer.dominik.pl.nagranie.INagrywanieShell
 import dialer.dominik.pl.nagranie.NagrywanieUstawienia
 import dialer.dominik.pl.nagranie.ShellKlient
-import dialer.dominik.pl.nagranie.ShizukuAdbNaprawa
-import dialer.dominik.pl.nagranie.ShizukuStraznik
+import dialer.dominik.pl.nagranie.AdbNaprawa
+import dialer.dominik.pl.nagranie.NagrywanieStraznik
 import io.github.muntashirakon.adb.AdbPairingRequiredException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -54,6 +54,7 @@ object ShellAdbBootstrap {
     data class Diagnostyka(
         val wifi: Boolean,
         val adbWifi: Boolean,
+        val adbUsb: Boolean,
         val writeSecure: Boolean,
         val prefsSparowane: Boolean,
         val uslugaZyje: Boolean,
@@ -69,6 +70,8 @@ object ShellAdbBootstrap {
                 },
             )
             append('\n')
+            append(if (adbUsb) "○ USB debugging włączone" else "✓ USB debugging wyłączone")
+            append('\n')
             append(
                 when {
                     uslugaZyje -> "✓ Usługa shell działa"
@@ -79,6 +82,9 @@ object ShellAdbBootstrap {
         }
 
         fun krotkiStatus(): String = when {
+            uslugaZyje && !adbUsb && !adbWifi -> "ADB OK — do rebootu (bez debug)"
+            uslugaZyje && !adbUsb && adbWifi -> "ADB OK — Wireless ON, USB OFF"
+            uslugaZyje && adbUsb && !adbWifi -> "ADB OK — nie wyłączaj USB"
             uslugaZyje -> "ADB OK — obie strony"
             !wifi -> "Włącz Wi‑Fi (lub hotspot)"
             !adbWifi && !prefsSparowane -> "Włącz Wireless debugging i sparuj"
@@ -138,7 +144,7 @@ object ShellAdbBootstrap {
                 Log.i(TAG, "ponawiam usługę (adb_wifi tylko jeśli konieczne)")
                 val ok = ShellKlient.zapewnij(ctx)
                 Log.i(TAG, "ponowienie → $ok")
-                if (!ok) ShizukuStraznik.naBinderMartwy(ctx)
+                if (!ok) NagrywanieStraznik.naBinderMartwy(ctx)
             } finally {
                 restartWToku.set(false)
             }
@@ -146,29 +152,71 @@ object ShellAdbBootstrap {
     }
 
     /**
-     * Jak Shizuku/thedjchi: po żywym daemonie wyłącz Wireless debugging.
-     * Jeśli binder padnie — przywróć adb_wifi.
+     * Po żywym daemonie: odłącz keepalive i ustaw najbezpieczniejszy tryb ADB.
+     * Nie gasimy już „ślepo” samego Wireless przy włączonym USB — to dawało
+     * fałszywy sukces i ginęło przy wyłączeniu USB debugging.
      */
     suspend fun sprobujWylaczycAdbWifiPoStarcie(ctx: Context): Boolean {
         val app = ctx.applicationContext
         if (usluga() == null) return false
-        if (!ShizukuAdbNaprawa.maWriteSecure(app)) return false
-        if (!ShizukuAdbNaprawa.czyAdbWifi(app)) return true
         // Odłącz keepalive ADB — daemon jest w tle (`&`), nie potrzebuje shell stream.
         AdbPolaczenie.ustawKeepalive(null)
         delay(400)
-        Log.i(TAG, "wyłączam adb_wifi (daemon powinien żyć samodzielnie)")
-        ShizukuAdbNaprawa.ustawAdbWifi(app, false)
+        val tryb = AdbNaprawa.ustabilizujPoStarcieDaemona(app) { usluga() != null }
+        Log.i(TAG, "stabilizacja ADB → $tryb")
+        return when (tryb) {
+            AdbNaprawa.TrybAdbPoStarcie.ObaWylaczone,
+            AdbNaprawa.TrybAdbPoStarcie.TylkoWireless,
+            AdbNaprawa.TrybAdbPoStarcie.TylkoUsb,
+            AdbNaprawa.TrybAdbPoStarcie.ObaWlaczone,
+            AdbNaprawa.TrybAdbPoStarcie.BezUprawnien,
+            -> usluga() != null
+
+            AdbNaprawa.TrybAdbPoStarcie.WymagaRestartuTylkoWireless ->
+                wznowWTrybieTylkoWireless(app)
+
+            AdbNaprawa.TrybAdbPoStarcie.Martwy -> {
+                Log.w(TAG, "stabilizacja zabiła daemon — przywracam ADB (start osobno)")
+                AdbNaprawa.wlacAdb(app)
+                false
+            }
+        }
+    }
+
+    /**
+     * Daemon padł gdy USB OFF + Wireless OFF. Start ponownie z Wireless,
+     * potem gaś USB. Jak nadal pada → USB ON, Wireless OFF.
+     */
+    private suspend fun wznowWTrybieTylkoWireless(app: Context): Boolean {
+        Log.i(TAG, "wznowienie: Wireless ON + start daemona, potem USB OFF")
+        AdbNaprawa.wlacAdb(app)
+        delay(2_500)
+        val ok = uruchomZOpisem(app, stabilizujPo = false) is WynikUruchom.Ok
+        if (!ok || usluga() == null) {
+            Log.w(TAG, "wznowienie: nie udało się ponownie wystartować daemona")
+            return false
+        }
+        AdbPolaczenie.ustawKeepalive(null)
+        delay(400)
+        AdbNaprawa.ustawAdbUsb(app, false)
         delay(1_800)
-        val zyje = usluga() != null
-        if (zyje) {
-            Log.i(TAG, "adb_wifi OFF — usługa nadal OK")
+        if (usluga() != null) {
+            // Wireless zostaje ON, USB OFF — użytkownik może trzymać USB wyłączone.
+            Log.i(TAG, "wznowienie OK: TylkoWireless")
             return true
         }
-        Log.w(TAG, "adb_wifi OFF zabił daemon — przywracam")
-        ShizukuAdbNaprawa.wlacAdbJakShizuku(app)
+        // Na tym ROM-ie Wireless bez USB nie utrzyma adbd — zostaw USB ON.
+        Log.w(TAG, "wznowienie: USB OFF przy Wireless też zabija — TylkoUsb")
+        AdbNaprawa.ustawAdbUsb(app, true)
+        AdbNaprawa.ustawAdbWifi(app, false)
         delay(1_500)
-        runCatching { uruchom(app) }
+        val okUsb = uruchomZOpisem(app, stabilizujPo = false) is WynikUruchom.Ok
+        if (okUsb && usluga() != null) {
+            AdbPolaczenie.ustawKeepalive(null)
+            Log.i(TAG, "wznowienie OK: TylkoUsb (nie wyłączaj USB do rebootu)")
+            return true
+        }
+        AdbNaprawa.wlacAdb(app)
         return false
     }
 
@@ -176,8 +224,9 @@ object ShellAdbBootstrap {
         val app = ctx.applicationContext
         return Diagnostyka(
             wifi = czyWifi(app),
-            adbWifi = ShizukuAdbNaprawa.czyAdbWifi(app),
-            writeSecure = ShizukuAdbNaprawa.maWriteSecure(app),
+            adbWifi = AdbNaprawa.czyAdbWifi(app),
+            adbUsb = AdbNaprawa.czyAdbUsb(app),
+            writeSecure = AdbNaprawa.maWriteSecure(app),
             prefsSparowane = czySparowane(app),
             uslugaZyje = usluga() != null,
         )
@@ -269,27 +318,34 @@ object ShellAdbBootstrap {
     }
 
     /** Po sparowaniu / po restarcie: sprawdź binder → dopiero potem Wi‑Fi ADB. */
-    suspend fun uruchom(ctx: Context, timeoutMs: Long = 20_000L): Boolean =
-        uruchomZOpisem(ctx, timeoutMs) is WynikUruchom.Ok
+    suspend fun uruchom(
+        ctx: Context,
+        timeoutMs: Long = 20_000L,
+        stabilizujPo: Boolean = true,
+    ): Boolean = uruchomZOpisem(ctx, timeoutMs, stabilizujPo) is WynikUruchom.Ok
 
     suspend fun uruchomZOpisem(
         ctx: Context,
         timeoutMs: Long = 20_000L,
+        stabilizujPo: Boolean = true,
     ): WynikUruchom = withContext(Dispatchers.IO) {
         val app = ctx.applicationContext
         appCtx = app
         if (usluga() != null) {
-            // Żyje — ewentualnie cicho wyłącz adb_wifi, NIGDY nie włączaj.
-            if (ShizukuAdbNaprawa.czyAdbWifi(app)) {
+            // Żyje — dociśnij tryb ADB (nie zostawiaj „Wireless OFF + USB ON” bez testu).
+            if (stabilizujPo &&
+                (AdbNaprawa.czyAdbWifi(app) || AdbNaprawa.czyAdbUsb(app))
+            ) {
                 sprobujWylaczycAdbWifiPoStarcie(app)
             }
-            return@withContext WynikUruchom.Ok
+            return@withContext if (usluga() != null) WynikUruchom.Ok
+            else WynikUruchom.Blad("Daemon padł przy stabilizacji ADB — uruchom ponownie.")
         }
 
         var d = zdiagnozuj(app)
         Log.i(
             TAG,
-            "przed startem: wifi=${d.wifi} adbWifi=${d.adbWifi} " +
+            "przed startem: wifi=${d.wifi} adbWifi=${d.adbWifi} adbUsb=${d.adbUsb} " +
                 "writeSecure=${d.writeSecure} paired=${d.prefsSparowane}",
         )
 
@@ -305,11 +361,14 @@ object ShellAdbBootstrap {
         if (!oczekiwanyToken(app).isNullOrBlank()) {
             Log.i(TAG, "sprawdzam istniejący daemon (bez adb_wifi)…")
             if (czekajNaIstniejacyBinder(2_800L)) {
-                Log.i(TAG, "daemon już żył — pomijam adb_wifi")
-                if (ShizukuAdbNaprawa.czyAdbWifi(app)) {
+                Log.i(TAG, "daemon już żył — stabilizuję ADB (stabilizujPo=$stabilizujPo)")
+                if (stabilizujPo &&
+                    (AdbNaprawa.czyAdbWifi(app) || AdbNaprawa.czyAdbUsb(app))
+                ) {
                     sprobujWylaczycAdbWifiPoStarcie(app)
                 }
-                return@withContext WynikUruchom.Ok
+                return@withContext if (usluga() != null) WynikUruchom.Ok
+                else WynikUruchom.Blad("Daemon padł przy stabilizacji ADB — uruchom ponownie.")
             }
             Log.i(TAG, "brak daemona — adb_wifi tylko jeśli potrzeba")
         }
@@ -323,7 +382,7 @@ object ShellAdbBootstrap {
 
         // Włącz Wireless debugging TYLKO gdy daemon nie żyje.
         if (!d.adbWifi) {
-            val wlaczono = ShizukuAdbNaprawa.wlacAdbJakShizuku(app)
+            val wlaczono = AdbNaprawa.wlacAdb(app)
             Log.i(TAG, "próba włączenia adb_wifi → $wlaczono")
             if (wlaczono) {
                 // mDNS pojawia się z opóźnieniem po adb_wifi=1
@@ -364,7 +423,7 @@ object ShellAdbBootstrap {
                 is InterruptedException -> {
                     return@withContext WynikUruchom.Blad(
                         "mDNS nie znalazł portu ADB (Wireless debugging włączone=" +
-                            "${ShizukuAdbNaprawa.czyAdbWifi(app)}). " +
+                            "${AdbNaprawa.czyAdbWifi(app)}). " +
                             "Otwórz Wireless debugging, upewnij się że widać IP:port, " +
                             "potem spróbuj znów. USB-debug czasem psuje mDNS na ColorOS.",
                         otworzUstawienia = true,
@@ -430,9 +489,17 @@ object ShellAdbBootstrap {
                 }
             }
             if (got != null) {
-                // Daemon w tle — można odciąć stream i spróbować adb_wifi=0.
-                sprobujWylaczycAdbWifiPoStarcie(app)
-                WynikUruchom.Ok
+                // Daemon w tle — ustabilizuj ADB (USB nie może zostać jedyną „podpórką”).
+                if (stabilizujPo) {
+                    sprobujWylaczycAdbWifiPoStarcie(app)
+                }
+                if (usluga() != null) {
+                    dialer.dominik.pl.nagranie.UprawnieniaShell.nadajBrakujace(app)
+                    dialer.dominik.pl.nagranie.UprawnieniaShell.nadajWriteSecure(app)
+                    WynikUruchom.Ok
+                } else WynikUruchom.Blad(
+                    "Daemon wystartował, ale padł przy stabilizacji ADB. Uruchom ponownie.",
+                )
             } else WynikUruchom.Blad(
                 "Połączono ADB, ale daemon shell nie odezwał się w ${timeoutMs / 1000}s. " +
                     "Sprawdź logcat tag ShellAdb / ShellAdbBootstrap (shell>).",

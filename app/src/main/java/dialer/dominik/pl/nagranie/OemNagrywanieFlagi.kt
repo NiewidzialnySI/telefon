@@ -26,7 +26,7 @@ object OemNagrywanieFlagi {
     )
 
     fun ustawWszystkie(ctx: Context): Int {
-        if (!ShizukuAdbNaprawa.maWriteSecure(ctx) &&
+        if (!AdbNaprawa.maWriteSecure(ctx) &&
             ctx.checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS) !=
             android.content.pm.PackageManager.PERMISSION_GRANTED
         ) {

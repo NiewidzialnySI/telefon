@@ -11,7 +11,8 @@ object NagrywanieUstawienia {
     private const val K_WLACZONE = "wlaczone"
     private const val K_AUTO = "auto"
     private const val K_ZGODA_PRAWNA = "zgoda_prawna"
-    private const val K_POWIADOMIENIA_SHIZUKU = "powiadomienia_shizuku"
+    /** Legacy key — wcześniej „powiadomienia_shizuku”. */
+    private const val K_POWIADOMIENIA = "powiadomienia_shizuku"
 
     private val _wlaczoneUi = MutableStateFlow(false)
     /** Do UI (pasek zakładek) — odświeżane przez [odswiezUi] / [ustawWlaczone]. */
@@ -31,7 +32,7 @@ object NagrywanieUstawienia {
         _wlaczoneUi.value = v
     }
 
-    /** Automatycznie startuj przy ACTIVE (wymaga wlaczone + Shizuku). */
+    /** Automatycznie startuj przy ACTIVE (wymaga wlaczone + usługa ADB). */
     fun czyAuto(ctx: Context): Boolean = prefs(ctx).getBoolean(K_AUTO, false)
 
     fun ustawAuto(ctx: Context, v: Boolean) {
@@ -44,11 +45,11 @@ object NagrywanieUstawienia {
         prefs(ctx).edit().putBoolean(K_ZGODA_PRAWNA, v).apply()
     }
 
-    /** Powiadom gdy Shizuku nie działa (klik → auto-naprawa Wi‑Fi/ADB). */
-    fun czyPowiadomieniaShizuku(ctx: Context): Boolean =
-        prefs(ctx).getBoolean(K_POWIADOMIENIA_SHIZUKU, false)
+    /** Powiadom gdy usługa ADB nie działa (klik → auto-naprawa Wi‑Fi/Wireless). */
+    fun czyPowiadomieniaNagrywania(ctx: Context): Boolean =
+        prefs(ctx).getBoolean(K_POWIADOMIENIA, false)
 
-    fun ustawPowiadomieniaShizuku(ctx: Context, v: Boolean) {
-        prefs(ctx).edit().putBoolean(K_POWIADOMIENIA_SHIZUKU, v).apply()
+    fun ustawPowiadomieniaNagrywania(ctx: Context, v: Boolean) {
+        prefs(ctx).edit().putBoolean(K_POWIADOMIENIA, v).apply()
     }
 }

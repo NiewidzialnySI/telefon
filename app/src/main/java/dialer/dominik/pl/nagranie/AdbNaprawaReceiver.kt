@@ -8,30 +8,29 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-/** Klik w powiadomienie „Shizuku nie działa”. */
-class ShizukuNaprawaReceiver : BroadcastReceiver() {
+/** Klik w powiadomienie „usługa nagrywania nie działa”. */
+class AdbNaprawaReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action != AKCJA_NAPRAW) return
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val w = ShizukuAdbNaprawa.naprawZPowiadomienia(context.applicationContext)
+                val w = AdbNaprawa.naprawZPowiadomienia(context.applicationContext)
                 if (w.ok) {
-                    PowiadomieniaShizuku.anulujPostep(context)
-                    PowiadomieniaShizuku.anulujBrak(context)
-                    // Krótki wynik tylko gdy trzeba coś wiedzieć o ADB Wi‑Fi.
+                    PowiadomieniaNagrywania.anulujPostep(context)
+                    PowiadomieniaNagrywania.anulujBrak(context)
                     if (!w.adbWifiWylaczone) {
-                        PowiadomieniaShizuku.pokazWynik(context, false, w.komunikat)
+                        PowiadomieniaNagrywania.pokazWynik(context, false, w.komunikat)
                     }
                 } else {
-                    PowiadomieniaShizuku.pokazWynik(context, false, w.komunikat)
+                    PowiadomieniaNagrywania.pokazWynik(context, false, w.komunikat)
                 }
             } catch (t: Throwable) {
                 Log.e(TAG, "napraw", t)
-                PowiadomieniaShizuku.pokazWynik(
+                PowiadomieniaNagrywania.pokazWynik(
                     context,
                     false,
-                    t.message ?: "Błąd naprawy Shizuku",
+                    t.message ?: "Błąd naprawy ADB",
                 )
             } finally {
                 pending.finish()
@@ -40,7 +39,7 @@ class ShizukuNaprawaReceiver : BroadcastReceiver() {
     }
 
     companion object {
-        const val AKCJA_NAPRAW = "dialer.dominik.pl.NAPRAW_SHIZUKU"
-        private const val TAG = "ShizukuNaprawa"
+        const val AKCJA_NAPRAW = "dialer.dominik.pl.NAPRAW_ADB"
+        private const val TAG = "AdbNaprawaReceiver"
     }
 }

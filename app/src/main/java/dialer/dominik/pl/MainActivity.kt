@@ -150,19 +150,18 @@ class MainActivity : ComponentActivity() {
             AktualizacjaAplikacji.sprawdzPrzyStarcie(this@MainActivity)
         }
         // Nagrywanie: własna ADB; adb_wifi tylko gdy daemon naprawdę nie żyje.
-        dialer.dominik.pl.nagranie.ShizukuKlient.dolacz(this)
         if (dialer.dominik.pl.nagranie.NagrywanieUstawienia.czyWlaczone(this)) {
             lifecycleScope.launch {
                 val app = this@MainActivity
                 if (dialer.dominik.pl.nagranie.ShellKlient.czyShellGotowy()) {
-                    dialer.dominik.pl.nagranie.PowiadomieniaShizuku.anulujBrak(app)
+                    dialer.dominik.pl.nagranie.PowiadomieniaNagrywania.anulujBrak(app)
                     return@launch
                 }
                 // Straznik → zapewnij → uruchom: najpierw republish, potem ewentualnie adb_wifi.
-                dialer.dominik.pl.nagranie.ShizukuStraznik.sprawdz(app)
+                dialer.dominik.pl.nagranie.NagrywanieStraznik.sprawdz(app)
             }
         } else {
-            dialer.dominik.pl.nagranie.PowiadomieniaShizuku.anulujBrak(this)
+            dialer.dominik.pl.nagranie.PowiadomieniaNagrywania.anulujBrak(this)
         }
         setContent {
             TelefonTheme {

@@ -20,7 +20,7 @@ import androidx.core.app.RemoteInput
 import androidx.core.app.ServiceCompat
 import dialer.dominik.pl.MainActivity
 import dialer.dominik.pl.R
-import dialer.dominik.pl.nagranie.ShizukuAdbNaprawa
+import dialer.dominik.pl.nagranie.AdbNaprawa
 import io.github.muntashirakon.adb.android.AdbMdns
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -492,8 +492,8 @@ class AdbParowanieService : Service() {
 
         fun startujIOtworzUstawienia(ctx: Context) {
             val app = ctx.applicationContext
-            val wlaczono = ShizukuAdbNaprawa.wlacAdbJakShizuku(app)
-            Log.i(TAG, "auto adb_wifi put=$wlaczono teraz=${ShizukuAdbNaprawa.czyAdbWifi(app)}")
+            val wlaczono = AdbNaprawa.wlacAdb(app)
+            Log.i(TAG, "auto adb_wifi put=$wlaczono teraz=${AdbNaprawa.czyAdbWifi(app)}")
 
             AdbParowanieDostepnosc.oznaczNowaSesjaParowania()
             val a11y = AdbParowanieDostepnosc.czyWlaczona(app) ||

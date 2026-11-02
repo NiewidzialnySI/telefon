@@ -8,12 +8,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
-/**
- * Alert tylko gdy **żaden** silnik shell nie działa (własne ADB ani Shizuku).
- * Własna usługa ADB ma pierwszeństwo — Shizuku nie jest wymagane.
- */
-object ShizukuStraznik {
-    private const val TAG = "ShizukuStraznik"
+/** Alert gdy własna usługa ADB nie działa. */
+object NagrywanieStraznik {
+    private const val TAG = "NagrywanieStraznik"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var ostatniAlertMs = 0L
     @Volatile private var sprawdzWToku = false
@@ -21,30 +18,25 @@ object ShizukuStraznik {
     fun sprawdz(ctx: Context, forceAlert: Boolean = false) {
         val app = ctx.applicationContext
         if (!NagrywanieUstawienia.czyWlaczone(app) ||
-            !NagrywanieUstawienia.czyPowiadomieniaShizuku(app)
+            !NagrywanieUstawienia.czyPowiadomieniaNagrywania(app)
         ) {
-            PowiadomieniaShizuku.anulujBrak(app)
+            PowiadomieniaNagrywania.anulujBrak(app)
             return
         }
         if (ShellKlient.czyShellGotowy()) {
-            PowiadomieniaShizuku.anulujBrak(app)
+            PowiadomieniaNagrywania.anulujBrak(app)
             return
         }
         if (sprawdzWToku) return
         sprawdzWToku = true
         scope.launch {
             try {
-                // Najpierw własna usługa — bez krzyczenia o Shizuku.
                 if (ShellAdbBootstrap.czySparowane(app) || ShellAdbBootstrap.usluga() != null) {
                     runCatching { ShellKlient.zapewnij(app) }
                         .onFailure { Log.w(TAG, "zapewnij", it) }
-                } else {
-                    // Brak parowania ADB — cichy zapas Shizuku (bez otwierania UI).
-                    ShizukuKlient.dolacz(app)
-                    runCatching { ShizukuKlient.sprobujPolaczyc(app) }
                 }
                 if (ShellKlient.czyShellGotowy()) {
-                    PowiadomieniaShizuku.anulujBrak(app)
+                    PowiadomieniaNagrywania.anulujBrak(app)
                     return@launch
                 }
                 val teraz = System.currentTimeMillis()
@@ -52,28 +44,24 @@ object ShizukuStraznik {
                 ostatniAlertMs = teraz
                 val opis = ShellKlient.krotkiOpis(app)
                 Log.i(TAG, "alert: $opis")
-                PowiadomieniaShizuku.pokazBrak(app, opis)
+                PowiadomieniaNagrywania.pokazBrak(app, opis)
             } finally {
                 sprawdzWToku = false
             }
         }
     }
 
-    /**
-     * Śmierć bindera Shizuku — **nie** alarmuj, jeśli własna ADB żyje / jest sparowana.
-     */
     fun naBinderMartwy(ctx: Context) {
         if (!NagrywanieUstawienia.czyWlaczone(ctx)) return
         if (ShellKlient.czyShellGotowy()) {
-            PowiadomieniaShizuku.anulujBrak(ctx)
+            PowiadomieniaNagrywania.anulujBrak(ctx)
             return
         }
-        // Własna ścieżka: cicho podnieś daemon, bez „Shizuku nie działa”.
         if (ShellAdbBootstrap.czySparowane(ctx)) {
             sprawdz(ctx, forceAlert = false)
             return
         }
-        if (!NagrywanieUstawienia.czyPowiadomieniaShizuku(ctx)) return
+        if (!NagrywanieUstawienia.czyPowiadomieniaNagrywania(ctx)) return
         ostatniAlertMs = 0L
         sprawdz(ctx, forceAlert = true)
     }

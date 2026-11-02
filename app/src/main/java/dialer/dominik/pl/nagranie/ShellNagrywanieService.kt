@@ -11,8 +11,8 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.system.exitProcess
 
 /**
- * UserService Shizuku — `app_process` UID 2000 (shell).
- * v2: + startPlayback (AudioPolicy loopback).
+ * Usługa w `app_process` UID 2000 (shell) — start przez Wireless ADB.
+ * v3: + grantPermission (pm grant).
  */
 @Keep
 class ShellNagrywanieService : INagrywanieShell.Stub {
@@ -157,6 +157,20 @@ class ShellNagrywanieService : INagrywanieShell.Stub {
 
     override fun getOstatniBlad(): String? = ostatniBlad.get()
 
+    override fun grantPermission(packageName: String, permission: String): Boolean {
+        if (packageName.isBlank() || permission.isBlank()) return false
+        return runCatching {
+            val p = ProcessBuilder("pm", "grant", packageName, permission)
+                .redirectErrorStream(true)
+                .start()
+            val out = p.inputStream.bufferedReader().readText().trim()
+            val code = p.waitFor()
+            Log.i(TAG, "pm grant $permission → code=$code out=$out")
+            code == 0
+        }.onFailure { Log.e(TAG, "grantPermission $permission", it) }
+            .getOrDefault(false)
+    }
+
     override fun destroy() {
         Log.i(TAG, "destroy")
         runCatching { stop() }
@@ -165,7 +179,7 @@ class ShellNagrywanieService : INagrywanieShell.Stub {
 
     companion object {
         private const val TAG = "NagrywanieShell"
-        const val WERSJA = 2
+        const val WERSJA = 3
         private const val STAN_IDLE = 0
         private const val STAN_STARTING = 1
         private const val STAN_DUAL = 2

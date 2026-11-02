@@ -81,8 +81,6 @@ import dialer.dominik.pl.backup.BackupForegroundService
 import dialer.dominik.pl.backup.BackupStan
 import dialer.dominik.pl.nagranie.NagrywanieUstawienia
 import dialer.dominik.pl.nagranie.ShellKlient
-import dialer.dominik.pl.nagranie.ShizukuKlient
-import dialer.dominik.pl.nagranie.ShizukuStan
 import dialer.dominik.pl.nagranie.adb.AdbParowanieService
 import dialer.dominik.pl.nagranie.adb.ShellAdbBootstrap
 import dialer.dominik.pl.update.AktualizacjaAplikacji
@@ -1146,7 +1144,6 @@ private fun SekcjaNagrywaniaRozmow(context: Context) {
     var diag by remember { mutableStateOf(ShellAdbBootstrap.zdiagnozuj(context)) }
     var busy by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
-    val shizukuStan = ShizukuKlient.stan
     val shellOk = ShellKlient.czyShellGotowy()
 
     fun odswiezDiag() {
@@ -1186,9 +1183,6 @@ private fun SekcjaNagrywaniaRozmow(context: Context) {
             }
             odswiezDiag()
             busy = false
-            if (!ShellKlient.czyShellGotowy()) {
-                runCatching { ShizukuKlient.sprobujPolaczyc(context) }
-            }
         }
     }
 
@@ -1201,21 +1195,19 @@ private fun SekcjaNagrywaniaRozmow(context: Context) {
                 auto = true
                 NagrywanieUstawienia.ustawAuto(context, true)
             }
-            if (!NagrywanieUstawienia.czyPowiadomieniaShizuku(context)) {
-                NagrywanieUstawienia.ustawPowiadomieniaShizuku(context, true)
+            if (!NagrywanieUstawienia.czyPowiadomieniaNagrywania(context)) {
+                NagrywanieUstawienia.ustawPowiadomieniaNagrywania(context, true)
             }
             automatyzujStart()
             // Bez force — własna ADB wystarczy; alert dopiero gdy naprawdę brak silnika.
-            dialer.dominik.pl.nagranie.ShizukuStraznik.sprawdz(context, forceAlert = false)
+            dialer.dominik.pl.nagranie.NagrywanieStraznik.sprawdz(context, forceAlert = false)
         } else {
             toast = null
-            dialer.dominik.pl.nagranie.PowiadomieniaShizuku.anulujBrak(context)
+            dialer.dominik.pl.nagranie.PowiadomieniaNagrywania.anulujBrak(context)
         }
     }
 
     LaunchedEffect(Unit) {
-        ShizukuKlient.dolacz(context)
-        ShizukuKlient.odswiez()
         odswiezDiag()
     }
 
@@ -1229,9 +1221,11 @@ private fun SekcjaNagrywaniaRozmow(context: Context) {
             if (ShellKlient.czyShellGotowy()) {
                 toast = null
                 busy = false
-                // Po udanym starcie (np. auto‑parowanie) domknij adb_wifi raz.
+                // Po starcie: stabilizuj raz, tylko gdy oba debugi jeszcze ON
+                // (świeży start). Wireless-only / Oba OFF zostaw w spokoju.
                 if (!wylaczonoAdbWifi &&
-                    dialer.dominik.pl.nagranie.ShizukuAdbNaprawa.czyAdbWifi(context)
+                    dialer.dominik.pl.nagranie.AdbNaprawa.czyAdbWifi(context) &&
+                    dialer.dominik.pl.nagranie.AdbNaprawa.czyAdbUsb(context)
                 ) {
                     wylaczonoAdbWifi = true
                     runCatching {
@@ -1246,8 +1240,6 @@ private fun SekcjaNagrywaniaRozmow(context: Context) {
     DisposableEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, e ->
             if (e == Lifecycle.Event.ON_RESUME) {
-                ShizukuKlient.dolacz(context)
-                ShizukuKlient.odswiez()
                 odswiezDiag()
             }
         }
@@ -1343,7 +1335,7 @@ private fun SekcjaNagrywaniaRozmow(context: Context) {
 
                 val etykieta = when {
                     busy -> "Łączę…"
-                    shellOk || diag.uslugaZyje -> "Gotowe — obie strony"
+                    shellOk || diag.uslugaZyje -> diag.krotkiStatus()
                     !diag.wifi -> "Włącz Wi‑Fi"
                     !diag.prefsSparowane -> "Sparuj (zostań na oknie z kodem)"
                     !diag.adbWifi -> "Uruchom Wireless debugging"
@@ -1379,20 +1371,6 @@ private fun SekcjaNagrywaniaRozmow(context: Context) {
                     )
                 }
 
-                // Zapas Shizuku — tylko gdy ADB jeszcze nie żyje.
-                if (!gotowe &&
-                    shizukuStan !is ShizukuStan.Gotowe &&
-                    shizukuStan !is ShizukuStan.Laczenie
-                ) {
-                    PrzyciskPostepu(
-                        tytul = ShizukuKlient.etykietaAkcji(shizukuStan),
-                        postep = 0f,
-                        aktywnyPostep = false,
-                        enabled = true,
-                        onKlik = { scope.launch { ShizukuKlient.napraw(context) } },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
             }
         }
     }

@@ -357,7 +357,7 @@ class AdbParowanieDostepnosc : AccessibilityService() {
         fun sprobujWlaczyc(ctx: Context): Boolean {
             if (czyWlaczona(ctx)) return true
             val app = ctx.applicationContext
-            if (!dialer.dominik.pl.nagranie.ShizukuAdbNaprawa.maWriteSecure(app)) {
+            if (!dialer.dominik.pl.nagranie.AdbNaprawa.maWriteSecure(app)) {
                 Log.w(TAG, "sprobujWlaczyc: brak WRITE_SECURE")
                 return false
             }

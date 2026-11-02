@@ -9,9 +9,9 @@ import androidx.core.app.NotificationCompat
 import dialer.dominik.pl.R
 import dialer.dominik.pl.nagranie.adb.ShellAdbBootstrap
 
-/** Powiadomienie: brak silnika shell (własne ADB / zapas Shizuku) → [ShizukuNaprawaReceiver]. */
-object PowiadomieniaShizuku {
-    private const val KANAL = "shizuku_nagrywanie"
+/** Powiadomienie: brak usługi shell → [AdbNaprawaReceiver]. */
+object PowiadomieniaNagrywania {
+    private const val KANAL = "nagrywanie_adb"
     private const val ID = 3101
     private const val ID_POSTEP = 3102
 
@@ -29,9 +29,8 @@ object PowiadomieniaShizuku {
     }
 
     fun pokazBrak(ctx: Context, opis: String) {
-        if (!NagrywanieUstawienia.czyPowiadomieniaShizuku(ctx)) return
+        if (!NagrywanieUstawienia.czyPowiadomieniaNagrywania(ctx)) return
         if (!NagrywanieUstawienia.czyWlaczone(ctx)) return
-        // Jeszcze raz — mogło się podnieść w międzyczasie.
         if (ShellKlient.czyShellGotowy()) {
             anulujBrak(ctx)
             return
@@ -40,7 +39,7 @@ object PowiadomieniaShizuku {
         val napraw = PendingIntent.getBroadcast(
             ctx,
             0,
-            Intent(ctx, ShizukuNaprawaReceiver::class.java).setAction(ShizukuNaprawaReceiver.AKCJA_NAPRAW),
+            Intent(ctx, AdbNaprawaReceiver::class.java).setAction(AdbNaprawaReceiver.AKCJA_NAPRAW),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val wlasne = ShellAdbBootstrap.czySparowane(ctx)
@@ -48,7 +47,7 @@ object PowiadomieniaShizuku {
         val hint = if (wlasne) {
             "Dotknij → włącz Wireless debugging i podnieś usługę ADB."
         } else {
-            "Dotknij → automatyczna naprawa (ADB / opcjonalnie Shizuku)."
+            "Dotknij → otwórz ustawienia i sparuj Wireless debugging."
         }
         val n = NotificationCompat.Builder(ctx, KANAL)
             .setSmallIcon(R.drawable.ic_logo_telefon)
