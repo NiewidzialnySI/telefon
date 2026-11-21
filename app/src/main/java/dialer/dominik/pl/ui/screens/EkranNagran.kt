@@ -54,6 +54,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -121,6 +122,15 @@ private data class PozycjaNagrania(
         get() = tytul.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
 }
 
+/** Progress odtwarzania — tylko grająca karta czyta te pola (bez rekompozycji całej listy). */
+@Stable
+private class ProgressOdtwarzania {
+    var pozycjaMs by mutableIntStateOf(0)
+    var dlugoscMs by mutableIntStateOf(0)
+    var suwak by mutableFloatStateOf(0f)
+    var szuka by mutableStateOf(false)
+}
+
 /**
  * Nagrania jednego numeru / kontaktu — jak grupy w historii połączeń (AOSP / Ever Dialer).
  * [nagrania] posortowane od najnowszego.
@@ -177,15 +187,17 @@ fun EkranNagran(context: Context) {
     var rozwinietaGrupa: String? by remember { mutableStateOf(null) }
     /** Rozwinięta treść transkrypcji (ścieżka pliku). */
     var rozwinietyTekst: String? by remember { mutableStateOf(null) }
-    var pozycjaMs by remember { mutableIntStateOf(0) }
-    var dlugoscMs by remember { mutableIntStateOf(0) }
-    var szuka by remember { mutableStateOf(false) }
-    var suwak by remember { mutableFloatStateOf(0f) }
+    val progress = remember { ProgressOdtwarzania() }
+    /** Limit kart w rozwiniętej grupie — jak historia połączeń. */
+    var limitWGrupie by remember { mutableIntStateOf(10) }
 
     fun odswiez() {
         scope.launch(Dispatchers.IO) {
-            val nowa = zaladuj(context)
-            withContext(Dispatchers.Main) { lista = nowa }
+            // Najpierw metadane (szybki paint), potem transkrypcje.
+            val szybka = zaladuj(context, zTranskrypcjami = false)
+            withContext(Dispatchers.Main) { lista = szybka }
+            val pelna = zaladuj(context, zTranskrypcjami = true)
+            withContext(Dispatchers.Main) { lista = pelna }
         }
     }
 
@@ -193,10 +205,42 @@ fun EkranNagran(context: Context) {
         runCatching { player?.stop(); player?.release() }
         player = null
         odtwarzany = null
-        pozycjaMs = 0
-        dlugoscMs = 0
-        suwak = 0f
-        szuka = false
+        progress.pozycjaMs = 0
+        progress.dlugoscMs = 0
+        progress.suwak = 0f
+        progress.szuka = false
+    }
+
+    fun startPlay(plik: File) {
+        stopPlay()
+        runCatching {
+            val mp = MediaPlayer()
+            mp.setDataSource(plik.absolutePath)
+            mp.setOnCompletionListener { stopPlay() }
+            mp.setOnErrorListener { _, _, _ ->
+                Toast.makeText(context, "Nie można odtworzyć", Toast.LENGTH_SHORT).show()
+                stopPlay()
+                true
+            }
+            mp.setOnPreparedListener {
+                runCatching {
+                    it.start()
+                    progress.dlugoscMs = it.duration.coerceAtLeast(0)
+                    progress.pozycjaMs = 0
+                    progress.suwak = 0f
+                }.onFailure {
+                    Toast.makeText(context, "Nie można odtworzyć", Toast.LENGTH_SHORT).show()
+                    stopPlay()
+                }
+            }
+            player = mp
+            odtwarzany = plik
+            // prepareAsync — nie blokuj UI przy długim WAV/M4A.
+            mp.prepareAsync()
+        }.onFailure {
+            Toast.makeText(context, "Nie można odtworzyć", Toast.LENGTH_SHORT).show()
+            stopPlay()
+        }
     }
 
     LaunchedEffect(Unit) { odswiez() }
@@ -230,10 +274,10 @@ fun EkranNagran(context: Context) {
     LaunchedEffect(player, odtwarzany) {
         val p = player ?: return@LaunchedEffect
         while (isActive && player === p) {
-            if (!szuka) {
-                pozycjaMs = runCatching { p.currentPosition }.getOrDefault(0)
-                dlugoscMs = runCatching { p.duration }.getOrDefault(0).coerceAtLeast(0)
-                suwak = pozycjaMs.toFloat()
+            if (!progress.szuka) {
+                progress.pozycjaMs = runCatching { p.currentPosition }.getOrDefault(0)
+                progress.dlugoscMs = runCatching { p.duration }.getOrDefault(0).coerceAtLeast(0)
+                progress.suwak = progress.pozycjaMs.toFloat()
             }
             delay(200)
         }
@@ -297,35 +341,20 @@ fun EkranNagran(context: Context) {
                         KartaNagraniaPozycji(
                             poz = grupa.najnowsze,
                             odtwarzany = odtwarzany,
-                            suwak = suwak,
-                            dlugoscMs = dlugoscMs,
-                            pozycjaMs = pozycjaMs,
+                            progress = if (odtwarzany == grupa.najnowsze.plik) progress else null,
                             rozwinietyTekst = rozwinietyTekst,
                             stanTr = stanTr,
                             context = context,
                             onStopPlay = { stopPlay() },
-                            onStartPlay = { plik ->
-                                stopPlay()
-                                runCatching {
-                                    MediaPlayer().apply {
-                                        setDataSource(plik.absolutePath)
-                                        setOnCompletionListener { stopPlay() }
-                                        prepare()
-                                        start()
-                                        player = this
-                                        odtwarzany = plik
-                                        dlugoscMs = duration.coerceAtLeast(0)
-                                        pozycjaMs = 0
-                                        suwak = 0f
-                                    }
-                                }.onFailure {
-                                    Toast.makeText(context, "Nie można odtworzyć", Toast.LENGTH_SHORT).show()
-                                }
+                            onStartPlay = { startPlay(it) },
+                            onSuwak = { v ->
+                                progress.szuka = true
+                                progress.suwak = v
+                                progress.pozycjaMs = v.toInt()
                             },
-                            onSuwak = { v -> szuka = true; suwak = v; pozycjaMs = v.toInt() },
                             onSuwakKoniec = {
-                                runCatching { player?.seekTo(suwak.toInt()) }
-                                szuka = false
+                                runCatching { player?.seekTo(progress.suwak.toInt()) }
+                                progress.szuka = false
                             },
                             onToggleTekst = { sciezka ->
                                 rozwinietyTekst = if (rozwinietyTekst == sciezka) null else sciezka
@@ -343,7 +372,12 @@ fun EkranNagran(context: Context) {
                                 grupa = grupa,
                                 rozwinieta = otwarta,
                                 onRozwin = {
-                                    rozwinietaGrupa = if (otwarta) null else grupa.klucz
+                                    if (otwarta) {
+                                        rozwinietaGrupa = null
+                                    } else {
+                                        rozwinietaGrupa = grupa.klucz
+                                        limitWGrupie = 10
+                                    }
                                 }
                             )
                             AnimatedVisibility(
@@ -355,39 +389,25 @@ fun EkranNagran(context: Context) {
                                     verticalArrangement = Arrangement.spacedBy(8.dp),
                                     modifier = Modifier.padding(top = 8.dp, start = 8.dp)
                                 ) {
-                                    grupa.nagrania.forEach { poz ->
+                                    val widoczne = grupa.nagrania.take(limitWGrupie)
+                                    widoczne.forEach { poz ->
                                         KartaNagraniaPozycji(
                                             poz = poz,
                                             odtwarzany = odtwarzany,
-                                            suwak = suwak,
-                                            dlugoscMs = dlugoscMs,
-                                            pozycjaMs = pozycjaMs,
+                                            progress = if (odtwarzany == poz.plik) progress else null,
                                             rozwinietyTekst = rozwinietyTekst,
                                             stanTr = stanTr,
                                             context = context,
                                             onStopPlay = { stopPlay() },
-                                            onStartPlay = { plik ->
-                                                stopPlay()
-                                                runCatching {
-                                                    MediaPlayer().apply {
-                                                        setDataSource(plik.absolutePath)
-                                                        setOnCompletionListener { stopPlay() }
-                                                        prepare()
-                                                        start()
-                                                        player = this
-                                                        odtwarzany = plik
-                                                        dlugoscMs = duration.coerceAtLeast(0)
-                                                        pozycjaMs = 0
-                                                        suwak = 0f
-                                                    }
-                                                }.onFailure {
-                                                    Toast.makeText(context, "Nie można odtworzyć", Toast.LENGTH_SHORT).show()
-                                                }
+                                            onStartPlay = { startPlay(it) },
+                                            onSuwak = { v ->
+                                                progress.szuka = true
+                                                progress.suwak = v
+                                                progress.pozycjaMs = v.toInt()
                                             },
-                                            onSuwak = { v -> szuka = true; suwak = v; pozycjaMs = v.toInt() },
                                             onSuwakKoniec = {
-                                                runCatching { player?.seekTo(suwak.toInt()) }
-                                                szuka = false
+                                                runCatching { player?.seekTo(progress.suwak.toInt()) }
+                                                progress.szuka = false
                                             },
                                             onToggleTekst = { sciezka ->
                                                 rozwinietyTekst = if (rozwinietyTekst == sciezka) null else sciezka
@@ -397,6 +417,17 @@ fun EkranNagran(context: Context) {
                                                 lista = lista.filter { it.plik.absolutePath != sciezka }
                                             },
                                             kompaktTytul = true
+                                        )
+                                    }
+                                    if (grupa.nagrania.size > limitWGrupie) {
+                                        Text(
+                                            "Pokaż starsze (${grupa.nagrania.size - limitWGrupie})",
+                                            color = paleta.tekstDrugorzedny,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            modifier = Modifier
+                                                .padding(vertical = 6.dp)
+                                                .clickable { limitWGrupie += 10 }
                                         )
                                     }
                                 }
@@ -587,9 +618,7 @@ private fun KartaGrupyNagran(
 private fun KartaNagraniaPozycji(
     poz: PozycjaNagrania,
     odtwarzany: File?,
-    suwak: Float,
-    dlugoscMs: Int,
-    pozycjaMs: Int,
+    progress: ProgressOdtwarzania?,
     rozwinietyTekst: String?,
     stanTr: TranskrypcjaRozmow.Stan,
     context: Context,
@@ -603,14 +632,18 @@ private fun KartaNagraniaPozycji(
     kompaktTytul: Boolean = false,
 ) {
     val gra = odtwarzany == poz.plik
+    // Czytaj progress tylko gdy ta karta gra — inaczej tick 200 ms nie rekomponuje rodzeństwa.
+    val suwak = progress?.suwak ?: 0f
+    val dlugoscMs = progress?.dlugoscMs ?: 0
+    val pozycjaMs = progress?.pozycjaMs ?: 0
     val scope = rememberCoroutineScope()
     KartaNagrania(
         poz = poz,
         gra = gra,
         rozwinięty = rozwinietyTekst == poz.plik.absolutePath,
-        suwak = if (gra) suwak else 0f,
-        dlugoscMs = if (gra) dlugoscMs else 0,
-        pozycjaMs = if (gra) pozycjaMs else 0,
+        suwak = suwak,
+        dlugoscMs = dlugoscMs,
+        pozycjaMs = pozycjaMs,
         onPlay = {
             if (odtwarzany == poz.plik) onStopPlay() else onStartPlay(poz.plik)
         },
@@ -1163,7 +1196,7 @@ private fun formatCzas(ms: Int): String {
     return "%d:%02d".format(m, r)
 }
 
-private fun zaladuj(ctx: Context): List<PozycjaNagrania> {
+private fun zaladuj(ctx: Context, zTranskrypcjami: Boolean = true): List<PozycjaNagrania> {
     val fmt = SimpleDateFormat("d MMM yyyy, HH:mm", Locale.forLanguageTag("pl-PL"))
     val cacheNazw = mutableMapOf<String, String?>()
     return NagrywaniePliki.lista(ctx).map { f ->
@@ -1182,7 +1215,8 @@ private fun zaladuj(ctx: Context): List<PozycjaNagrania> {
             data = fmt.format(Date(czas)),
             czasMs = czas,
             rozmiarKb = (f.length() / 1024).coerceAtLeast(1),
-            transkrypcja = TranskrypcjaRozmow.odczytaj(f),
+            // Pełny odczyt .txt dopiero w drugim przebiegu — szybszy pierwszy paint.
+            transkrypcja = if (zTranskrypcjami) TranskrypcjaRozmow.odczytaj(f) else null,
         )
     }
 }

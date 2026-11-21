@@ -36,6 +36,9 @@ class OdbiorcaSms : BroadcastReceiver() {
         var ostatniaWiadomosc: WiadomoscSms? = null
             private set
 
+        /** Tick skrzynki (StateFlow) — Compose zbiera zmiany bez zgadywania z pól @Volatile. */
+        val tickSkrzynki = kotlinx.coroutines.flow.MutableStateFlow(0L)
+
         /** Ostatnio opublikowany ShortcutInfo konwersacji — do przekazania do notyfikacji. */
         @Volatile
         var ostatniShortcut: ShortcutInfoCompat? = null
@@ -188,6 +191,7 @@ class OdbiorcaSms : BroadcastReceiver() {
             czas: Long = System.currentTimeMillis()
         ) {
             ostatniaWiadomosc = WiadomoscSms(nadawca = nadawca, tresc = tresc, czas = czas)
+            tickSkrzynki.value = czas
             val otp = wykryjOtp(tresc)
             if (!otp.isNullOrBlank()) {
                 kopiujDoSchowka(context, otp)

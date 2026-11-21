@@ -33,6 +33,9 @@ class MmsPobranyIZapisanyReceiver : BroadcastReceiver() {
         @Volatile
         var ostatniePobranieMs: Long = 0L
             internal set
+
+        /** Tick skrzynki — Compose zbiera zamiast czytać @Volatile w kluczach LaunchedEffect. */
+        val tickSkrzynki = kotlinx.coroutines.flow.MutableStateFlow(0L)
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -146,6 +149,7 @@ class MmsPobranyIZapisanyReceiver : BroadcastReceiver() {
                 oznaczJakoZrobione(context, location)
             }
             ostatniePobranieMs = System.currentTimeMillis()
+            tickSkrzynki.value = ostatniePobranieMs
             uniewaznijCacheSkrzynki()
             StatusWiadomosciBus.emituj(
                 AktualizacjaStatusuWiadomosci(

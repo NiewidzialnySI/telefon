@@ -273,23 +273,26 @@ internal fun EkranCzatuSzczegoly(
             listaZaladowana = false
             maWiecejHistorii = true
         }
-        oznaczWatekJakoPrzeczytany(context, adres)
         val poprzednie = wiadomosci
-        val wpisy = withContext(Dispatchers.IO) {
+        // Provider + SharedPreferences poza Main — unikamy janku przy otwarciu czatu.
+        val (wpisy, nowePlanowane) = withContext(Dispatchers.IO) {
+            oznaczWatekJakoPrzeczytany(context, adres)
             if (odswiezPoAkcji > 0) {
                 uniewaznijCacheWatku(adres)
                 uniewaznijCacheListyWatkow()
             }
-            pobierzWiadomosciDlaAdresu(
+            val w = pobierzWiadomosciDlaAdresu(
                 context = context,
                 adres = adres,
                 limit = CZAT_PAGE_SIZE,
                 uzyjCache = odswiezPoAkcji == 0
             )
+            val p = pobierzPlanowaneSms(context, adres)
+            w to p
         }
         wiadomosci = scalWiadomosciCzatu(wpisyZBazy = wpisy, lokalne = poprzednie)
         if (wpisy.size < CZAT_PAGE_SIZE) maWiecejHistorii = false
-        planowane = pobierzPlanowaneSms(context, adres)
+        planowane = nowePlanowane
         listaZaladowana = true
     }
 
@@ -1116,17 +1119,22 @@ internal fun EkranCzatuSzczegoly(
                                     onWiadomoscWyslana()
                                     przewinDoNajnowszej(animacja = true)
                                     coroutineScope.launch {
-                                        // Jak EkranNowejWiadomosci: sendMultimediaMessage z Main
-                                        // (kompresja JPEG wewnątrz wyslijMms; na ColorOS sam IO bywa zawodny).
+                                        // Kompresja JPEG na IO; Transaction.sendNewMessage na Main (ColorOS).
                                         val ok = doWyslania.mapIndexed { index, z ->
+                                            val klucz = optymistyczne[index].lokalnyKlucz
+                                                ?: (System.nanoTime() + index)
+                                            val bajty = withContext(Dispatchers.IO) {
+                                                przygotujBajtyMmsDoWysylki(context, z.uri, z.podglad)
+                                            }
+                                            if (bajty == null) return@mapIndexed false
                                             withContext(Dispatchers.Main) {
                                                 wyslijMms(
                                                     context = context,
                                                     numer = adres,
                                                     contentUri = z.uri,
                                                     tekst = if (index == 0) tekst else "",
-                                                    lokalnyKlucz = optymistyczne[index].lokalnyKlucz
-                                                        ?: (System.nanoTime() + index)
+                                                    lokalnyKlucz = klucz,
+                                                    gotoweBajty = bajty
                                                 ) != null
                                             }
                                         }

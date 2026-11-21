@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -44,10 +45,13 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import dialer.dominik.pl.R
 import dialer.dominik.pl.ui.theme.AnimacjaTla
@@ -55,7 +59,10 @@ import dialer.dominik.pl.ui.theme.LocalMotyw
 import dialer.dominik.pl.ui.theme.MotywStan
 import java.io.File
 import kotlin.math.cos
+import kotlin.math.max
 import kotlin.math.sin
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Alfa przy zawijaniu pętli parametru 0..1 — zanika przy krańcach,
@@ -118,17 +125,30 @@ private fun TloWiedzmin(
     val wlasne = stan.wiedzminTloWlasneSciezka
     val statyczne = stan.wiedzminTloStatyczne || !animuj
 
+    val density = LocalDensity.current
+    val conf = LocalConfiguration.current
+    val maxBokPx = remember(conf, density) {
+        with(density) {
+            max(conf.screenWidthDp.dp.toPx(), conf.screenHeightDp.dp.toPx())
+                .toInt()
+                .coerceIn(720, 1440)
+        }
+    }
+
     Box(modifier = modifier.fillMaxSize().background(tlo)) {
         when {
             !wlasne.isNullOrBlank() && File(wlasne).isFile -> {
-                val bmp = remember(wlasne) {
-                    runCatching {
-                        BitmapFactory.decodeFile(wlasne)?.asImageBitmap()
-                    }.getOrNull()
+                // Dekoduj na IO z inSampleSize — pełny JPEG na Main blokuje start UI.
+                val bmp by produceState<ImageBitmap?>(null, wlasne, maxBokPx) {
+                    value = withContext(Dispatchers.IO) {
+                        runCatching {
+                            dekodujTapeteWiedzmina(wlasne, maxBokPx)?.asImageBitmap()
+                        }.getOrNull()
+                    }
                 }
                 if (bmp != null) {
                     Image(
-                        bitmap = bmp,
+                        bitmap = bmp!!,
                         contentDescription = null,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
@@ -172,6 +192,24 @@ private fun TloWiedzmin(
                 .background(Color.Black.copy(alpha = 0.42f))
         )
     }
+}
+
+/** Własna tapeta Wiedźmina — bounds + inSampleSize pod rozmiar ekranu. */
+private fun dekodujTapeteWiedzmina(sciezka: String, maxBokPx: Int): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(sciezka, bounds)
+    var sample = 1
+    val h = bounds.outHeight
+    val w = bounds.outWidth
+    if (h > maxBokPx || w > maxBokPx) {
+        val halfH = h / 2
+        val halfW = w / 2
+        while (halfH / sample >= maxBokPx && halfW / sample >= maxBokPx) {
+            sample *= 2
+        }
+    }
+    val decode = BitmapFactory.Options().apply { inSampleSize = sample }
+    return BitmapFactory.decodeFile(sciezka, decode)
 }
 
 private fun kadrZWiedzminTlo(context: android.content.Context): Bitmap? {
