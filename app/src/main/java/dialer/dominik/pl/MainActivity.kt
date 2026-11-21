@@ -261,11 +261,12 @@ internal fun wyciagnijNumerZIntentuDialera(intent: Intent?): String? {
     intent.getStringExtra(Intent.EXTRA_PHONE_NUMBER)?.let { kandydaci.add(it) }
 
     val akcja = intent.action
+    // CALL_PRIVILEGED nie jest w publicznym SDK — porównujemy literałem.
     val akcjaDialera = akcja == Intent.ACTION_DIAL ||
         akcja == Intent.ACTION_VIEW ||
         akcja == Intent.ACTION_CALL ||
         akcja == Intent.ACTION_CALL_BUTTON ||
-        akcja == Intent.ACTION_CALL_PRIVILEGED
+        akcja == "android.intent.action.CALL_PRIVILEGED"
 
     // Samo otwarcie tarczy bez numeru (ACTION_DIAL bez data) — nic nie wstawiaj.
     if (kandydaci.isEmpty()) return null
