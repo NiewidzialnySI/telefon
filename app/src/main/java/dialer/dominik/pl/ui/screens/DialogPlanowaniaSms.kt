@@ -180,18 +180,42 @@ fun zaplanujWiadomosc(context: Context, numer: String, tresc: String, czasMs: Lo
     val prefs = context.getSharedPreferences("sms_planowane", Context.MODE_PRIVATE)
     val id = java.util.UUID.randomUUID().toString()
     prefs.edit().putString(id, "$numer\t$czasMs\t$tresc").apply()
+    ustawAlarmPlanowanegoSms(context, id, czasMs)
+    android.util.Log.i("PlanowanySms", "Planuje wysylke numer=$numer czas=$czasMs")
+    return czasMs
+}
+
+/**
+ * Aktualizuje istniejący plan (ta sama [id]): treść i/lub godzinę, przestawia alarm.
+ */
+fun aktualizujPlanowanySms(context: Context, id: String, numer: String, tresc: String, czasMs: Long) {
+    val prefs = context.getSharedPreferences("sms_planowane", Context.MODE_PRIVATE)
+    anulujAlarmPlanowanegoSms(context, id)
+    prefs.edit().putString(id, "$numer\t$czasMs\t$tresc").apply()
+    ustawAlarmPlanowanegoSms(context, id, czasMs)
+    android.util.Log.i("PlanowanySms", "Aktualizacja planu id=$id czas=$czasMs")
+}
+
+private fun pendingPlanowanegoSms(context: Context, id: String): PendingIntent {
     val intent = Intent(context, WyslijPlanowanySmsReceiver::class.java).putExtra("PLAN_ID", id)
-    val pending = PendingIntent.getBroadcast(
+    return PendingIntent.getBroadcast(
         context, id.hashCode(), intent,
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
+}
+
+private fun ustawAlarmPlanowanegoSms(context: Context, id: String, czasMs: Long) {
     val alarm = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-    android.util.Log.i("PlanowanySms", "Planuje wysylke numer=$numer czas=$czasMs")
+    val pending = pendingPlanowanegoSms(context, id)
     try {
         alarm.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, czasMs, pending)
     } catch (e: SecurityException) {
         android.util.Log.w("PlanowanySms", "Brak SCHEDULE_EXACT_ALARM, przyblizony", e)
         alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, czasMs, pending)
     }
-    return czasMs
+}
+
+private fun anulujAlarmPlanowanegoSms(context: Context, id: String) {
+    val alarm = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+    alarm.cancel(pendingPlanowanegoSms(context, id))
 }

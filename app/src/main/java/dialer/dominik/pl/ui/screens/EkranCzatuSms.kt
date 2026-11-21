@@ -157,6 +157,11 @@ internal fun EkranCzatuSzczegoly(
 
     // Menu akcji po długim przytrzymaniu wiadomości.
     var wybranyWpis by remember { mutableStateOf<SmsWpis?>(null) }
+    /** Long-press na kafelku zaplanowanej: (id, czasMs, treść). */
+    var wybranyPlan by remember { mutableStateOf<Triple<String, Long, String>?>(null) }
+    var edycjaTresciPlanu by remember { mutableStateOf(false) }
+    var edycjaCzasuPlanu by remember { mutableStateOf(false) }
+    var draftTrescPlanu by remember { mutableStateOf("") }
     var cytowanaWiadomosc by remember { mutableStateOf<SmsWpis?>(null) }
     var pokazWyborCzasu by remember { mutableStateOf(false) }
     var planCzasMs by remember { mutableStateOf<Long?>(null) }
@@ -682,10 +687,22 @@ internal fun EkranCzatuSzczegoly(
             verticalArrangement = Arrangement.spacedBy(8.dp),
             reverseLayout = true
         ) {
-            // Planowane (na górze, wyróżnione).
-            items(planowane, key = { "pl_" + it.second }) { (_, czas, trescPl) ->
+            // Planowane (na górze, wyróżnione) — przytrzymaj: edycja / anulowanie.
+            items(planowane, key = { "pl_" + it.first }) { plan ->
+                val (_, czas, trescPl) = plan
                 val podgladCzasu = java.text.SimpleDateFormat("dd.MM, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(czas))
-                Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(dialer.dominik.pl.ui.theme.LocalMotyw.current.kafelek).border(1.dp, akcent.copy(alpha = 0.2f), RoundedCornerShape(14.dp)).padding(10.dp)) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(dialer.dominik.pl.ui.theme.LocalMotyw.current.kafelek)
+                        .border(1.dp, akcent.copy(alpha = 0.2f), RoundedCornerShape(14.dp))
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = { wybranyPlan = plan }
+                        )
+                        .padding(10.dp)
+                ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         dialer.dominik.pl.ui.components.icons.IkonaZegaraCzasu(czasMs = czas, modifier = Modifier.size(18.dp), kolor = akcent)
                         Spacer(Modifier.width(8.dp))
@@ -1260,6 +1277,152 @@ internal fun EkranCzatuSzczegoly(
                 }
             }
         }
+    }
+
+    // Menu akcji na zaplanowanej wiadomości (długie przytrzymanie kafelka).
+    if (wybranyPlan != null && !edycjaTresciPlanu && !edycjaCzasuPlanu) {
+        val plan = wybranyPlan!!
+        val paletaPlan = dialer.dominik.pl.ui.theme.LocalMotyw.current
+        val podgladCzasu = java.text.SimpleDateFormat("dd.MM, HH:mm", java.util.Locale.getDefault())
+            .format(java.util.Date(plan.second))
+        ModalBottomSheet(
+            onDismissRequest = { wybranyPlan = null },
+            containerColor = paletaPlan.tlo
+        ) {
+            Column(Modifier.padding(bottom = 24.dp)) {
+                Text(
+                    plan.third,
+                    color = paletaPlan.tekstDrugorzedny,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    "Zaplanowano: $podgladCzasu",
+                    color = akcent,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+                )
+                ListRowMenu("Edytuj treść", IkonyAplikacji.Edytuj, czerwony = false) {
+                    draftTrescPlanu = plan.third
+                    edycjaTresciPlanu = true
+                }
+                ListRowMenu("Zmień godzinę", IkonyAplikacji.Zegar, czerwony = false) {
+                    edycjaCzasuPlanu = true
+                }
+                ListRowMenu("Anuluj wysyłkę", IkonyAplikacji.Kosz, czerwony = true) {
+                    odwolajPlanowanySms(context, plan.first)
+                    Toast.makeText(context, "Anulowano zaplanowaną wiadomość", Toast.LENGTH_SHORT).show()
+                    wybranyPlan = null
+                    odswiezPoAkcji++
+                }
+            }
+        }
+    }
+
+    // Edycja treści zaplanowanej wiadomości.
+    if (edycjaTresciPlanu && wybranyPlan != null) {
+        val plan = wybranyPlan!!
+        val paletaEd = dialer.dominik.pl.ui.theme.LocalMotyw.current
+        androidx.compose.ui.window.Dialog(onDismissRequest = {
+            edycjaTresciPlanu = false
+            wybranyPlan = null
+        }) {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = paletaEd.tlo,
+                border = BorderStroke(1.dp, akcent.copy(alpha = 0.3f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(20.dp)) {
+                    Text(
+                        "Edytuj zaplanowaną",
+                        color = paletaEd.naTle,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = draftTrescPlanu,
+                        onValueChange = { draftTrescPlanu = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 3,
+                        maxLines = 8,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = akcent,
+                            unfocusedBorderColor = paletaEd.naTle.copy(alpha = 0.2f),
+                            focusedTextColor = paletaEd.naTle,
+                            unfocusedTextColor = paletaEd.naTle,
+                            cursorColor = akcent
+                        )
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        TextButton(
+                            onClick = {
+                                edycjaTresciPlanu = false
+                                wybranyPlan = null
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Anuluj", color = paletaEd.naTle.copy(alpha = 0.6f))
+                        }
+                        Button(
+                            onClick = {
+                                val nowa = draftTrescPlanu.trim()
+                                if (nowa.isBlank()) {
+                                    Toast.makeText(context, "Treść nie może być pusta", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                aktualizujPlanowanySms(context, plan.first, adres, nowa, plan.second)
+                                Toast.makeText(context, "Zaktualizowano treść", Toast.LENGTH_SHORT).show()
+                                edycjaTresciPlanu = false
+                                wybranyPlan = null
+                                odswiezPoAkcji++
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = akcent,
+                                contentColor = NaPrzycisku
+                            ),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Zapisz", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Zmiana godziny zaplanowanej wiadomości.
+    if (edycjaCzasuPlanu && wybranyPlan != null) {
+        val plan = wybranyPlan!!
+        DialogPlanowaniaSms(
+            context = context,
+            numer = adres,
+            tresc = plan.third,
+            onZaplanowano = { czasMs ->
+                aktualizujPlanowanySms(context, plan.first, adres, plan.third, czasMs)
+                Toast.makeText(
+                    context,
+                    "Nowa godzina: " + java.text.SimpleDateFormat("dd.MM, HH:mm", java.util.Locale.getDefault())
+                        .format(java.util.Date(czasMs)),
+                    Toast.LENGTH_SHORT
+                ).show()
+                edycjaCzasuPlanu = false
+                wybranyPlan = null
+                odswiezPoAkcji++
+            },
+            onAnulowano = {
+                edycjaCzasuPlanu = false
+                wybranyPlan = null
+            }
+        )
     }
 
     // Edycja załącznika przed wysyłką (podgląd + przycięcie / strzałka / kwadrat / koło).
