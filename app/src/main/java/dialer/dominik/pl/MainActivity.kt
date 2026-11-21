@@ -2,7 +2,10 @@ package dialer.dominik.pl
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.telephony.PhoneNumberUtils
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -108,6 +111,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         dialer.dominik.pl.nagranie.TranskrypcjaForegroundService.obsluzIntent(intent)
         obsluzNieodebraneSmsIntent(intent)
+        // Inne aplikacje (banki / auth) → ACTION_DIAL tel:… → numer na klawiaturę.
+        obsluzIntentDialera(intent)
         // Debug / automatyka testów — TYLKO BuildConfig.DEBUG (nie w release).
         if (BuildConfig.DEBUG) {
             when (intent?.action) {
@@ -174,6 +179,7 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         dialer.dominik.pl.nagranie.TranskrypcjaForegroundService.obsluzIntent(intent)
         obsluzNieodebraneSmsIntent(intent)
+        obsluzIntentDialera(intent)
         if (BuildConfig.DEBUG) {
             when (intent.action) {
                 "dialer.dominik.pl.adb.TEST_PAIR" ->
@@ -206,6 +212,79 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    /**
+     * ACTION_DIAL / VIEW z `tel:…` (np. „zadzwoń, by dokończyć weryfikację” w banku).
+     * Wzorzec AOSP DialpadFragment + Simple Dialer: wyciągnij numer i wstaw na klawiaturę.
+     * Shortcut SMS z OTWARTY_CZAT → czat, nie klawiatura.
+     */
+    private fun obsluzIntentDialera(intencja: Intent?) {
+        if (intencja == null) return
+        val czatSms = intencja.getStringExtra("OTWARTY_CZAT").orEmpty()
+        if (czatSms.isNotBlank()) {
+            AppNavigationState.docelowaZakladka = Zakladka.Wiadomosci
+            AppNavigationState.numerStartowySms = czatSms
+            return
+        }
+        val numer = wyciagnijNumerZIntentuDialera(intencja) ?: return
+        Log.i(TAG_DIAL_INTENT, "Intent dialera → klawiatura: action=${intencja.action} data=${intencja.data} numer=$numer")
+        AppNavigationState.ustawNumerDoWybrania(numer)
+    }
+
+    companion object {
+        private const val TAG_DIAL_INTENT = "DialIntent"
+    }
+}
+
+/**
+ * Wyciąga numer z intentu dialera.
+ * Obsługuje `tel:`, `tel://`, litery na klawiaturze, Unicode, EXTRA_PHONE_NUMBER,
+ * oraz kody z `*` / `#` (USSD / auth).
+ */
+internal fun wyciagnijNumerZIntentuDialera(intent: Intent?): String? {
+    if (intent == null) return null
+    val kandydaci = ArrayList<String>(3)
+
+    val uri = intent.data
+    if (uri != null && "tel".equals(uri.scheme, ignoreCase = true)) {
+        Uri.decode(uri.schemeSpecificPart)?.let { kandydaci.add(it) }
+    }
+    intent.dataString?.let { surowy ->
+        val zdekodowany = Uri.decode(surowy)
+        val idx = zdekodowany.indexOf("tel:", ignoreCase = true)
+        if (idx >= 0) {
+            kandydaci.add(
+                zdekodowany.substring(idx + 4).substringBefore('?').trimStart('/')
+            )
+        }
+    }
+    intent.getStringExtra(Intent.EXTRA_PHONE_NUMBER)?.let { kandydaci.add(it) }
+
+    val akcja = intent.action
+    val akcjaDialera = akcja == Intent.ACTION_DIAL ||
+        akcja == Intent.ACTION_VIEW ||
+        akcja == Intent.ACTION_CALL ||
+        akcja == Intent.ACTION_CALL_BUTTON ||
+        akcja == Intent.ACTION_CALL_PRIVILEGED
+
+    // Samo otwarcie tarczy bez numeru (ACTION_DIAL bez data) — nic nie wstawiaj.
+    if (kandydaci.isEmpty()) return null
+    // Extra bez akcji dialera / bez tel: — nie zgaduj.
+    if (!akcjaDialera && !"tel".equals(uri?.scheme, ignoreCase = true)) return null
+
+    for (surowy in kandydaci) {
+        val trimmed = surowy.trim().trimStart('/')
+        if (trimmed.isBlank()) continue
+        val znormalizowany = PhoneNumberUtils.convertKeypadLettersToDigits(
+            PhoneNumberUtils.replaceUnicodeDigits(trimmed)
+        ).trim()
+        // Cyfry, +, *, # oraz pauzy dialera — bez spacji.
+        val numer = znormalizowany.filter { c ->
+            c.isDigit() || c == '+' || c == '*' || c == '#' || c == ',' || c == ';'
+        }
+        if (numer.isNotBlank()) return numer
+    }
+    return null
 }
 
 /** Zakładki dolnego paska. */
@@ -267,7 +346,17 @@ private enum class EtapStartowy { Powitanie, Uprawnienia, Gotowa }
 object AppNavigationState {
     var docelowaZakladka: Zakladka? by mutableStateOf(null)
     var numerDoWybrania: String? by mutableStateOf(null)
+    /** Zmienia się przy każdym nowym numerze z intentu — wymusza LaunchedEffect. */
+    var numerDoWybraniaSekwencja: Int by mutableIntStateOf(0)
     var numerStartowySms: String? by mutableStateOf(null)
+
+    /** Ustawia numer na klawiaturę zakładki Główny (z intentu dialera lub z czatu). */
+    fun ustawNumerDoWybrania(numer: String) {
+        if (numer.isBlank()) return
+        docelowaZakladka = Zakladka.Glowny
+        numerDoWybrania = numer
+        numerDoWybraniaSekwencja += 1
+    }
 }
 
 /**
@@ -290,9 +379,21 @@ private fun EkranZZakladkami(context: Context) {
         }
     }
 
+    // Fallback: gdy Compose wystartuje po obsluzIntentDialera, albo intent
+    // przyszedł zanim UI było gotowe — jeszcze raz odczytaj Activity.intent.
+    LaunchedEffect(Unit) {
+        val act = context as? android.app.Activity ?: return@LaunchedEffect
+        wyciagnijNumerZIntentuDialera(act.intent)?.let { num ->
+            if (AppNavigationState.numerDoWybrania == null && numerDoWybraniaNaMain.isBlank()) {
+                AppNavigationState.ustawNumerDoWybrania(num)
+            }
+        }
+    }
+
     LaunchedEffect(
         AppNavigationState.docelowaZakladka,
         AppNavigationState.numerDoWybrania,
+        AppNavigationState.numerDoWybraniaSekwencja,
         AppNavigationState.numerStartowySms,
         nagrywanieWlaczone
     ) {
@@ -302,6 +403,7 @@ private fun EkranZZakladkami(context: Context) {
         }
         AppNavigationState.numerDoWybrania?.let { num ->
             numerDoWybraniaNaMain = num
+            zakladka = Zakladka.Glowny
             AppNavigationState.numerDoWybrania = null
         }
         AppNavigationState.numerStartowySms?.let { num ->

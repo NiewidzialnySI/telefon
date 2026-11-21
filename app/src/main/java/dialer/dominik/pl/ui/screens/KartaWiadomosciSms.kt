@@ -181,7 +181,7 @@ internal fun KartaWiadomosciNowoczesna(
                             if (item.startsWith("tel:")) {
                                 val phone = item.removePrefix("tel:")
                                 dialer.dominik.pl.AppNavigationState.docelowaZakladka = dialer.dominik.pl.Zakladka.Glowny
-                                dialer.dominik.pl.AppNavigationState.numerDoWybrania = phone
+                                dialer.dominik.pl.AppNavigationState.ustawNumerDoWybrania(phone)
                             } else if (item.startsWith("code:")) {
                                 val code = item.removePrefix("code:")
                                 kopiujDoSchowka(context, code)
