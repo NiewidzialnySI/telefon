@@ -72,7 +72,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -729,9 +728,8 @@ private fun KartaNagrania(
     val prog = with(density) { 96.dp.toPx() }
     val progPotwierdz = with(density) { 168.dp.toPx() }
     var zasieg by remember(poz.plik.absolutePath) { mutableFloatStateOf(0f) }
-    // true = pierwszy swipe otworzył Usuń; drugi swipe (dalej) kasuje.
+    // Jedyna forma kasowania: swipe w lewo → Usuń, drugi swipe → Potwierdź.
     var otwartyUsun by remember(poz.plik.absolutePath) { mutableStateOf(false) }
-    var uzbrojonyPrzycisk by remember(poz.plik.absolutePath) { mutableStateOf(false) }
     val scopeSwipe = rememberCoroutineScope()
     val aktualneUsun by rememberUpdatedState(onUsun)
 
@@ -977,49 +975,26 @@ private fun KartaNagrania(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (!uzbrojonyPrzycisk) {
+                PrzyciskAkcjiNagrania(
+                    ikona = IkonyAplikacji.Notatka,
+                    etykieta = if (poz.transkrypcja != null) "Ponów" else "Tekst",
+                    aktywny = poz.transkrypcja != null,
+                    onClick = onTranskrybuj
+                )
+                if (poz.transkrypcja != null) {
                     PrzyciskAkcjiNagrania(
-                        ikona = IkonyAplikacji.Notatka,
-                        etykieta = if (poz.transkrypcja != null) "Ponów" else "Tekst",
-                        aktywny = poz.transkrypcja != null,
-                        onClick = onTranskrybuj
-                    )
-                    if (poz.transkrypcja != null) {
-                        PrzyciskAkcjiNagrania(
-                            ikona = IkonyAplikacji.Edytuj,
-                            etykieta = if (rozwinięty) "Ukryj" else "Pokaż",
-                            aktywny = rozwinięty,
-                            onClick = onToggleTekst
-                        )
-                    }
-                    PrzyciskAkcjiNagrania(
-                        ikona = IkonyAplikacji.StrzalkaWGore,
-                        etykieta = "Wyślij",
-                        aktywny = false,
-                        onClick = onUdostepnij
-                    )
-                    Spacer(Modifier.weight(1f))
-                    PrzyciskAkcjiNagrania(
-                        ikona = IkonyAplikacji.Kosz,
-                        etykieta = "Usuń",
-                        aktywny = false,
-                        niebezpieczny = true,
-                        onClick = {
-                            uzbrojonyPrzycisk = true
-                            otwartyUsun = false
-                            animujPowrot()
-                        }
-                    )
-                } else {
-                    PrzyciskUsunPrzeciagnij(
-                        onPotwierdz = {
-                            uzbrojonyPrzycisk = false
-                            aktualneUsun()
-                        },
-                        onAnuluj = { uzbrojonyPrzycisk = false },
-                        modifier = Modifier.weight(1f)
+                        ikona = IkonyAplikacji.Edytuj,
+                        etykieta = if (rozwinięty) "Ukryj" else "Pokaż",
+                        aktywny = rozwinięty,
+                        onClick = onToggleTekst
                     )
                 }
+                PrzyciskAkcjiNagrania(
+                    ikona = IkonyAplikacji.StrzalkaWGore,
+                    etykieta = "Wyślij",
+                    aktywny = false,
+                    onClick = onUdostepnij
+                )
             }
 
             AnimatedVisibility(
@@ -1088,7 +1063,6 @@ private fun PrzyciskAkcjiNagrania(
     ikona: ImageVector,
     etykieta: String,
     aktywny: Boolean,
-    niebezpieczny: Boolean = false,
     onClick: () -> Unit,
 ) {
     val wiedzmin = czyMotywWiedzmin()
@@ -1096,17 +1070,9 @@ private fun PrzyciskAkcjiNagrania(
     val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
 
     val paleta = LocalMotyw.current
-    val kolor = when {
-        niebezpieczny -> CzerwonyPolaczenia
-        aktywny -> akcent
-        else -> paleta.tekstDrugorzedny
-    }
+    val kolor = if (aktywny) akcent else paleta.tekstDrugorzedny
     val tlo by animateColorAsState(
-        targetValue = when {
-            niebezpieczny -> CzerwonyPolaczenia.copy(alpha = 0.12f)
-            aktywny -> akcent.copy(alpha = 0.14f)
-            else -> paleta.naTle.copy(alpha = 0.06f)
-        },
+        targetValue = if (aktywny) akcent.copy(alpha = 0.14f) else paleta.naTle.copy(alpha = 0.06f),
         animationSpec = tween(200),
         label = "tloAkcji"
     )
@@ -1121,90 +1087,6 @@ private fun PrzyciskAkcjiNagrania(
     ) {
         Icon(ikona, contentDescription = etykieta, tint = kolor, modifier = Modifier.size(15.dp))
         Text(etykieta, color = kolor, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-    }
-}
-
-/**
- * Po kliknięciu „Usuń”: przeciągnij uchwyt w prawo, żeby potwierdzić kasowanie.
- */
-@Composable
-private fun PrzyciskUsunPrzeciagnij(
-    onPotwierdz: () -> Unit,
-    onAnuluj: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val paleta = LocalMotyw.current
-    val scope = rememberCoroutineScope()
-    var torPx by remember { mutableFloatStateOf(0f) }
-    var drag by remember { mutableFloatStateOf(0f) }
-    val uchwytPx = with(LocalDensity.current) { 30.dp.toPx() }
-    val maxDrag = (torPx - uchwytPx).coerceAtLeast(0f)
-    val prog = maxDrag * 0.78f
-    val aktualnePotwierdz by rememberUpdatedState(onPotwierdz)
-
-    fun snap(cel: Float) {
-        val start = drag
-        scope.launch {
-            Animatable(start).animateTo(
-                cel,
-                spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
-            ) { drag = value }
-        }
-    }
-
-    Box(
-        modifier = modifier
-            .height(36.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(CzerwonyPolaczenia.copy(alpha = 0.14f))
-            .border(1.dp, CzerwonyPolaczenia.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
-            .padding(3.dp)
-            .onSizeChanged { torPx = it.width.toFloat() }
-    ) {
-        Text(
-            if (prog > 0f && drag >= prog) "Puść, aby usunąć" else "Przeciągnij, aby usunąć",
-            color = CzerwonyPolaczenia.copy(alpha = 0.9f),
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.align(Alignment.Center)
-        )
-        Text(
-            "Anuluj",
-            color = paleta.tekstDrugorzedny,
-            fontSize = 11.sp,
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = 10.dp)
-                .clickable(onClick = onAnuluj)
-        )
-        Box(
-            modifier = Modifier
-                .offset { IntOffset(drag.roundToInt(), 0) }
-                .size(30.dp)
-                .align(Alignment.CenterStart)
-                .clip(RoundedCornerShape(10.dp))
-                .background(CzerwonyPolaczenia)
-                .pointerInput(maxDrag) {
-                    detectHorizontalDragGestures(
-                        onDragEnd = {
-                            if (prog > 0f && drag >= prog) aktualnePotwierdz()
-                            else snap(0f)
-                        },
-                        onDragCancel = { snap(0f) },
-                        onHorizontalDrag = { _, dx ->
-                            drag = (drag + dx).coerceIn(0f, maxDrag)
-                        },
-                    )
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                IkonyAplikacji.Kosz,
-                contentDescription = "Przeciągnij, aby usunąć",
-                tint = Color.White,
-                modifier = Modifier.size(15.dp)
-            )
-        }
     }
 }
 
