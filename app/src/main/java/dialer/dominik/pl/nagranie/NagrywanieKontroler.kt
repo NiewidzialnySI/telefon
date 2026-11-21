@@ -1002,9 +1002,7 @@ object NagrywanieKontroler {
                     val surowy = qMic.pobierz()
                     val rd = qDn.pobierz()
                     val bezEcha = aec.oczysc(surowy, rd)
-                    val micGain = aec.micGainPrzyDownlink(AnulatorEcha.Tryb.Mic)
-                    val lu = wzmocnij(bezEcha, micGain)
-                    val mix = mieszajSample(lu, rd)
+                    val mix = aec.mixXor(bezEcha, rd, AnulatorEcha.Tryb.Mic, ::mieszajSample, ::wzmocnij)
                     if (o + 1 >= mono.size) {
                         piszPcm(wav, mono, 0, o)
                         o = 0
@@ -1042,7 +1040,7 @@ object NagrywanieKontroler {
 
     /**
      * Near (UP lub MIC) + DOWNLINK → mono.
-     * Sync kolejek + AEC; duck tylko gdy oni dominują (nie zjadaj „mnie”).
+     * Mix XOR: przy MIC gdy oni mówią → sam DN (koniec podwójnego echa).
      */
     private fun mieszajDoMono(
         fdUp: ParcelFileDescriptor,
@@ -1074,9 +1072,7 @@ object NagrywanieKontroler {
                     val surowy = qUp.pobierz()
                     val rd = qDn.pobierz()
                     val bezEcha = aec.oczysc(surowy, rd)
-                    val upGain = aec.micGainPrzyDownlink(trybNear)
-                    val lu = wzmocnij(bezEcha, upGain)
-                    val mix = mieszajSample(lu, rd)
+                    val mix = aec.mixXor(bezEcha, rd, trybNear, ::mieszajSample, ::wzmocnij)
                     if (o + 1 >= mono.size) {
                         piszPcm(wav, mono, 0, o)
                         o = 0

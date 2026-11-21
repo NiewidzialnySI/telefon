@@ -42,7 +42,36 @@ internal class AnulatorEcha(
     private val envAlpha = 1f - 1f / (sampleRate * 0.015f).coerceAtLeast(1f)
 
     private var hangover = 0
-    private val hangoverMax = (sampleRate * 0.22f).toInt()
+    private val hangoverMax = (sampleRate * 0.30f).toInt() // ~300 ms — chroni Twoje zdania
+
+    fun hangoverAktywny(): Boolean = hangover > 0
+
+    /**
+     * Mix XOR (własny pomysł po analizie WAV + GH cally/BCR):
+     * Sumowanie MIC+DN **zawsze** zostawia podwójny głos przy niedoskonałym AEC.
+     * Gdy oni mówią → **sam DOWNLINK**. Gdy Ty (hangover/envErr) → near + cichszy DN.
+     */
+    fun mixXor(
+        nearClean: Short,
+        dn: Short,
+        tryb: Tryb,
+        mieszaj: (Short, Short) -> Short,
+        wzmocnij: (Short, Float) -> Short,
+    ): Short {
+        val ja =
+            hangover > 0 || (envErr > 500f && envErr > envDn * 0.32f)
+        if (tryb == Tryb.Mic) {
+            if (ja) {
+                return mieszaj(wzmocnij(nearClean, 1.30f), wzmocnij(dn, 0.50f))
+            }
+            // Oni / echo: zero MIC w mixie — jedyne pewne zabicie podwójnego DN.
+            if (envDn > 350f) {
+                return dn
+            }
+        }
+        val g = micGainPrzyDownlink(tryb)
+        return mieszaj(wzmocnij(nearClean, g), dn)
+    }
 
     fun oczysc(near: Short, far: Short): Short {
         zapiszHistorie(near, far)
