@@ -40,22 +40,22 @@ internal class AnulatorEcha(
     private var envNear = 0f
     private var envErr = 0f
     private val envAlpha = 1f - 1f / (sampleRate * 0.015f).coerceAtLeast(1f)
+    /** Szybki atak (~3 ms) — XOR nie spóźnia się na ataku DN (echo w pierwszych próbkach). */
+    private val envAlphaAtak = 1f - 1f / (sampleRate * 0.003f).coerceAtLeast(1f)
 
     private var hangover = 0
     private val hangoverMax = (sampleRate * 0.35f).toInt() // ~350 ms
 
     fun hangoverAktywny(): Boolean = hangover > 0
 
+    /** DN żywy: envelope lub chwilowa próbka (atak bez lag). */
+    fun dnZywy(dn: Short = 0): Boolean =
+        envDn > 180f || abs(dn.toInt()) > 350
+
     /**
-     * Mix XOR v2 (WAV po #18 nadal miał echo c=0.84):
-     * hangover nie z echa; żywy DN → sam DOWNLINK.
-     * Używane live i offline (sidecar).
-     *
-     * Reguły:
-     * 1. Hangover tylko gdy DN **cichy** (Ty mówisz w ciszę rozmówcy)
-     * 2. Przy żywym DN → **zawsze sam DOWNLINK** (nawet w hangover — najwyżej
-     *    ucięty ogon Twojego zdania, zero podwójnego głosu)
-     * 3. DN cichy → sam near (Twoja mowa)
+     * Mix XOR v3 (WAV 144033: nadal c=0.84 w oknach 2 s):
+     * szybszy atak env + próg chwilowy |dn| — zero MIC gdy oni mówią.
+     * Używane live i offline (sidecar), także VC stereo.
      */
     fun mixXor(
         nearClean: Short,
@@ -66,7 +66,7 @@ internal class AnulatorEcha(
     ): Short {
         if (tryb == Tryb.Mic) {
             // Żywy downlink = oni (lub echo) — NIGDY nie doklejaj MIC.
-            if (envDn > 280f) return dn
+            if (dnZywy(dn)) return dn
             // Cisza u nich: Twoja mowa / hangover.
             if (hangover > 0 || envErr > 450f) return wzmocnij(nearClean, 1.35f)
             return dn
@@ -85,7 +85,9 @@ internal class AnulatorEcha(
 
         val farAbs = abs(far.toInt()).toFloat()
         val nearAbs = abs(near.toInt()).toFloat()
-        envDn = envAlpha * envDn + (1f - envAlpha) * farAbs
+        // Atak szybciej niż zwolnienie — gate XOR łapie początek DN.
+        val aDn = if (farAbs > envDn) envAlphaAtak else envAlpha
+        envDn = aDn * envDn + (1f - aDn) * farAbs
         envNear = envAlpha * envNear + (1f - envAlpha) * nearAbs
 
         ring[write] = far
@@ -147,7 +149,7 @@ internal class AnulatorEcha(
      */
     fun micGainPrzyDownlink(tryb: Tryb): Float {
         if (tryb == Tryb.Mic) {
-            if (envDn > 280f) return 0f
+            if (dnZywy()) return 0f
             if (hangover > 0 || envErr > 450f) return 1.35f
             return 0f
         }

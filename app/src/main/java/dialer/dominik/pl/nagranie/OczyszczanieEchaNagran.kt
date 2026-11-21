@@ -127,7 +127,7 @@ object OczyszczanieEchaNagran {
                         Tryb.TylkoJa -> {
                             val clean = aec.oczysc(near, far)
                             // Offline: tylko residuum (bez echa), bez mixu z DN
-                            if (aec.envDownlink() > 280f && !aec.hangoverAktywny()) {
+                            if (aec.dnZywy(far) && !aec.hangoverAktywny()) {
                                 0
                             } else {
                                 wzmocnij(clean, 1.25f)
