@@ -112,6 +112,7 @@ private data class PozycjaNagrania(
     val numer: String,
     val nazwaKontaktu: String?,
     val data: String,
+    val czasMs: Long,
     val rozmiarKb: Long,
     val transkrypcja: String?,
 ) {
@@ -121,8 +122,43 @@ private data class PozycjaNagrania(
 }
 
 /**
+ * Nagrania jednego numeru / kontaktu — jak grupy w historii połączeń (AOSP / Ever Dialer).
+ * [nagrania] posortowane od najnowszego.
+ */
+private data class GrupaNagran(
+    val klucz: String,
+    val numer: String,
+    val nazwaKontaktu: String?,
+    val nagrania: List<PozycjaNagrania>,
+) {
+    val tytul: String get() = nazwaKontaktu?.takeIf { it.isNotBlank() } ?: numer
+    val inicial: String
+        get() = tytul.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+    val najnowsze: PozycjaNagrania get() = nagrania.first()
+    val liczba: Int get() = nagrania.size
+}
+
+/** Grupuje po znormalizowanym numerze; grupy i nagrania — najnowsze na górze. */
+private fun grupujNagrania(lista: List<PozycjaNagrania>): List<GrupaNagran> {
+    return lista
+        .groupBy { dialer.dominik.pl.data.normalizujNumer(it.numer).ifBlank { it.numer } }
+        .map { (klucz, poz) ->
+            val sorted = poz.sortedByDescending { it.czasMs }
+            GrupaNagran(
+                klucz = klucz,
+                numer = sorted.first().numer,
+                nazwaKontaktu = sorted.firstOrNull { !it.nazwaKontaktu.isNullOrBlank() }?.nazwaKontaktu
+                    ?: sorted.first().nazwaKontaktu,
+                nagrania = sorted
+            )
+        }
+        .sortedByDescending { it.najnowsze.czasMs }
+}
+
+/**
  * Zakładka nagrań — ten sam język UI co skrzynka SMS / kontakty:
  * gradient kafelków, swipe usuń, animateItem, kompaktowe akcje.
+ * Nagrania z jednego numeru są zgrupowane (jak historia połączeń) — klik rozwija listę.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -134,9 +170,13 @@ fun EkranNagran(context: Context) {
     val lifecycleOwner = LocalLifecycleOwner.current
 
     var lista by remember { mutableStateOf(emptyList<PozycjaNagrania>()) }
+    val grupy = remember(lista) { grupujNagrania(lista) }
     var odtwarzany: File? by remember { mutableStateOf(null) }
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
-    var rozwiniety: String? by remember { mutableStateOf(null) }
+    /** Klucz rozwiniętej grupy (numer) — jak w historii połączeń. */
+    var rozwinietaGrupa: String? by remember { mutableStateOf(null) }
+    /** Rozwinięta treść transkrypcji (ścieżka pliku). */
+    var rozwinietyTekst: String? by remember { mutableStateOf(null) }
     var pozycjaMs by remember { mutableIntStateOf(0) }
     var dlugoscMs by remember { mutableIntStateOf(0) }
     var szuka by remember { mutableStateOf(false) }
@@ -243,28 +283,37 @@ fun EkranNagran(context: Context) {
                     }
                 }
 
-                items(lista, key = { it.plik.absolutePath }) { poz ->
-                    val gra = odtwarzany == poz.plik
-                    KartaNagrania(
-                        poz = poz,
-                        gra = gra,
-                        rozwinięty = rozwiniety == poz.plik.absolutePath,
-                        suwak = if (gra) suwak else 0f,
-                        dlugoscMs = if (gra) dlugoscMs else 0,
-                        pozycjaMs = if (gra) pozycjaMs else 0,
-                        onPlay = {
-                            if (odtwarzany == poz.plik) {
-                                stopPlay()
-                            } else {
+                items(grupy, key = { "g_" + it.klucz }) { grupa ->
+                    val animacja = Modifier.animateItem(
+                        fadeInSpec = tween(260, easing = FastOutSlowInEasing),
+                        fadeOutSpec = tween(180, easing = FastOutSlowInEasing),
+                        placementSpec = spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness = Spring.StiffnessMediumLow
+                        )
+                    )
+                    if (grupa.liczba == 1) {
+                        // Jedno nagranie — od razu pełna karta (bez zbędnego rozwijania).
+                        KartaNagraniaPozycji(
+                            poz = grupa.najnowsze,
+                            odtwarzany = odtwarzany,
+                            suwak = suwak,
+                            dlugoscMs = dlugoscMs,
+                            pozycjaMs = pozycjaMs,
+                            rozwinietyTekst = rozwinietyTekst,
+                            stanTr = stanTr,
+                            context = context,
+                            onStopPlay = { stopPlay() },
+                            onStartPlay = { plik ->
                                 stopPlay()
                                 runCatching {
                                     MediaPlayer().apply {
-                                        setDataSource(poz.plik.absolutePath)
+                                        setDataSource(plik.absolutePath)
                                         setOnCompletionListener { stopPlay() }
                                         prepare()
                                         start()
                                         player = this
-                                        odtwarzany = poz.plik
+                                        odtwarzany = plik
                                         dlugoscMs = duration.coerceAtLeast(0)
                                         pozycjaMs = 0
                                         suwak = 0f
@@ -272,60 +321,88 @@ fun EkranNagran(context: Context) {
                                 }.onFailure {
                                     Toast.makeText(context, "Nie można odtworzyć", Toast.LENGTH_SHORT).show()
                                 }
-                            }
-                        },
-                        onSuwak = { v ->
-                            szuka = true
-                            suwak = v
-                            pozycjaMs = v.toInt()
-                        },
-                        onSuwakKoniec = {
-                            runCatching { player?.seekTo(suwak.toInt()) }
-                            szuka = false
-                        },
-                        onTranskrybuj = {
-                            if (TranskrypcjaForegroundService.czyTrwa() ||
-                                stanTr !is TranskrypcjaRozmow.Stan.Bezczynny &&
-                                stanTr !is TranskrypcjaRozmow.Stan.Gotowe &&
-                                stanTr !is TranskrypcjaRozmow.Stan.Blad
-                            ) {
-                                Toast.makeText(
-                                    context,
-                                    "Transkrypcja już trwa w tle",
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                            } else {
-                                TranskrypcjaForegroundService.start(context, poz.plik)
-                                Toast.makeText(
-                                    context,
-                                    "Transkrypcja w tle — dostaniesz powiadomienie",
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                            }
-                        },
-                        onToggleTekst = {
-                            rozwiniety = if (rozwiniety == poz.plik.absolutePath) null
-                            else poz.plik.absolutePath
-                        },
-                        onUdostepnij = { udostepnij(context, poz.plik) },
-                        onUsun = {
-                            stopPlay()
-                            val sciezka = poz.plik.absolutePath
-                            lista = lista.filter { it.plik.absolutePath != sciezka }
-                            scope.launch(Dispatchers.IO) {
-                                poz.plik.delete()
-                                TranskrypcjaRozmow.plikTranskrypcji(poz.plik).delete()
-                            }
-                        },
-                        modifier = Modifier.animateItem(
-                            fadeInSpec = tween(260, easing = FastOutSlowInEasing),
-                            fadeOutSpec = tween(180, easing = FastOutSlowInEasing),
-                            placementSpec = spring(
-                                dampingRatio = Spring.DampingRatioNoBouncy,
-                                stiffness = Spring.StiffnessMediumLow
-                            )
+                            },
+                            onSuwak = { v -> szuka = true; suwak = v; pozycjaMs = v.toInt() },
+                            onSuwakKoniec = {
+                                runCatching { player?.seekTo(suwak.toInt()) }
+                                szuka = false
+                            },
+                            onToggleTekst = { sciezka ->
+                                rozwinietyTekst = if (rozwinietyTekst == sciezka) null else sciezka
+                            },
+                            onUsunZListy = { sciezka ->
+                                stopPlay()
+                                lista = lista.filter { it.plik.absolutePath != sciezka }
+                            },
+                            modifier = animacja
                         )
-                    )
+                    } else {
+                        val otwarta = rozwinietaGrupa == grupa.klucz
+                        Column(modifier = animacja) {
+                            KartaGrupyNagran(
+                                grupa = grupa,
+                                rozwinieta = otwarta,
+                                onRozwin = {
+                                    rozwinietaGrupa = if (otwarta) null else grupa.klucz
+                                }
+                            )
+                            AnimatedVisibility(
+                                visible = otwarta,
+                                enter = fadeIn(tween(180)) + expandVertically(tween(240, easing = FastOutSlowInEasing)),
+                                exit = fadeOut(tween(140)) + shrinkVertically(tween(200, easing = FastOutSlowInEasing))
+                            ) {
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.padding(top = 8.dp, start = 8.dp)
+                                ) {
+                                    grupa.nagrania.forEach { poz ->
+                                        KartaNagraniaPozycji(
+                                            poz = poz,
+                                            odtwarzany = odtwarzany,
+                                            suwak = suwak,
+                                            dlugoscMs = dlugoscMs,
+                                            pozycjaMs = pozycjaMs,
+                                            rozwinietyTekst = rozwinietyTekst,
+                                            stanTr = stanTr,
+                                            context = context,
+                                            onStopPlay = { stopPlay() },
+                                            onStartPlay = { plik ->
+                                                stopPlay()
+                                                runCatching {
+                                                    MediaPlayer().apply {
+                                                        setDataSource(plik.absolutePath)
+                                                        setOnCompletionListener { stopPlay() }
+                                                        prepare()
+                                                        start()
+                                                        player = this
+                                                        odtwarzany = plik
+                                                        dlugoscMs = duration.coerceAtLeast(0)
+                                                        pozycjaMs = 0
+                                                        suwak = 0f
+                                                    }
+                                                }.onFailure {
+                                                    Toast.makeText(context, "Nie można odtworzyć", Toast.LENGTH_SHORT).show()
+                                                }
+                                            },
+                                            onSuwak = { v -> szuka = true; suwak = v; pozycjaMs = v.toInt() },
+                                            onSuwakKoniec = {
+                                                runCatching { player?.seekTo(suwak.toInt()) }
+                                                szuka = false
+                                            },
+                                            onToggleTekst = { sciezka ->
+                                                rozwinietyTekst = if (rozwinietyTekst == sciezka) null else sciezka
+                                            },
+                                            onUsunZListy = { sciezka ->
+                                                stopPlay()
+                                                lista = lista.filter { it.plik.absolutePath != sciezka }
+                                            },
+                                            kompaktTytul = true
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -412,6 +489,164 @@ private fun PasekStatusuTranskrypcji(stan: TranskrypcjaRozmow.Stan) {
     }
 }
 
+/**
+ * Nagłówek grupy nagrań jednego kontaktu — klik rozwija listę (jak historia połączeń).
+ */
+@Composable
+private fun KartaGrupyNagran(
+    grupa: GrupaNagran,
+    rozwinieta: Boolean,
+    onRozwin: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val wiedzmin = czyMotywWiedzmin()
+    val akcent = motywAkcent()
+    val paleta = LocalMotyw.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val ksztalt = RoundedCornerShape(paleta.promienKafla.dp)
+    var foto by remember(grupa.numer) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(grupa.numer) {
+        foto = withContext(Dispatchers.IO) {
+            if (grupa.numer == "nieznany") null
+            else WeryfikacjaNumeru.pobierzZdjecieKontaktu(context, grupa.numer)
+        }
+    }
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(ksztalt)
+            .background(paleta.gradientKafelka())
+            .border(1.dp, paleta.kafelekRamka, ksztalt)
+            .clickable(onClick = onRozwin)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        AwatarNagrania(bitmap = foto, inicial = grupa.inicial, aktywny = false)
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    grupa.tytul,
+                    color = paleta.naTle,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 16.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(
+                            if (wiedzmin) akcent.copy(alpha = 0.18f)
+                            else akcent.copy(alpha = 0.14f)
+                        )
+                        .padding(horizontal = 7.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        "${grupa.liczba}×",
+                        color = akcent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+            Spacer(Modifier.height(3.dp))
+            Text(
+                buildString {
+                    if (!grupa.nazwaKontaktu.isNullOrBlank()) {
+                        append(grupa.numer)
+                        append(" · ")
+                    }
+                    append(grupa.najnowsze.data)
+                    append(" · ")
+                    append(grupa.liczba)
+                    append(if (grupa.liczba == 1) " nagranie" else " nagrań")
+                },
+                color = paleta.tekstDrugorzedny,
+                fontSize = 12.5.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Icon(
+            imageVector = if (rozwinieta) IkonyAplikacji.StrzalkaWGore else IkonyAplikacji.Strzalka,
+            contentDescription = if (rozwinieta) "Zwiń" else "Rozwiń",
+            tint = paleta.tekstDrugorzedny,
+            modifier = Modifier
+                .size(20.dp)
+                .graphicsLayer { rotationZ = if (rozwinieta) 0f else 90f }
+        )
+    }
+}
+
+/** Wspólne podpięcie odtwarzania / transkrypcji / usuwania pod [KartaNagrania]. */
+@Composable
+private fun KartaNagraniaPozycji(
+    poz: PozycjaNagrania,
+    odtwarzany: File?,
+    suwak: Float,
+    dlugoscMs: Int,
+    pozycjaMs: Int,
+    rozwinietyTekst: String?,
+    stanTr: TranskrypcjaRozmow.Stan,
+    context: Context,
+    onStopPlay: () -> Unit,
+    onStartPlay: (File) -> Unit,
+    onSuwak: (Float) -> Unit,
+    onSuwakKoniec: () -> Unit,
+    onToggleTekst: (String) -> Unit,
+    onUsunZListy: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    kompaktTytul: Boolean = false,
+) {
+    val gra = odtwarzany == poz.plik
+    val scope = rememberCoroutineScope()
+    KartaNagrania(
+        poz = poz,
+        gra = gra,
+        rozwinięty = rozwinietyTekst == poz.plik.absolutePath,
+        suwak = if (gra) suwak else 0f,
+        dlugoscMs = if (gra) dlugoscMs else 0,
+        pozycjaMs = if (gra) pozycjaMs else 0,
+        onPlay = {
+            if (odtwarzany == poz.plik) onStopPlay() else onStartPlay(poz.plik)
+        },
+        onSuwak = onSuwak,
+        onSuwakKoniec = onSuwakKoniec,
+        onTranskrybuj = {
+            if (TranskrypcjaForegroundService.czyTrwa() ||
+                stanTr !is TranskrypcjaRozmow.Stan.Bezczynny &&
+                stanTr !is TranskrypcjaRozmow.Stan.Gotowe &&
+                stanTr !is TranskrypcjaRozmow.Stan.Blad
+            ) {
+                Toast.makeText(context, "Transkrypcja już trwa w tle", Toast.LENGTH_SHORT).show()
+            } else {
+                TranskrypcjaForegroundService.start(context, poz.plik)
+                Toast.makeText(
+                    context,
+                    "Transkrypcja w tle — dostaniesz powiadomienie",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        },
+        onToggleTekst = { onToggleTekst(poz.plik.absolutePath) },
+        onUdostepnij = { udostepnij(context, poz.plik) },
+        onUsun = {
+            val sciezka = poz.plik.absolutePath
+            onUsunZListy(sciezka)
+            scope.launch(Dispatchers.IO) {
+                poz.plik.delete()
+                TranskrypcjaRozmow.plikTranskrypcji(poz.plik).delete()
+            }
+        },
+        kompaktTytul = kompaktTytul,
+        modifier = modifier
+    )
+}
+
 @Composable
 private fun KartaNagrania(
     poz: PozycjaNagrania,
@@ -428,6 +663,7 @@ private fun KartaNagrania(
     onUdostepnij: () -> Unit,
     onUsun: () -> Unit,
     modifier: Modifier = Modifier,
+    kompaktTytul: Boolean = false,
 ) {
     val wiedzmin = czyMotywWiedzmin()
     val akcent = motywAkcent()
@@ -592,24 +828,29 @@ private fun KartaNagrania(
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        poz.tytul,
+                        if (kompaktTytul) poz.data else poz.tytul,
                         color = paleta.naTle,
                         fontWeight = FontWeight.Medium,
-                        fontSize = 16.sp,
+                        fontSize = if (kompaktTytul) 14.sp else 16.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Spacer(Modifier.height(3.dp))
                     Text(
                         buildString {
-                            if (!poz.nazwaKontaktu.isNullOrBlank()) {
-                                append(poz.numer)
+                            if (kompaktTytul) {
+                                append(poz.rozmiarKb)
+                                append(" KB")
+                            } else {
+                                if (!poz.nazwaKontaktu.isNullOrBlank()) {
+                                    append(poz.numer)
+                                    append(" · ")
+                                }
+                                append(poz.data)
                                 append(" · ")
+                                append(poz.rozmiarKb)
+                                append(" KB")
                             }
-                            append(poz.data)
-                            append(" · ")
-                            append(poz.rozmiarKb)
-                            append(" KB")
                         },
                         color = paleta.tekstDrugorzedny,
                         fontSize = 12.5.sp,
@@ -933,11 +1174,13 @@ private fun zaladuj(ctx: Context): List<PozycjaNagrania> {
             if (numer == "nieznany") null
             else WeryfikacjaNumeru.pobierzNazweKontaktu(ctx, numer)
         }
+        val czas = f.lastModified()
         PozycjaNagrania(
             plik = f,
             numer = numer,
             nazwaKontaktu = nazwa,
-            data = fmt.format(Date(f.lastModified())),
+            data = fmt.format(Date(czas)),
+            czasMs = czas,
             rozmiarKb = (f.length() / 1024).coerceAtLeast(1),
             transkrypcja = TranskrypcjaRozmow.odczytaj(f),
         )
