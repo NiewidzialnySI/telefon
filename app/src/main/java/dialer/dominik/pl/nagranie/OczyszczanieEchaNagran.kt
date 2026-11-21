@@ -91,6 +91,18 @@ object OczyszczanieEchaNagran {
         return zStereo(stereo, out, Tryb.CzysteMono)
     }
 
+    /**
+     * Tory do transkrypcji z diarizacją (temp): Ja = near po AEC, Rozmówca = DOWNLINK.
+     * @return true gdy oba pliki zapisane.
+     */
+    fun wyodrebToryDo(mono: File, jaOut: File, oniOut: File): Boolean {
+        val stereo = NagrywaniePliki.plikStereoObok(mono)
+        if (!stereo.isFile || stereo.length() <= 44L) return false
+        val ja = zStereo(stereo, jaOut, Tryb.TylkoJa) ?: return false
+        val oni = zStereo(stereo, oniOut, Tryb.TylkoOni) ?: return false
+        return ja.isFile && oni.isFile && ja.length() > 44L && oni.length() > 44L
+    }
+
     private fun zStereo(stereo: File, out: File, tryb: Tryb): File? {
         if (!stereo.exists() || stereo.length() <= 44L) return null
         val raf = RandomAccessFile(stereo, "r")

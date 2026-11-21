@@ -5,6 +5,7 @@ import android.util.Log
 import dev.ffmpegkit.whisper.Whisper
 import dev.ffmpegkit.whisper.WhisperConfig
 import dev.ffmpegkit.whisper.WhisperModel
+import dev.ffmpegkit.whisper.WhisperResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -82,18 +83,11 @@ object TranskrypcjaRozmow {
                 val m = zaladujModel(ctx)
                 _stan.value = Stan.Transkrybuje(wav.name)
                 val watki = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
-                val wynik = Whisper.transcribe(
-                    m,
-                    wav.absolutePath,
-                    WhisperConfig(
-                        language = "pl",
-                        translate = false,
-                        threads = watki,
-                        maxSegmentLength = 0,
-                        printTimestamps = false,
-                    ),
-                )
-                val tekst = wynik.text.trim()
+                val tekst = if (OczyszczanieEchaNagran.maSidecar(wav)) {
+                    transkrybujZDiarizacja(ctx, m, wav, watki)
+                } else {
+                    transkrybujMono(m, wav, watki)
+                }
                 if (tekst.isBlank()) {
                     _stan.value = Stan.Blad("Brak rozpoznanej mowy (cisza / zły język)")
                     return@withLock ""
@@ -107,6 +101,79 @@ object TranskrypcjaRozmow {
                 _stan.value = Stan.Blad(msg)
                 throw t
             }
+        }
+    }
+
+    private suspend fun transkrybujMono(m: WhisperModel, wav: File, watki: Int): String {
+        val wynik = Whisper.transcribe(
+            m,
+            wav.absolutePath,
+            WhisperConfig(
+                language = "pl",
+                translate = false,
+                threads = watki,
+                maxSegmentLength = 0,
+                printTimestamps = false,
+            ),
+        )
+        return wynik.text.trim()
+    }
+
+    /**
+     * Sidecar L=Ja (near), R=Rozmówca (DOWNLINK) → dwa przebiegi Whisper + scalenie
+     * chronologiczne z etykietami „Ja:” / „Rozmówca:”.
+     */
+    private suspend fun transkrybujZDiarizacja(
+        ctx: Context,
+        m: WhisperModel,
+        wav: File,
+        watki: Int,
+    ): String {
+        val tmp = File(ctx.cacheDir, "transkrypcja-diar").also { it.mkdirs() }
+        val jaWav = File(tmp, "${wav.nameWithoutExtension}_ja.wav")
+        val oniWav = File(tmp, "${wav.nameWithoutExtension}_oni.wav")
+        return try {
+            if (!OczyszczanieEchaNagran.wyodrebToryDo(wav, jaWav, oniWav)) {
+                Log.w(TAG, "diarizacja: brak torów — fallback mono")
+                return transkrybujMono(m, wav, watki)
+            }
+            _stan.value = Stan.Transkrybuje("${wav.name} · Ja")
+            val cfg = WhisperConfig(
+                language = "pl",
+                translate = false,
+                threads = watki,
+                maxSegmentLength = 0,
+                printTimestamps = true,
+            )
+            val jaWynik = Whisper.transcribe(m, jaWav.absolutePath, cfg)
+            _stan.value = Stan.Transkrybuje("${wav.name} · Rozmówca")
+            val oniWynik = Whisper.transcribe(m, oniWav.absolutePath, cfg)
+
+            fun segs(wynik: WhisperResult, kto: String) =
+                wynik.segments.mapNotNull { s ->
+                    val t = s.text.trim()
+                    if (t.isBlank()) null
+                    else DiarizacjaRozmowy.Segment(s.startMs, s.endMs, kto, t)
+                }.ifEmpty {
+                    // API bez segmentów — cały tekst jako jeden blok od 0.
+                    val t = wynik.text.trim()
+                    if (t.isBlank()) emptyList()
+                    else listOf(DiarizacjaRozmowy.Segment(0, 0, kto, t))
+                }
+
+            val dialog = DiarizacjaRozmowy.scal(
+                segs(jaWynik, DiarizacjaRozmowy.ETYKIETA_JA),
+                segs(oniWynik, DiarizacjaRozmowy.ETYKIETA_ROZMOWCA),
+            )
+            if (dialog.isNotBlank()) dialog
+            else {
+                // Oba tory puste / halucynacje — spróbuj mono.
+                Log.w(TAG, "diarizacja pusta — fallback mono")
+                transkrybujMono(m, wav, watki)
+            }
+        } finally {
+            runCatching { jaWav.delete() }
+            runCatching { oniWav.delete() }
         }
     }
 
