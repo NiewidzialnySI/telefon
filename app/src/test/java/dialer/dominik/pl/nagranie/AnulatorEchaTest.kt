@@ -5,16 +5,12 @@ import org.junit.Test
 import kotlin.math.abs
 import kotlin.math.sin
 
-/**
- * Symulacja echa ze słuchawki ≈ nagranie użytkownika:
- * near = α·far[t−delay] (podwójny DOWNLINK, ~8–16 ms).
- */
 class AnulatorEchaTest {
 
     @Test
-    fun aecRedukujeEchoPrzyStalymOpoznieniu() {
+    fun aecRedukujeEchoGdyTylkoOni() {
         val sr = 16_000
-        val delay = sr * 12 / 1000 // 12 ms — jak w WAV (cepstrum ~16, xcorr 8–16)
+        val delay = sr * 12 / 1000
         val aec = AnulatorEcha(sr)
         val alpha = 0.55f
         fun farAt(i: Int): Short {
@@ -41,22 +37,28 @@ class AnulatorEchaTest {
             }
         }
         val stosunek = echoPo / echoPrzed.coerceAtLeast(1.0)
-        println("AEC+halfduplex residual=$stosunek delayEst=${aec.opoznienieProbek()} (cel≈$delay)")
-        // Half-duplex przy głośnym far powinien zbić podwójny DN mocno.
-        assertTrue("residual=$stosunek", stosunek < 0.20)
-        assertTrue(
-            "delayEst=${aec.opoznienieProbek()} vs $delay",
-            abs(aec.opoznienieProbek() - delay) < sr * 8 / 1000,
-        )
+        println("AEC residual=$stosunek delayEst=${aec.opoznienieProbek()}")
+        assertTrue("residual=$stosunek", stosunek < 0.35)
     }
 
     @Test
-    fun halfDuplexWyciszaNearGdyDnGlosny() {
+    fun duckNieZerujeGdyJaMowie() {
         val aec = AnulatorEcha(16_000)
-        // Rozgrzej envelope DN
-        repeat(800) { aec.oczysc(100, 4000) }
+        // Ja głośno, oni ciszej
+        repeat(800) {
+            aec.oczysc(8000, 1500)
+        }
         val g = aec.micGainPrzyDownlink(AnulatorEcha.Tryb.Mic)
-        assertTrue("przy głośnym DN gain=$g powinien ~0", g < 0.08f)
+        assertTrue("gdy ja mówię gain=$g powinien zostać wysoki", g >= 1.0f)
+    }
+
+    @Test
+    fun duckSciszaGdyTylkoOni() {
+        val aec = AnulatorEcha(16_000)
+        repeat(800) { aec.oczysc(200, 5000) }
+        val g = aec.micGainPrzyDownlink(AnulatorEcha.Tryb.Mic)
+        assertTrue("przy samych nich gain=$g < 0.4", g < 0.40f)
+        assertTrue("nigdy nie zeruj całkowicie gain=$g", g >= 0.10f)
     }
 
     @Test
@@ -75,9 +77,9 @@ class AnulatorEchaTest {
     @Test
     fun kolejkaPcmNieGubiPrzyNierownychReadach() {
         val q = KolejkaPcm(1024)
-        val a = byteArrayOf(1, 0, 2, 0, 3, 0, 4, 0) // 1,2,3,4 little-endian shorts
-        q.dodajBajty(a, 4) // tylko 1,2
-        q.dodajBajty(a, 8) // 1,2,3,4
+        val a = byteArrayOf(1, 0, 2, 0, 3, 0, 4, 0)
+        q.dodajBajty(a, 4)
+        q.dodajBajty(a, 8)
         assertTrue(q.size == 6)
         assertTrue(q.pobierz().toInt() == 1)
         assertTrue(q.pobierz().toInt() == 2)

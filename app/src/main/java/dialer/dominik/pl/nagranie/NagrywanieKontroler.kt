@@ -671,8 +671,8 @@ object NagrywanieKontroler {
 
     private fun otworzShellDual(ctx: Context, numer: String): Otwarcie {
         val svc = wymagajShell(ctx) ?: return Otwarcie.Fail(ShellKlient.krotkiOpis(ctx))
-        // Preferuj UPLINK (bez echa akustycznego). MIC+DN tylko gdy UP martwy —
-        // na MIC słuchawka = podwójny DOWNLINK (~8–16 ms, „straszne echo”).
+        // UP bez echa akustycznego — ale na ColorOS często cisza („tylko oni”).
+        // Sonda ~350 ms: jeśli near martwy przy żywym DN → pad na MIC (żeby było „mnie”).
         val proby = listOf(
             MediaRecorder.AudioSource.VOICE_UPLINK to ("up+dn" to AnulatorEcha.Tryb.Uplink),
             MediaRecorder.AudioSource.MIC to ("mic+dn" to AnulatorEcha.Tryb.Mic),
@@ -694,27 +694,42 @@ object NagrywanieKontroler {
                 ostatniBlad = t.message
                 continue
             }
-            if (mask == 0b11) {
-                Log.i(TAG, "dual OK $tag tryb=$tryb")
-                pipeUp = up
-                pipeDn = dn
-                trybNear = tryb
-                break
+            if (mask != 0b11) {
+                ostatniBlad = svc.ostatniBlad ?: "dual mask=$mask ($tag)"
+                runCatching { svc.stop() }
+                runCatching { up[0].close(); up[1].close() }
+                runCatching { dn[0].close(); dn[1].close() }
+                mask = 0
+                continue
             }
-            ostatniBlad = svc.ostatniBlad ?: "dual mask=$mask ($tag)"
-            runCatching { svc.stop() }
-            runCatching { up[0].close(); up[1].close() }
-            runCatching { dn[0].close(); dn[1].close() }
-            mask = 0
+            runCatching { up[1].close() }
+            runCatching { dn[1].close() }
+            // UPLINK: odrzuć ciszę near zanim zostaniemy z samym rozmówcą.
+            if (tryb == AnulatorEcha.Tryb.Uplink) {
+                val (eUp, eDn) = sondaEnergiiPcm(up[0], dn[0], 350L)
+                Log.i(TAG, "dual sonda $tag nearPeak=$eUp dnPeak=$eDn")
+                val nearMartwy = eUp < 350 && eDn > 500
+                if (nearMartwy) {
+                    Log.w(TAG, "dual UP cichy → próbuję MIC")
+                    runCatching { svc.stop() }
+                    runCatching { up[0].close() }
+                    runCatching { dn[0].close() }
+                    mask = 0
+                    continue
+                }
+            }
+            Log.i(TAG, "dual OK $tag tryb=$tryb")
+            pipeUp = up
+            pipeDn = dn
+            trybNear = tryb
+            break
         }
         val upOk = pipeUp
         val dnOk = pipeDn
         if (mask != 0b11 || upOk == null || dnOk == null) {
             return Otwarcie.Fail(ostatniBlad ?: "dual mask")
         }
-        runCatching { upOk[1].close() }
-        runCatching { dnOk[1].close() }
-        // Mono mix + AEC; sidecar stereo (L=UP R=DN) pod ponowne czyszczenie.
+        // Mono mix + AEC; sidecar stereo (L=near R=DN).
         val (plik, wav) = nowyWav(ctx, numer, 1)
         val stereo = otworzStereoSidecar(plik)
         val miernik = MiernikRms()
@@ -724,6 +739,53 @@ object NagrywanieKontroler {
         }, "nagrywanie-mix").apply { isDaemon = true; start() }
         pumpWatki = listOf(t)
         return Otwarcie.Ok(plik, miernik, wymagaObuStron = true)
+    }
+
+    /**
+     * Krótki odczyt obu pipe'ów — peak |sample|. Nie zamyka FD.
+     * Zużyte bajty giną (przed startem WAV) — OK vs całe nagranie bez „mnie”.
+     */
+    private fun sondaEnergiiPcm(
+        fdUp: ParcelFileDescriptor,
+        fdDn: ParcelFileDescriptor,
+        ms: Long,
+    ): Pair<Int, Int> {
+        val up = FileInputStream(fdUp.fileDescriptor)
+        val dn = FileInputStream(fdDn.fileDescriptor)
+        val buf = ByteArray(4096)
+        var peakUp = 0
+        var peakDn = 0
+        val deadline = System.nanoTime() + ms * 1_000_000L
+        try {
+            while (System.nanoTime() < deadline) {
+                val nUp = runCatching { if (up.available() > 0) up.read(buf) else 0 }.getOrDefault(0)
+                if (nUp > 0) {
+                    var i = 0
+                    while (i + 1 < nUp) {
+                        val s = abs(
+                            ((buf[i].toInt() and 0xff) or (buf[i + 1].toInt() shl 8)).toShort().toInt(),
+                        )
+                        if (s > peakUp) peakUp = s
+                        i += 2
+                    }
+                }
+                val nDn = runCatching { if (dn.available() > 0) dn.read(buf) else 0 }.getOrDefault(0)
+                if (nDn > 0) {
+                    var i = 0
+                    while (i + 1 < nDn) {
+                        val s = abs(
+                            ((buf[i].toInt() and 0xff) or (buf[i + 1].toInt() shl 8)).toShort().toInt(),
+                        )
+                        if (s > peakDn) peakDn = s
+                        i += 2
+                    }
+                }
+                if (nUp <= 0 && nDn <= 0) Thread.sleep(15)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "sonda dual", t)
+        }
+        return peakUp to peakDn
     }
 
     private fun otworzShellSingle(
@@ -959,7 +1021,8 @@ object NagrywanieKontroler {
                         stereoBuf[so++] = (rd.toInt() and 0xff).toByte()
                         stereoBuf[so++] = ((rd.toInt() shr 8) and 0xff).toByte()
                     }
-                    miernik.dodajL(lu)
+                    // Surowy near — soft-switch ma widzieć „mnie”, nie post-duck.
+                    miernik.dodajL(surowy)
                     miernik.dodajR(rd)
                 }
                 if (o > 0) piszPcm(wav, mono, 0, o)
@@ -979,7 +1042,7 @@ object NagrywanieKontroler {
 
     /**
      * Near (UP lub MIC) + DOWNLINK → mono.
-     * Sync kolejek + AEC; przy [Tryb.Mic] half-duplex (koniec podwójnego DN).
+     * Sync kolejek + AEC; duck tylko gdy oni dominują (nie zjadaj „mnie”).
      */
     private fun mieszajDoMono(
         fdUp: ParcelFileDescriptor,
@@ -1030,7 +1093,7 @@ object NagrywanieKontroler {
                         stereoBuf[so++] = (rd.toInt() and 0xff).toByte()
                         stereoBuf[so++] = ((rd.toInt() shr 8) and 0xff).toByte()
                     }
-                    miernik.dodajL(lu)
+                    miernik.dodajL(surowy)
                     miernik.dodajR(rd)
                 }
                 if (o > 0) piszPcm(wav, mono, 0, o)
