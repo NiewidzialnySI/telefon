@@ -86,6 +86,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import dialer.dominik.pl.call.WeryfikacjaNumeru
 import dialer.dominik.pl.nagranie.NagrywaniePliki
+import dialer.dominik.pl.nagranie.OczyszczanieEchaNagran
 import dialer.dominik.pl.nagranie.TranskrypcjaForegroundService
 import dialer.dominik.pl.nagranie.TranskrypcjaRozmow
 import dialer.dominik.pl.ui.components.IkonyAplikacji
@@ -116,6 +117,7 @@ private data class PozycjaNagrania(
     val czasMs: Long,
     val rozmiarKb: Long,
     val transkrypcja: String?,
+    val maSidecar: Boolean = false,
 ) {
     val tytul: String get() = nazwaKontaktu?.takeIf { it.isNotBlank() } ?: numer
     val inicial: String
@@ -686,6 +688,43 @@ private fun KartaNagraniaPozycji(
         },
         onToggleTekst = { onToggleTekst(poz.plik.absolutePath) },
         onUdostepnij = { udostepnij(context, poz.plik) },
+        onWyczyscEcho = if (poz.maSidecar) {
+            {
+                scope.launch(Dispatchers.IO) {
+                    val w = OczyszczanieEchaNagran.uruchom(
+                        poz.plik,
+                        OczyszczanieEchaNagran.Tryb.CzysteMono,
+                        nadpiszMono = true,
+                    )
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            context,
+                            if (w != null) "Echo wyczyszczone (offline)"
+                            else "Nie udało się wyczyścić",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            }
+        } else null,
+        onRozdziel = if (poz.maSidecar) {
+            {
+                scope.launch(Dispatchers.IO) {
+                    val w = OczyszczanieEchaNagran.uruchom(
+                        poz.plik,
+                        OczyszczanieEchaNagran.Tryb.Rozdziel,
+                    )
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            context,
+                            if (w?.ja != null) "Zapisano _ja.wav i _oni.wav"
+                            else "Brak sidecara / błąd",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            }
+        } else null,
         onUsun = {
             val sciezka = poz.plik.absolutePath
             onUsunZListy(sciezka)
@@ -713,6 +752,8 @@ private fun KartaNagrania(
     onTranskrybuj: () -> Unit,
     onToggleTekst: () -> Unit,
     onUdostepnij: () -> Unit,
+    onWyczyscEcho: (() -> Unit)? = null,
+    onRozdziel: (() -> Unit)? = null,
     onUsun: () -> Unit,
     modifier: Modifier = Modifier,
     kompaktTytul: Boolean = false,
@@ -998,6 +1039,22 @@ private fun KartaNagrania(
                         aktywny = false,
                         onClick = onUdostepnij
                     )
+                    if (onWyczyscEcho != null) {
+                        PrzyciskAkcjiNagrania(
+                            ikona = IkonyAplikacji.Tarcza,
+                            etykieta = "Wyczyść",
+                            aktywny = false,
+                            onClick = onWyczyscEcho,
+                        )
+                    }
+                    if (onRozdziel != null) {
+                        PrzyciskAkcjiNagrania(
+                            ikona = IkonyAplikacji.Zlacznik,
+                            etykieta = "Tory",
+                            aktywny = false,
+                            onClick = onRozdziel,
+                        )
+                    }
                     Spacer(Modifier.weight(1f))
                     PrzyciskAkcjiNagrania(
                         ikona = IkonyAplikacji.Kosz,
@@ -1236,6 +1293,7 @@ private fun zaladuj(ctx: Context, zTranskrypcjami: Boolean = true): List<Pozycja
             rozmiarKb = (f.length() / 1024).coerceAtLeast(1),
             // Pełny odczyt .txt dopiero w drugim przebiegu — szybszy pierwszy paint.
             transkrypcja = if (zTranskrypcjami) TranskrypcjaRozmow.odczytaj(f) else null,
+            maSidecar = OczyszczanieEchaNagran.maSidecar(f),
         )
     }
 }

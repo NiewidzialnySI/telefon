@@ -48,9 +48,8 @@ internal class AnulatorEcha(
 
     /**
      * Mix XOR v2 (WAV po #18 nadal miał echo c=0.84):
-     *
-     * Bug: hangover/„ja” odpalał się od **wycieku echa** (envErr z MIC≈0.55·DN),
-     * więc dalej sumowaliśmy MIC+DN.
+     * hangover nie z echa; żywy DN → sam DOWNLINK.
+     * Używane live i offline (sidecar).
      *
      * Reguły:
      * 1. Hangover tylko gdy DN **cichy** (Ty mówisz w ciszę rozmówcy)
@@ -67,13 +66,9 @@ internal class AnulatorEcha(
     ): Short {
         if (tryb == Tryb.Mic) {
             // Żywy downlink = oni (lub echo) — NIGDY nie doklejaj MIC.
-            if (envDn > 280f) {
-                return dn
-            }
+            if (envDn > 280f) return dn
             // Cisza u nich: Twoja mowa / hangover.
-            if (hangover > 0 || envErr > 450f) {
-                return wzmocnij(nearClean, 1.35f)
-            }
+            if (hangover > 0 || envErr > 450f) return wzmocnij(nearClean, 1.35f)
             return dn
         }
         val g = micGainPrzyDownlink(tryb)
@@ -132,7 +127,7 @@ internal class AnulatorEcha(
         val errAbs = abs(err)
         envErr = envAlpha * envErr + (1f - envAlpha) * errAbs
 
-        // Hangover TYLKO gdy DN cichy — inaczej echo ze słuchawki udaje „mnie”.
+        // Hangover tylko gdy DN cichy — echo MIC≈0.55·DN nie udaje „mnie”.
         if (envDn < 450f && envErr > 500f) {
             hangover = hangoverMax
         } else if (hangover > 0) {
