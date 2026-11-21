@@ -331,14 +331,20 @@ object NagrywanieKontroler {
                 runCatching { ShellKlient.zapewnij(ctx, autoWlacAdb = true) }.getOrDefault(false)
             } == true
         } finally {
-            val earlyPcm = early?.stopAndZrzut() ?: ByteArray(0)
+            val rawEarly = early?.stopAndZrzut() ?: ByteArray(0)
+            val earlyPcm = EarlyMicOczyszczanie.oczysc(rawEarly, SAMPLE_RATE)
             if (earlyPcm.isNotEmpty() && zachowanyPreroll.isEmpty()) {
                 zachowanyPreroll = earlyPcm
-                Log.i(TAG, "early-MIC zachowano ${earlyPcm.size} B (~${earlyPcm.size / (SAMPLE_RATE * 2)} s)")
+                Log.i(
+                    TAG,
+                    "early-MIC zachowano ${earlyPcm.size} B " +
+                        "(~${earlyPcm.size / (SAMPLE_RATE * 2)} s, raw=${rawEarly.size})",
+                )
             } else if (earlyPcm.isNotEmpty()) {
-                // Soft-switch stash ma pierwszeństwo — doklej early na początek jeśli krótszy gap.
                 zachowanyPreroll = earlyPcm + zachowanyPreroll
                 Log.i(TAG, "early-MIC doklejony przed stash → ${zachowanyPreroll.size} B")
+            } else if (rawEarly.isNotEmpty()) {
+                Log.i(TAG, "early-MIC odrzucony (krótki/cichy) raw=${rawEarly.size} B")
             }
         }
         Log.i(TAG, "zapewnij@${limitMs}ms firmowy=$firmowy → shell=$shellOk gotowy=${ShellKlient.czyShellGotowy()}")
@@ -642,12 +648,14 @@ object NagrywanieKontroler {
             SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
         )
         if (minBuf <= 0) return null
+        // VOICE_COMMUNICATION pierwszy — OEM AEC na early-MIC (bez toru DN).
         val zrodla = intArrayOf(
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
             MediaRecorder.AudioSource.VOICE_RECOGNITION,
             MediaRecorder.AudioSource.MIC,
-            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
         )
         var rec: AudioRecord? = null
+        var srcOk = -1
         for (src in zrodla) {
             val r = try {
                 AudioRecord.Builder()
@@ -666,6 +674,7 @@ object NagrywanieKontroler {
             }
             if (r != null && r.state == AudioRecord.STATE_INITIALIZED) {
                 rec = r
+                srcOk = src
                 break
             }
             runCatching { r?.release() }
@@ -689,7 +698,7 @@ object NagrywanieKontroler {
                 runCatching { audio.release() }
             }
         }, "nagrywanie-early-mic").apply { isDaemon = true; start() }
-        Log.i(TAG, "early-MIC start")
+        Log.i(TAG, "early-MIC start src=$srcOk")
         return EarlyMic(stop, t, buf)
     }
 

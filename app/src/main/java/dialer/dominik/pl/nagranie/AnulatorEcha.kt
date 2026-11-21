@@ -21,13 +21,14 @@ internal class AnulatorEcha(
     private var delayEst = (sampleRate * 8 / 1000).coerceIn(minDelay, maxDelay - 1)
     private var wTap = 0.55f
 
-    private val nLms = (sampleRate * 40 / 1000).coerceIn(64, maxDelay)
+    /** Dłuższy NLMS (~60 ms) — lepsze dopasowanie echa 6–16 ms na starcie rozmowy. */
+    private val nLms = (sampleRate * 60 / 1000).coerceIn(96, maxDelay)
     private val wNlms = FloatArray(nLms)
     private val xNlms = FloatArray(nLms)
     private var iNlms = 0
-    private val mu = 0.10f
+    private val mu = 0.14f
     private val eps = 1e-3f
-    private val leakage = 0.9995f
+    private val leakage = 0.9996f
 
     private val corrWin = (sampleRate / 5).coerceAtLeast(200)
     private val farHist = ShortArray(maxDelay + corrWin)
@@ -53,9 +54,8 @@ internal class AnulatorEcha(
         envDn > 180f || abs(dn.toInt()) > 350
 
     /**
-     * Mix XOR v3 (WAV 144033: nadal c=0.84 w oknach 2 s):
-     * szybszy atak env + próg chwilowy |dn| — zero MIC gdy oni mówią.
-     * Używane live i offline (sidecar), także VC stereo.
+     * Mix XOR v4 (WAV 150318: środek OK c≈0.22, start c≈0.71 z early-MIC):
+     * żywy DN → sam DN; Twoja mowa → near po AEC (bez doklejania DN).
      */
     fun mixXor(
         nearClean: Short,
@@ -67,9 +67,9 @@ internal class AnulatorEcha(
         if (tryb == Tryb.Mic) {
             // Żywy downlink = oni (lub echo) — NIGDY nie doklejaj MIC.
             if (dnZywy(dn)) return dn
-            // Cisza u nich: Twoja mowa / hangover.
-            if (hangover > 0 || envErr > 450f) return wzmocnij(nearClean, 1.35f)
-            return dn
+            // Cisza u nich: sam near (bez cichego DN w tle).
+            if (hangover > 0 || envErr > 450f) return wzmocnij(nearClean, 1.40f)
+            return 0
         }
         val g = micGainPrzyDownlink(tryb)
         return mieszaj(wzmocnij(nearClean, g), dn)
@@ -174,13 +174,15 @@ internal class AnulatorEcha(
 
     private fun residualSuppressor(err: Float): Float {
         if (hangover > 0) return err
-        if (envDn < 500f) return err
+        if (envDn < 400f) return err
         val eAbs = abs(err)
-        if (eAbs < envDn * 0.55f) {
+        // Agresywniej tłumi residuum echa (WAV: leak ~0.55·DN).
+        if (eAbs < envDn * 0.70f) {
             val atten = when {
-                envDn > 1600f -> 0.12f
-                envDn > 900f -> 0.25f
-                else -> 0.45f
+                envDn > 1600f -> 0.06f
+                envDn > 900f -> 0.14f
+                envDn > 500f -> 0.28f
+                else -> 0.40f
             }
             return err * atten
         }
