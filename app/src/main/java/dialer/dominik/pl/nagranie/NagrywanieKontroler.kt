@@ -56,14 +56,18 @@ object NagrywanieKontroler {
     /** Po grace: tyle ciszy = silnik martwy (krótko — inaczej tracimy początek rozmowy). */
     private const val VERIFY_MS = 900L
     /**
-     * Dual/hybryda po ACTIVE (zwłaszcza firmowy cold-start): downlink ColorOS
-     * bywa cichy 1–3 s — za krótki verify → fałszywe „jednostronne” i brak nagrania.
+     * Dual/hybryda: downlink ColorOS bywa cichy ~1 s po ACTIVE.
+     * Za długi wait = użytkownik słyszy „nagrywa od połowy” (soft-switch + ADB).
      */
-    private const val GRACE_OBU_MS = 2_200L
-    private const val VERIFY_OBU_MS = 2_800L
+    private const val GRACE_OBU_MS = 1_000L
+    private const val VERIFY_OBU_MS = 1_600L
+    /** Jedna strona już żyje — krótki dopinek na drugą, potem soft-switch. */
+    private const val DOPINEK_OBU_MS = 900L
     /** Soft-switch: trzymaj do 12 s PCM z POCZĄTKU pliku (nie tylko ring 1.5 s). */
     private const val STASH_MAX_MS = 12_000
     private const val PREROLL_MS = 8_000
+    /** Wczesny MIC podczas czekania na ADB — max bufor (ms). */
+    private const val EARLY_MIC_MS = 12_000
     /** W trakcie rozmowy nie wolno blokować 20 s na start daemona. */
     private const val ZAPEWNIJ_W_ROZMOWIE_MS = 1_800L
     /** Cold-start ADB przy dzwonku (tryb firmowy: Wireless+USB były OFF). */
@@ -320,10 +324,23 @@ object NagrywanieKontroler {
     private suspend fun uruchomDrabinke(ctx: Context, numer: String) {
         val firmowy = NagrywanieUstawienia.czyAdbTylkoNaRozmowe(ctx)
         val limitMs = if (firmowy) ZAPEWNIJ_W_ROZMOWIE_FIRM_MS else ZAPEWNIJ_W_ROZMOWIE_MS
-        // W trybie firmowym cold-start ADB — dłuższy limit; rozgrzej() zwykle już trwa.
-        val shellOk = withTimeoutOrNull(limitMs) {
-            runCatching { ShellKlient.zapewnij(ctx, autoWlacAdb = true) }.getOrDefault(false)
-        } == true
+        // MIC od razu (równolegle z ADB) — inaczej pierwsze 2–10 s rozmowy giną w zapewnij().
+        val early = startEarlyMic(ctx)
+        val shellOk = try {
+            withTimeoutOrNull(limitMs) {
+                runCatching { ShellKlient.zapewnij(ctx, autoWlacAdb = true) }.getOrDefault(false)
+            } == true
+        } finally {
+            val earlyPcm = early?.stopAndZrzut() ?: ByteArray(0)
+            if (earlyPcm.isNotEmpty() && zachowanyPreroll.isEmpty()) {
+                zachowanyPreroll = earlyPcm
+                Log.i(TAG, "early-MIC zachowano ${earlyPcm.size} B (~${earlyPcm.size / (SAMPLE_RATE * 2)} s)")
+            } else if (earlyPcm.isNotEmpty()) {
+                // Soft-switch stash ma pierwszeństwo — doklej early na początek jeśli krótszy gap.
+                zachowanyPreroll = earlyPcm + zachowanyPreroll
+                Log.i(TAG, "early-MIC doklejony przed stash → ${zachowanyPreroll.size} B")
+            }
+        }
         Log.i(TAG, "zapewnij@${limitMs}ms firmowy=$firmowy → shell=$shellOk gotowy=${ShellKlient.czyShellGotowy()}")
 
         val ladder = drabinka(ctx)
@@ -395,9 +412,9 @@ object NagrywanieKontroler {
                                 TAG,
                                 "${silnik.id} jedna strona OK " +
                                     "L=${wynik.miernik.rmsL()} R=${wynik.miernik.rmsR()} " +
-                                    "— dopinek ${VERIFY_OBU_MS}ms",
+                                    "— dopinek ${DOPINEK_OBU_MS}ms",
                             )
-                            delay(VERIFY_OBU_MS)
+                            delay(DOPINEK_OBU_MS)
                             if (zatrzymajFlaga.get() || !currentCoroutineContext().isActive) return
                             if (wynik.miernik.obieStrony(PROG_RMS)) {
                                 Log.i(TAG, "${silnik.id} obie strony po dopinku")
@@ -608,6 +625,84 @@ object NagrywanieKontroler {
             val wymagaObuStron: Boolean = false,
         ) : Otwarcie()
         data class Fail(val powod: String) : Otwarcie()
+    }
+
+    /**
+     * Lokalny MIC w trakcie czekania na ADB/shell — bez tego giną pierwsze sekundy rozmowy.
+     * Bufor trafia do [zachowanyPreroll] i jest dopisywany na początek pierwszego WAV.
+     */
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun startEarlyMic(ctx: Context): EarlyMic? {
+        if (ctx.checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return null
+        }
+        val minBuf = AudioRecord.getMinBufferSize(
+            SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
+        )
+        if (minBuf <= 0) return null
+        val zrodla = intArrayOf(
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            MediaRecorder.AudioSource.MIC,
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+        )
+        var rec: AudioRecord? = null
+        for (src in zrodla) {
+            val r = try {
+                AudioRecord.Builder()
+                    .setAudioSource(src)
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                            .setSampleRate(SAMPLE_RATE)
+                            .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(minBuf * 2)
+                    .build()
+            } catch (_: Throwable) {
+                null
+            }
+            if (r != null && r.state == AudioRecord.STATE_INITIALIZED) {
+                rec = r
+                break
+            }
+            runCatching { r?.release() }
+        }
+        val audio = rec ?: return null
+        val stop = AtomicBoolean(false)
+        val buf = PrerollBufor(SAMPLE_RATE, 1, EARLY_MIC_MS)
+        val t = Thread({
+            val chunk = ByteArray(4096)
+            try {
+                audio.startRecording()
+                while (!stop.get() && !zatrzymajFlaga.get()) {
+                    val n = audio.read(chunk, 0, chunk.size)
+                    if (n > 0) buf.dodaj(chunk, 0, n)
+                    else if (n < 0) break
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "early-MIC", t)
+            } finally {
+                runCatching { audio.stop() }
+                runCatching { audio.release() }
+            }
+        }, "nagrywanie-early-mic").apply { isDaemon = true; start() }
+        Log.i(TAG, "early-MIC start")
+        return EarlyMic(stop, t, buf)
+    }
+
+    private class EarlyMic(
+        private val stop: AtomicBoolean,
+        private val thread: Thread,
+        private val buf: PrerollBufor,
+    ) {
+        fun stopAndZrzut(): ByteArray {
+            stop.set(true)
+            runCatching { thread.join(800) }
+            return buf.zrzut()
+        }
     }
 
     /** Silnik 1: AudioRecord w procesie dialera — bez UID shell. */
