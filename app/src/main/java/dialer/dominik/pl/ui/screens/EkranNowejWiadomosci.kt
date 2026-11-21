@@ -35,8 +35,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.window.Popup
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import dialer.dominik.pl.sms.pobierzKanal
@@ -80,44 +78,6 @@ internal fun EkranNowejWiadomosci(
     var pokazWyborCzasu by remember { mutableStateOf(false) }
     var planCzasMs by remember { mutableStateOf<Long?>(null) }
     var planPodglad by remember { mutableStateOf<String?>(null) }
-
-    // Załącznik zdjęcia (MMS) — jak w zwykłym czacie.
-    var zalacznikUri by remember { mutableStateOf<android.net.Uri?>(null) }
-    var zalacznikPodglad by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
-    var pokazWyborZalacznika by remember { mutableStateOf(false) }
-    val tymczasowyZdjecieFile = remember { mutableStateOf<java.io.File?>(null) }
-    val launcherGaleria = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.GetContent()
-    ) { uri ->
-        uri?.let {
-            val bmp = try {
-                android.graphics.BitmapFactory.decodeStream(context.contentResolver.openInputStream(it))?.let { o ->
-                    val skala = minOf(1f, 1024f / maxOf(o.width, o.height))
-                    if (skala < 1f) android.graphics.Bitmap.createScaledBitmap(o, (o.width * skala).toInt(), (o.height * skala).toInt(), true) else o
-                }
-            } catch (e: Exception) { e.printStackTrace(); null }
-            if (bmp != null) { zalacznikUri = przygotujZdjecieDoMms(context, it); zalacznikPodglad = bmp }
-            else Toast.makeText(context, "Nie uda\u0142o si\u0119 doda\u0107 zdj\u0119cia", Toast.LENGTH_SHORT).show()
-        }
-    }
-    val launcherKamera = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.TakePicture()
-    ) { ok ->
-        if (ok) {
-            val plik = tymczasowyZdjecieFile.value
-            if (plik != null) {
-                val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".fileprovider", plik)
-                val bmp = try {
-                    android.graphics.BitmapFactory.decodeStream(context.contentResolver.openInputStream(uri))?.let { o ->
-                        val skala = minOf(1f, 1024f / maxOf(o.width, o.height))
-                        if (skala < 1f) android.graphics.Bitmap.createScaledBitmap(o, (o.width * skala).toInt(), (o.height * skala).toInt(), true) else o
-                    }
-                } catch (e: Exception) { e.printStackTrace(); null }
-                if (bmp != null) { zalacznikUri = uri; zalacznikPodglad = bmp }
-                else Toast.makeText(context, "Nie uda\u0142o si\u0119 doda\u0107 zdj\u0119cia", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
 
     // Numer początkowy od razu odbiorcą.
     LaunchedEffect(numerPoczatkowy) {
@@ -316,77 +276,55 @@ internal fun EkranNowejWiadomosci(
             }
         }
 
-        // Pasek wpisywania (jak czat) — z przyciskiem załącznika (MMS) przy lewym rogu.
+        // Pasek wpisywania — tylko tekst (bez załączników w wysyłce zbiorowej).
         Box(
             Modifier.fillMaxWidth().padding(4.dp, 6.dp, 4.dp, 12.dp).height(54.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .background(dialer.dominik.pl.ui.theme.LocalMotyw.current.kafelek)
                 .border(1.dp, dialer.dominik.pl.ui.theme.LocalMotyw.current.kafelekRamka, RoundedCornerShape(16.dp))
         ) {
-            // Przycisk załącznika (spinacz) — lewy róg, pełna wysokość + menu opcji nad nim.
-            Box(
+            BasicTextField(
+                tresc,
+                { tresc = it },
+                textStyle = TextStyle(color = paletaNowa.naTle, fontSize = 15.sp),
+                cursorBrush = SolidColor(ZielonyNeon),
+                maxLines = 6,
                 modifier = Modifier
                     .align(Alignment.CenterStart)
-                    .fillMaxHeight()
-                    .width(58.dp)
-                    .clip(RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
-                    .then(if (zalacznikUri != null) Modifier.background(Brush.horizontalGradient(listOf(ZielonyMorski, ZielonyNeon))) else Modifier.background(ZielonyNeon.copy(alpha = 0.16f)))
-                    .clickable { pokazWyborZalacznika = true },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(IkonyAplikacji.Zlacznik, contentDescription = "Dodaj za\u0142\u0105cznik", tint = if (zalacznikUri != null) NaPrzycisku else ZielonyNeon, modifier = Modifier.size(28.dp))
-                if (pokazWyborZalacznika) {
-                    Popup(
-                        alignment = Alignment.TopStart,
-                        offset = IntOffset(0, -220),
-                        onDismissRequest = { pokazWyborZalacznika = false }
-                    ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            OpcjaZalacznikaN("Galeria", IkonyAplikacji.Galeria) {
-                                pokazWyborZalacznika = false
-                                launcherGaleria.launch("image/*")
-                            }
-                            OpcjaZalacznikaN("Zr\u00f3b zdj\u0119cie", IkonyAplikacji.Kamera) {
-                                pokazWyborZalacznika = false
-                                val plik = java.io.File(context.cacheDir, "images").apply { mkdirs() }
-                                val cel = java.io.File(plik, "cam_" + System.currentTimeMillis() + ".jpg")
-                                tymczasowyZdjecieFile.value = cel
-                                val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".fileprovider", cel)
-                                launcherKamera.launch(uri)
-                            }
-                        }
+                    .fillMaxWidth()
+                    .padding(start = 14.dp, end = 64.dp)
+                    .padding(vertical = 6.dp),
+                decorationBox = {
+                    if (tresc.isEmpty()) {
+                        Text(
+                            "Napisz wiadomość…",
+                            color = paletaNowa.naTle.copy(alpha = 0.32f),
+                            fontSize = 15.sp
+                        )
                     }
+                    it()
                 }
-            }
-            // Pole wpisywania — odsunięte od przycisków.
-            BasicTextField(tresc, { tresc = it }, textStyle = TextStyle(color = paletaNowa.naTle, fontSize = 15.sp),
-                cursorBrush = SolidColor(ZielonyNeon), maxLines = 6,
-                modifier = Modifier.align(Alignment.CenterStart).fillMaxWidth().padding(start = 64.dp, end = 64.dp).padding(vertical = 6.dp),
-                decorationBox = { if (tresc.isEmpty()) Text("Napisz wiadomo\u015b\u0107\u2026", color = paletaNowa.naTle.copy(alpha = 0.32f), fontSize = 15.sp); it() })
-            // Przycisk wysyłki — prawy róg; klik = wyślij/zaplanuj, przytrzymaj = wybór godziny (tylko SMS tekstowy).
+            )
+            // Przycisk wysyłki — klik = wyślij/zaplanuj, przytrzymaj = wybór godziny.
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .fillMaxHeight()
                     .width(58.dp)
                     .clip(RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp))
-                    .then(if (tresc.isNotBlank() || zalacznikUri != null) Modifier.background(Brush.horizontalGradient(listOf(ZielonyMorski, ZielonyNeon))) else Modifier.background(ZielonyNeon.copy(alpha = 0.18f)))
+                    .then(
+                        if (tresc.isNotBlank()) {
+                            Modifier.background(Brush.horizontalGradient(listOf(ZielonyMorski, ZielonyNeon)))
+                        } else {
+                            Modifier.background(ZielonyNeon.copy(alpha = 0.18f))
+                        }
+                    )
                     .combinedClickable(
                         onClick = {
-                            if (zalacznikUri != null) {
-                                // MMS ze zdjęciem — bez planowania.
-                                zalacznikUri?.let { uri -> wyslijMms(context, wybrani.firstOrNull() ?: "", uri, tresc) }
-                                zalacznikUri = null; zalacznikPodglad = null
-                                tresc = ""
-                                planCzasMs = null
-                                planPodglad = null
-                                onWyslano()
-                            } else if (tresc.isNotBlank()) {
-                                wyslij()
-                            }
+                            if (tresc.isNotBlank()) wyslij()
                         },
                         onLongClick = {
-                            if (tresc.isNotBlank() && zalacznikUri == null && planCzasMs == null && wybrani.isNotEmpty()) {
+                            if (tresc.isNotBlank() && planCzasMs == null && wybrani.isNotEmpty()) {
                                 pokazWyborCzasu = true
                             }
                         }
@@ -403,7 +341,7 @@ internal fun EkranNowejWiadomosci(
                     Icon(
                         IkonyAplikacji.Strzalka,
                         contentDescription = "Wyślij",
-                        tint = if (tresc.isNotBlank() || zalacznikUri != null) NaPrzycisku else ZielonyNeon,
+                        tint = if (tresc.isNotBlank()) NaPrzycisku else ZielonyNeon,
                         modifier = Modifier.size(26.dp)
                     )
                 }
@@ -422,24 +360,6 @@ internal fun EkranNowejWiadomosci(
                 pokazWyborCzasu = false
             },
             onAnulowano = { pokazWyborCzasu = false }
-        )
-    }
-}
-
-/** Pojedyncza opcja w menu załącznika nowej wiadomości — bez tła (ikona + tekst). */
-@Composable
-private fun OpcjaZalacznikaN(tekst: String, ikona: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
-    Row(
-        Modifier.clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(ikona, contentDescription = null, tint = ZielonyNeon, modifier = Modifier.size(22.dp))
-        Spacer(Modifier.width(12.dp))
-        Text(
-            tekst,
-            color = dialer.dominik.pl.ui.theme.LocalMotyw.current.naTle,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium
         )
     }
 }
