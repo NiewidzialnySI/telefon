@@ -94,18 +94,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dialer.dominik.pl.sms.KanalWiadomosci
-import dialer.dominik.pl.sms.czyKanalDostepny
-import dialer.dominik.pl.sms.nazwa
-import dialer.dominik.pl.sms.pobierzKanal
-import dialer.dominik.pl.sms.pobierzKontoKomunikatora
-import dialer.dominik.pl.sms.pobierzNumerDoDzwonienia
-import dialer.dominik.pl.sms.pobierzNumerDoWiadomosci
-import dialer.dominik.pl.sms.zapamietajNumerDoDzwonienia
-import dialer.dominik.pl.sms.zapamietajNumerDoWiadomosci
-import dialer.dominik.pl.sms.wyslijPrzezKomunikator
-import dialer.dominik.pl.sms.zapamietajKanal
-import dialer.dominik.pl.sms.zapamietajKontoKomunikatora
 import dialer.dominik.pl.ui.components.IkonyAplikacji
 import dialer.dominik.pl.ui.theme.CzarnyAmoled
 import dialer.dominik.pl.ui.theme.MglaNaPrzycisku
@@ -158,47 +146,6 @@ internal fun IconMini(
             contentDescription = opis,
             tint = kolor,
             modifier = Modifier.size(15.dp)
-        )
-    }
-}
-
-/** Pojedynczy przycisk kanału wiadomości. */
-@Composable
-internal fun ElementKanalu(
-    kanal: KanalWiadomosci,
-    wybrany: Boolean,
-    dostepny: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
-) {
-    val akcent = dialer.dominik.pl.ui.theme.motywAkcent()
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(50))
-            .background(
-                if (wybrany) akcent.copy(alpha = 0.16f)
-                else Color.White.copy(alpha = 0.05f)
-            )
-            .border(
-                1.dp,
-                if (wybrany) akcent.copy(alpha = 0.5f)
-                else Color.White.copy(alpha = 0.08f),
-                RoundedCornerShape(50)
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 7.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = kanal.nazwa(),
-            color = when {
-                wybrany -> akcent
-                dostepny -> Color.White.copy(alpha = 0.55f)
-                else -> Color.White.copy(alpha = 0.22f)
-            },
-            fontSize = 11.sp,
-            fontWeight = if (wybrany) FontWeight.SemiBold else FontWeight.Normal,
-            maxLines = 1
         )
     }
 }

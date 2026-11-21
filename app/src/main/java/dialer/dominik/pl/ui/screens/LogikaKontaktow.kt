@@ -38,7 +38,7 @@ data class KontaktItem(
     /** Nazwa firmy/organizacji z książki — null gdy kontakt jej nie ma (do wyszukiwania). */
     val firma: String? = null
 ) {
-    /** Numer używany domyślnie — pierwszy z listy. */
+    /** Numer używany domyślnie — pierwszy z listy (bez preferencji użytkownika). */
     val number: String get() = numery.firstOrNull()?.surowy ?: ""
 
     /** Czy kontakt ma więcej niż jeden numer. */
@@ -46,6 +46,29 @@ data class KontaktItem(
 
     /** Nazwa wyświetlana — pseudonim, jeśli ustawiony, inaczej imię i nazwisko. */
     val nazwaWyswietlana: String get() = pseudonim?.takeIf { it.isNotBlank() } ?: name
+}
+
+/**
+ * Indeks numeru uznanego za główny (preferencja użytkownika albo pierwszy).
+ * Porównuje też znormalizowane cyfry, żeby „+48…” i „6…” się zgadzały.
+ */
+fun indeksNumeruDoDzwonienia(kontakt: KontaktItem, preferowany: String?): Int {
+    if (preferowany.isNullOrBlank() || kontakt.numery.isEmpty()) return 0
+    val exact = kontakt.numery.indexOfFirst { it.surowy == preferowany }
+    if (exact >= 0) return exact
+    val norm = normalizujKontakt(preferowany)
+    if (norm.isBlank()) return 0
+    val byNorm = kontakt.numery.indexOfFirst { normalizujKontakt(it.surowy) == norm }
+    return if (byNorm >= 0) byNorm else 0
+}
+
+/** Główny numer do dzwonienia — zapisana preferencja albo pierwszy z listy. */
+fun numerDoDzwonienia(context: Context, kontakt: KontaktItem): String {
+    val pref = dialer.dominik.pl.sms.pobierzNumerDoDzwonienia(
+        context, kontakt.contactId, kontakt.name
+    )
+    return kontakt.numery.getOrNull(indeksNumeruDoDzwonienia(kontakt, pref))?.surowy
+        ?: kontakt.number
 }
 
 /** Dzwoni — najpierw przez TelecomManager, gdy aplikacja jest domyślnym dialerem. */
