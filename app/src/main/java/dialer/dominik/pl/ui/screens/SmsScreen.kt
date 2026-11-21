@@ -506,9 +506,10 @@ fun SmsScreen(
                                     }
                                 },
                                                                                                         actions = {
-                                                                                                        // Przycisk Zadzwoń — logo aplikacji, tylko w czacie.
+                                                                                                        // Przycisk Zadzwoń — tylko dla prawdziwych numerów (nie bramek/alfa-nadawców).
                                                                                                         if (stanEkranu is SmsEkranStan.Czat) {
                                                                                                         val czatAdres = (stanEkranu as SmsEkranStan.Czat).address
+                                                                                                        if (czyAdresTelefonu(czatAdres)) {
                                                                                                         IconButton(
                                                                                                         onClick = { wykonajPolaczenie(context, czatAdres) }
                                                                                                         ) {
@@ -518,6 +519,7 @@ fun SmsScreen(
                                                                                                             tint = akcent,
                                                                                                             modifier = Modifier.size(26.dp)
                                                                                                         )
+                                                                                                        }
                                                                                                         }
                                                                                                         }
                                                                                                         },
