@@ -203,6 +203,16 @@ fun EkranNagran(context: Context) {
         }
     }
 
+    fun zwolnijPlayer(p: MediaPlayer?) {
+        if (p == null) return
+        runCatching { p.setOnCompletionListener(null) }
+        runCatching { p.setOnErrorListener(null) }
+        runCatching { p.setOnPreparedListener(null) }
+        // reset+release — stop() w stanie Preparing/Error rzuca -38.
+        runCatching { p.reset() }
+        runCatching { p.release() }
+    }
+
     fun stopPlay() {
         val p = player
         player = null
@@ -212,17 +222,14 @@ fun EkranNagran(context: Context) {
         progress.dlugoscMs = 0
         progress.suwak = 0f
         progress.szuka = false
-        // reset+release — stop() w stanie Preparing/Error rzuca -38.
-        if (p != null) {
-            runCatching { p.reset() }
-            runCatching { p.release() }
-        }
+        zwolnijPlayer(p)
     }
 
     fun startPlay(plik: File) {
         stopPlay()
-        runCatching {
-            val mp = MediaPlayer()
+        var mp: MediaPlayer? = null
+        try {
+            mp = MediaPlayer()
             mp.setDataSource(plik.absolutePath)
             mp.setOnCompletionListener { stopPlay() }
             mp.setOnErrorListener { _, what, extra ->
@@ -236,7 +243,7 @@ fun EkranNagran(context: Context) {
             }
             mp.setOnPreparedListener {
                 if (player !== mp) {
-                    runCatching { mp.release() }
+                    zwolnijPlayer(mp)
                     return@setOnPreparedListener
                 }
                 runCatching {
@@ -254,7 +261,9 @@ fun EkranNagran(context: Context) {
             odtwarzany = plik
             // prepareAsync — nie blokuj UI; poll dopiero po gotowy=true.
             mp.prepareAsync()
-        }.onFailure {
+            mp = null // ownership → player
+        } catch (_: Throwable) {
+            zwolnijPlayer(mp)
             Toast.makeText(context, "Nie można odtworzyć", Toast.LENGTH_SHORT).show()
             stopPlay()
         }

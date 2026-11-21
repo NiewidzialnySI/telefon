@@ -36,6 +36,8 @@ object ShellAdbBootstrap {
     private const val TAG = "ShellAdbBootstrap"
     private const val PREFS = "adb_shell_nagranie"
     private const val K_TOKEN = "token"
+    /** Poprzedni token — stary daemon jeszcze republishuje, zanim zginie po restarcie. */
+    private const val K_TOKEN_PREV = "token_prev"
     private const val K_PAIRED = "paired"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -122,11 +124,29 @@ object ShellAdbBootstrap {
     fun oczekiwanyToken(ctx: Context): String? =
         prefs(ctx).getString(K_TOKEN, null)
 
+    /**
+     * Aktualny token zawsze OK.
+     * Poprzedni tylko gdy jeszcze nie ma żywego bindera — inaczej stary daemon
+     * nadpisałby świeży po restarcie.
+     */
+    fun tokenAkceptowany(ctx: Context, token: String): Boolean {
+        val p = prefs(ctx)
+        val cur = p.getString(K_TOKEN, null)
+        if (!cur.isNullOrBlank() && token == cur) return true
+        if (usluga() != null) return false
+        val prev = p.getString(K_TOKEN_PREV, null)
+        return !prev.isNullOrBlank() && token == prev
+    }
+
     fun przyjmijBinder(svc: INagrywanieShell) {
         val poprzedni = binderRef.getAndSet(svc)
         runCatching { poprzedni?.asBinder()?.unlinkToDeath(deathRecipient, 0) }
         runCatching { svc.asBinder().linkToDeath(deathRecipient, 0) }
             .onFailure { Log.w(TAG, "linkToDeath", it) }
+        // Nowy binder zaktualizował się — stary token niepotrzebny.
+        appCtx?.let { c ->
+            prefs(c).edit().remove(K_TOKEN_PREV).apply()
+        }
         val waiters = ArrayList(czekajacy)
         czekajacy.clear()
         for (cb in waiters) {
@@ -250,9 +270,13 @@ object ShellAdbBootstrap {
         ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     private fun nowyToken(ctx: Context): String {
+        val p = prefs(ctx)
+        val stary = p.getString(K_TOKEN, null)
         val t = UUID.randomUUID().toString().replace("-", "")
         // commit — ContentProvider w tym samym procesie musi od razu widzieć token
-        prefs(ctx).edit().putString(K_TOKEN, t).commit()
+        val ed = p.edit().putString(K_TOKEN, t)
+        if (!stary.isNullOrBlank() && stary != t) ed.putString(K_TOKEN_PREV, stary)
+        ed.commit()
         return t
     }
 
@@ -505,6 +529,7 @@ object ShellAdbBootstrap {
         // app_process + CLASSPATH=*.apk ładuje często TYLKO classes.dex (bez multidex).
         // ShellAdbMain siedzi w classesN.dex → ClassNotFound. Rozpakowujemy wszystkie
         // classes*.dex do /data/local/tmp (czytelne dla UID shell).
+        // Najpierw zabij stary daemon (inaczej republish ze starym tokenem → „zły token”).
         val cmd = komendaStartuDaemona(apk, token, app.packageName)
         Log.i(TAG, "start daemon apk=$apk")
 
@@ -593,6 +618,10 @@ object ShellAdbBootstrap {
         val dexDir = "/data/local/tmp/telefon_shell_dex"
         val log = "/data/local/tmp/telefon_nagranie.log"
         return buildString {
+            // Zabij poprzedni daemon (nice-name / cmdline) — bez tego stary republishuje złym tokenem.
+            append("pkill -9 -f 'dialer.dominik.pl.nagranie.adb.ShellAdbMain' 2>/dev/null; ")
+            append("kill -9 \$(pidof telefon_nagranie) 2>/dev/null; ")
+            append("sleep 0.25; ")
             append("DEXDIR=$dexDir; APK='$apk'; ")
             append("mkdir -p \"\$DEXDIR\" && ")
             append("unzip -o -q \"\$APK\" 'classes*.dex' -d \"\$DEXDIR\" && ")
