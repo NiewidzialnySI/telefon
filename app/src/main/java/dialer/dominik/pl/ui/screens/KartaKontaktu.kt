@@ -45,7 +45,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -67,31 +66,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dialer.dominik.pl.sms.KanalWiadomosci
-import dialer.dominik.pl.sms.czyKanalDostepny
-import dialer.dominik.pl.sms.nazwa
-import dialer.dominik.pl.sms.pobierzKanal
-import dialer.dominik.pl.sms.pobierzKontoKomunikatora
 import dialer.dominik.pl.sms.pobierzNumerDoDzwonienia
-import dialer.dominik.pl.sms.pobierzNumerDoWiadomosci
 import dialer.dominik.pl.sms.zapamietajNumerDoDzwonienia
-import dialer.dominik.pl.sms.zapamietajNumerDoWiadomosci
-import dialer.dominik.pl.sms.wyslijPrzezKomunikator
-import dialer.dominik.pl.sms.zapamietajKanal
-import dialer.dominik.pl.sms.zapamietajKontoKomunikatora
 import dialer.dominik.pl.ui.components.IkonyAplikacji
 import dialer.dominik.pl.ui.theme.CzarnyAmoled
 import dialer.dominik.pl.ui.theme.CzcionkiWiedzmina
@@ -118,14 +105,14 @@ internal fun KartaKontaktu(
     onEdytuj: () -> Unit = {},
     indeksZnaku: Int = 0
 ) {
-    // Który numer jest aktywny — przy jednym numerze zawsze pierwszy.
-    // Preferencję z prefs ładujemy dopiero po rozwinięciu (nie przy każdym scrollu).
-    var indeksNumeru by remember(kontakt.contactId) { mutableIntStateOf(0) }
-    LaunchedEffect(rozwinieta, kontakt.contactId) {
-        if (!rozwinieta) return@LaunchedEffect
-        val numerZap = pobierzNumerDoDzwonienia(context, kontakt.name) ?: return@LaunchedEffect
-        val idx = kontakt.numery.indexOfFirst { it.surowy == numerZap }
-        if (idx >= 0) indeksNumeru = idx
+    // Główny numer — od razu z prefs (także przy zwiniętej karcie / swipe), nie tylko po rozwinięciu.
+    var indeksNumeru by remember(kontakt.contactId) {
+        val pref = pobierzNumerDoDzwonienia(context, kontakt.contactId, kontakt.name)
+        mutableIntStateOf(indeksNumeruDoDzwonienia(kontakt, pref))
+    }
+    LaunchedEffect(kontakt.contactId, kontakt.numery) {
+        val pref = pobierzNumerDoDzwonienia(context, kontakt.contactId, kontakt.name)
+        indeksNumeru = indeksNumeruDoDzwonienia(kontakt, pref)
     }
     val wybranyNumer = kontakt.numery.getOrNull(indeksNumeru) ?: kontakt.numery.first()
     val inicial = remember(kontakt.name) {
@@ -233,17 +220,10 @@ internal fun KartaKontaktu(
                 detectHorizontalDragGestures(
                     onDragEnd = {
                         when {
-                            // w prawo → zadzwoń
+                            // w prawo → zadzwoń na główny (wybrany) numer
                             zasieg > prog -> zadzwonDoKontaktu(context, wybranyNumer.surowy)
-                            // w lewo → wyślij wiadomość
-                            zasieg < -prog -> {
-                                val numerWiad = pobierzNumerDoWiadomosci(context, kontakt.name)
-                                    ?: kontakt.numery.firstOrNull {
-                                        pobierzKanal(context, it.surowy) != KanalWiadomosci.Sms
-                                    }?.surowy
-                                    ?: wybranyNumer.surowy
-                                napiszDoKontaktu(context, numerWiad, onOpenSms)
-                            }
+                            // w lewo → SMS na ten sam główny numer
+                            zasieg < -prog -> napiszDoKontaktu(context, wybranyNumer.surowy, onOpenSms)
                             // bez przesunięcia → rozwiń
                             else -> onRozwin()
                         }
@@ -401,11 +381,18 @@ internal fun KartaKontaktu(
                                             else paletaMotywu.naTle.copy(alpha = 0.07f),
                                             RoundedCornerShape(12.dp)
                                         )
-                                        .clickable { indeksNumeru = indeks }
+                                        .clickable {
+                                            // Klik w numer = ustaw jako główny (zapamiętany po wyjściu z karty).
+                                            indeksNumeru = indeks
+                                            zapamietajNumerDoDzwonienia(
+                                                context, kontakt.contactId, numer.surowy
+                                            )
+                                            onZmianaPreferencji()
+                                        }
                                         .padding(horizontal = 12.dp, vertical = 10.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    // Znacznik wyboru
+                                    // Znacznik wyboru (główny numer)
                                     Box(
                                         modifier = Modifier
                                             .size(16.dp)
@@ -434,19 +421,16 @@ internal fun KartaKontaktu(
                                         modifier = Modifier.weight(1f)
                                     )
 
-                                    // Telefon: dzwoni i zapisuje numer jako domyślny do dzwonienia.
-                                    // Wiadomość: otwiera kanał, bez zapisu preferencji numeru.
-                                    val numerDoDzwon = pobierzNumerDoDzwonienia(context, kontakt.name)
-                                    val jestDomyslnyDzwon = numerDoDzwon == numer.surowy
-                                    val jestDoWiadomosci = numer.surowy == numer.surowy  // zawsze aktualny numer; bez podświetlenia preferencji
-
                                     IconMini(
                                         ikona = IkonyAplikacji.TelefonLogo,
                                         opis = "Zadzwoń na ${numer.surowy}",
                                         kolor = akcent,
                                         onClick = {
-                                            zapamietajNumerDoDzwonienia(context, kontakt.name, numer.surowy)
-                                            indeksNumeru = kontakt.numery.indexOfFirst { it.surowy == numer.surowy }.coerceAtLeast(0)
+                                            zapamietajNumerDoDzwonienia(
+                                                context, kontakt.contactId, numer.surowy
+                                            )
+                                            indeksNumeru = indeks
+                                            onZmianaPreferencji()
                                             zadzwonDoKontaktu(context, numer.surowy)
                                         }
                                     )
@@ -457,123 +441,10 @@ internal fun KartaKontaktu(
                                         kolor = paletaMotywu.naTle.copy(alpha = 0.55f),
                                         podswietlona = false,
                                         onClick = {
-                                            // Otwarcie wiadomości na aktualny numer + kanał; bez zapisu preferencji numeru
-                                            val kanal = pobierzKanal(context, numer.surowy)
                                             napiszDoKontaktu(context, numer.surowy, onOpenSms)
                                         }
                                     )
                                 }
-                            }
-                        }
-                    }
-
-                    Text(
-                        text = "Wyślij wiadomość przez",
-                        color = atramentDrugi.copy(alpha = 0.75f),
-                        fontSize = 12.sp
-                    )
-
-                    // Trzy kanały w jednym rzędzie: SMS, Messenger, Signal
-                    val wybrany = pobierzKanal(context, wybranyNumer.surowy)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        KanalWiadomosci.entries.forEach { kanal ->
-                            ElementKanalu(
-                                kanal = kanal,
-                                wybrany = wybrany == kanal,
-                                dostepny = czyKanalDostepny(context, kanal),
-                                modifier = Modifier.weight(1f),
-                                onClick = {
-                                    zapamietajKanal(context, wybranyNumer.surowy, kanal)
-                                    onZmianaPreferencji()
-                                }
-                            )
-                        }
-                    }
-
-                    // Pole na ID konta Messenger — tylko gdy wybrany
-                    if (wybrany == KanalWiadomosci.Messenger) {
-                        var idKonta by remember {
-                            mutableStateOf(
-                                pobierzKontoKomunikatora(
-                                    context,
-                                    wybranyNumer.surowy,
-                                    KanalWiadomosci.Messenger
-                                ) ?: ""
-                            )
-                        }
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(
-                                text = "ID konta Messenger (Facebook)",
-                                color = paletaMotywu.naTle.copy(alpha = 0.42f),
-                                fontSize = 11.5.sp
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(paletaMotywu.naTle.copy(alpha = 0.05f))
-                                    .border(
-                                        1.dp,
-                                        akcent.copy(alpha = 0.18f),
-                                        RoundedCornerShape(12.dp)
-                                    )
-                                    .padding(horizontal = 12.dp, vertical = 10.dp)
-                            ) {
-                                BasicTextField(
-                                    value = idKonta,
-                                    onValueChange = {
-                                        idKonta = it
-                                        zapamietajKontoKomunikatora(
-                                            context,
-                                            wybranyNumer.surowy,
-                                            KanalWiadomosci.Messenger,
-                                            it
-                                        )
-                                        onZmianaPreferencji()
-                                    },
-                                    singleLine = true,
-                                    textStyle = TextStyle(color = paletaMotywu.naTle, fontSize = 14.sp),
-                                    cursorBrush = SolidColor(akcent),
-                                    modifier = Modifier.fillMaxWidth(),
-                                    decorationBox = { wewnetrzne ->
-                                        if (idKonta.isEmpty()) {
-                                            Text(
-                                                text = "np. 100005727832736",
-                                                color = paletaMotywu.naTle.copy(alpha = 0.3f),
-                                                fontSize = 14.sp
-                                            )
-                                        }
-                                        wewnetrzne()
-                                    }
-                                )
-                            }
-                            // Instrukcja krok po kroku — Messenger nie przyjmuje numeru
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(akcent.copy(alpha = 0.06f))
-                                    .padding(10.dp),
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Text(
-                                    text = "Jak znaleźć ID konta",
-                                    color = akcent.copy(alpha = 0.85f),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = "1. Otwórz profil osoby na facebook.com w przeglądarce\n" +
-                                        "2. Spójrz na adres — fragment po ?id= to właśnie ID\n" +
-                                        "   np. facebook.com/profile.php?id=100005727832736\n" +
-                                        "3. Skopiuj same cyfry i wklej powyżej",
-                                    color = paletaMotywu.naTle.copy(alpha = 0.42f),
-                                    fontSize = 10.5.sp,
-                                    lineHeight = 15.sp
-                                )
                             }
                         }
                     }

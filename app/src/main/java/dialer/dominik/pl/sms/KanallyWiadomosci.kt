@@ -76,15 +76,36 @@ fun pobierzKontoKomunikatora(
     kanal: KanalWiadomosci
 ): String? = prefs(context).getString(kluczKonta(numer, kanal), null)?.takeIf { it.isNotBlank() }
 
-private fun kluczNumeruDoDzwonienia(nazwaKontaktu: String): String =
+private fun kluczNumeruDoDzwonieniaPoId(contactId: Long): String =
+    "numer_dzwon_id_$contactId"
+
+/** Stary klucz po nazwie — tylko do odczytu (migracja). */
+private fun kluczNumeruDoDzwonieniaPoNazwie(nazwaKontaktu: String): String =
     "numer_dzwon_${nazwaKontaktu.lowercase().trim()}"
 
-fun zapamietajNumerDoDzwonienia(context: Context, nazwaKontaktu: String, numer: String) {
-    prefs(context).edit().putString(kluczNumeruDoDzwonienia(nazwaKontaktu), numer.trim()).apply()
+/** Zapisuje główny numer do dzwonienia dla kontaktu (per CONTACT_ID). */
+fun zapamietajNumerDoDzwonienia(context: Context, contactId: Long, numer: String) {
+    prefs(context).edit().putString(kluczNumeruDoDzwonieniaPoId(contactId), numer.trim()).apply()
 }
 
-fun pobierzNumerDoDzwonienia(context: Context, nazwaKontaktu: String): String? =
-    prefs(context).getString(kluczNumeruDoDzwonienia(nazwaKontaktu), null)?.takeIf { it.isNotBlank() }
+/**
+ * Odczytuje główny numer do dzwonienia.
+ * Najpierw po [contactId], potem (stare instalacje) po nazwie kontaktu.
+ */
+fun pobierzNumerDoDzwonienia(
+    context: Context,
+    contactId: Long,
+    nazwaKontaktu: String? = null
+): String? {
+    prefs(context).getString(kluczNumeruDoDzwonieniaPoId(contactId), null)
+        ?.takeIf { it.isNotBlank() }
+        ?.let { return it }
+    if (!nazwaKontaktu.isNullOrBlank()) {
+        return prefs(context).getString(kluczNumeruDoDzwonieniaPoNazwie(nazwaKontaktu), null)
+            ?.takeIf { it.isNotBlank() }
+    }
+    return null
+}
 
 private fun kluczNumeruDoWiadomosci(nazwaKontaktu: String): String =
     "numer_wiad_${nazwaKontaktu.lowercase().trim()}"

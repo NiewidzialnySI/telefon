@@ -46,11 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import dialer.dominik.pl.sms.KanalWiadomosci
-import dialer.dominik.pl.sms.czyKanalDostepny
-import dialer.dominik.pl.sms.zapamietajKanal
 import dialer.dominik.pl.ui.components.IkonyAplikacji
-import dialer.dominik.pl.ui.components.icons.IkonyKanalow
 import dialer.dominik.pl.ui.theme.ZielonyMorski
 import dialer.dominik.pl.ui.theme.NaPrzycisku
 import dialer.dominik.pl.ui.theme.ZielonyNeon
@@ -68,7 +64,6 @@ internal fun DialogDodajKontakt(
     var pseudonim by remember { mutableStateOf("") }
     var firma by remember { mutableStateOf("") }
     var numer by remember { mutableStateOf(domyslnyNumer) }
-    var kanal by remember { mutableStateOf(KanalWiadomosci.Sms) }
     var uriZdjecia by remember { mutableStateOf<Uri?>(null) }
     var zdjecieBytes by remember { mutableStateOf<ByteArray?>(null) }
     var pokazKadrowanie by remember { mutableStateOf(false) }
@@ -90,7 +85,7 @@ internal fun DialogDodajKontakt(
         contract = ActivityResultContracts.RequestPermission()
     ) { przyznano ->
         if (przyznano) {
-            val sukces = zapiszNowyKontakt(context, imie, nazwisko, pseudonim, firma, numer, kanal, zdjecieBytes)
+            val sukces = zapiszNowyKontakt(context, imie, nazwisko, pseudonim, firma, numer, zdjecieBytes)
             Toast.makeText(
                 context,
                 if (sukces) "Kontakt zapisany!" else "Nie udało się zapisać kontaktu",
@@ -108,7 +103,7 @@ internal fun DialogDodajKontakt(
 
     fun zapiszLubPoprosOUprawnienie() {
         if (maUprawnienie(context, Manifest.permission.WRITE_CONTACTS)) {
-            val sukces = zapiszNowyKontakt(context, imie, nazwisko, pseudonim, firma, numer, kanal, zdjecieBytes)
+            val sukces = zapiszNowyKontakt(context, imie, nazwisko, pseudonim, firma, numer, zdjecieBytes)
             Toast.makeText(
                 context,
                 if (sukces) "Kontakt zapisany!" else "Nie udało się zapisać kontaktu",
@@ -241,23 +236,6 @@ internal fun DialogDodajKontakt(
                     )
                 }
 
-                // --- Preferowany kanał wiadomości: SMS / Facebook / Signal (ikony) ---
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    KanalIkona.entries.forEach { element ->
-                        KanalIkonaPrzycisk(
-                            element = element,
-                            wybrany = kanal == element.kanal,
-                            dostepny = czyKanalDostepny(context, element.kanal),
-                            onClick = { kanal = element.kanal }
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(2.dp))
-
                 // --- Przyciski Akcji — ikonowe, okrągłe ---
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -330,60 +308,6 @@ internal fun DialogDodajKontakt(
                 zdjecieBytes = bytes
                 pokazKadrowanie = false
             }
-        )
-    }
-}
-
-/** Kanały wiadomości do wyboru w oknie nowego kontaktu: ikona + podpis. */
-private enum class KanalIkona(val kanal: KanalWiadomosci, val etykieta: String, val ikona: ImageVector) {
-    Sms(KanalWiadomosci.Sms, "SMS", IkonyKanalow.Sms),
-    Messenger(KanalWiadomosci.Messenger, "Facebook", IkonyKanalow.Messenger),
-    Signal(KanalWiadomosci.Signal, "Signal", IkonyKanalow.Signal)
-}
-
-/** Okrągły przycisk kanału: mniejsza ikona w kole, zaznaczony = neonowa ramka i tło. */
-@Composable
-private fun KanalIkonaPrzycisk(
-    element: KanalIkona,
-    wybrany: Boolean,
-    dostepny: Boolean,
-    onClick: () -> Unit
-) {
-    val kolorTla = if (wybrany) ZielonyNeon.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.05f)
-    val kolorRamki = if (wybrany) ZielonyNeon.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.10f)
-    val kolorIkony = when {
-        wybrany -> ZielonyNeon
-        dostepny -> Color.White.copy(alpha = 0.78f)
-        else -> Color.White.copy(alpha = 0.28f)
-    }
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(5.dp),
-        modifier = Modifier
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 6.dp, vertical = 4.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(kolorTla)
-                .border(1.dp, kolorRamki, CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = element.ikona,
-                contentDescription = element.etykieta,
-                tint = kolorIkony,
-                modifier = Modifier.size(21.dp)
-            )
-        }
-        Text(
-            text = element.etykieta,
-            color = if (wybrany) ZielonyNeon else Color.White.copy(alpha = 0.5f),
-            fontSize = 10.5.sp,
-            fontWeight = if (wybrany) FontWeight.SemiBold else FontWeight.Normal
         )
     }
 }
@@ -489,7 +413,6 @@ internal fun zapiszNowyKontakt(
     pseudonim: String,
     firma: String,
     numer: String,
-    kanal: KanalWiadomosci = KanalWiadomosci.Sms,
     zdjecie: ByteArray? = null
 ): Boolean {
     val operations = java.util.ArrayList<ContentProviderOperation>()
@@ -561,7 +484,6 @@ internal fun zapiszNowyKontakt(
 
     return try {
         context.contentResolver.applyBatch(ContactsContract.AUTHORITY, operations)
-        if (numer.isNotBlank()) zapamietajKanal(context, numer, kanal)
         true
     } catch (e: Exception) {
         e.printStackTrace()

@@ -355,7 +355,8 @@ fun MainDialerScreen(
     // Ulubiony kliknięty → okno dialogowe rozwijane i zwijane bezpośrednio z punktu klikniętego kółka.
     ulubionyDoAkcji?.let { akcja ->
         val kontakt = akcja.kontakt
-        val numerGłówny = kontakt.number.ifBlank { kontakt.numery.firstOrNull()?.surowy ?: "" }
+        val numerGłówny = numerDoDzwonienia(context, kontakt)
+            .ifBlank { kontakt.numery.firstOrNull()?.surowy ?: "" }
         val inicjał = kontakt.nazwaWyswietlana.firstOrNull()?.uppercaseChar()?.toString() ?: "?"
 
         var widocznyDialog by remember(kontakt) { mutableStateOf(false) }
