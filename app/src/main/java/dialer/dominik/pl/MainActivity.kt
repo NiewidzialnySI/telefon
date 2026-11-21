@@ -2,7 +2,10 @@ package dialer.dominik.pl
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.telephony.PhoneNumberUtils
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -108,6 +111,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         dialer.dominik.pl.nagranie.TranskrypcjaForegroundService.obsluzIntent(intent)
         obsluzNieodebraneSmsIntent(intent)
+        obsluzIntentDialera(intent)
         // Debug / automatyka testów — TYLKO BuildConfig.DEBUG (nie w release).
         if (BuildConfig.DEBUG) {
             when (intent?.action) {
@@ -174,6 +178,8 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         dialer.dominik.pl.nagranie.TranskrypcjaForegroundService.obsluzIntent(intent)
         obsluzNieodebraneSmsIntent(intent)
+        // Jak AOSP Dialer / Simple Dialer: kolejny ACTION_DIAL tel: → uzupełnij klawiaturę.
+        obsluzIntentDialera(intent)
         if (BuildConfig.DEBUG) {
             when (intent.action) {
                 "dialer.dominik.pl.adb.TEST_PAIR" ->
@@ -205,6 +211,37 @@ class MainActivity : ComponentActivity() {
                 dialer.dominik.pl.call.PowiadomieniaNieodebranych.wyczysc(this)
             }
         }
+    }
+
+    /**
+     * Obsługa ACTION_DIAL / ACTION_VIEW z `tel:…` z innych aplikacji.
+     *
+     * Wzorzec jak w AOSP DialpadFragment.fillDigitsIfNecessary i Simple Dialer
+     * checkDialIntent: wyciągnij schemeSpecificPart, znormalizuj litery/Unicode,
+     * wstaw na klawiaturę zakładki Główny.
+     */
+    private fun obsluzIntentDialera(intencja: Intent?) {
+        if (intencja == null) return
+        val akcja = intencja.action ?: return
+        if (akcja != Intent.ACTION_DIAL && akcja != Intent.ACTION_VIEW) return
+        val uri = intencja.data ?: return
+        if (!"tel".equals(uri.scheme, ignoreCase = true)) return
+
+        val surowy = Uri.decode(uri.schemeSpecificPart).orEmpty().trim()
+        if (surowy.isBlank()) return
+
+        val numer = PhoneNumberUtils.convertKeypadLettersToDigits(
+            PhoneNumberUtils.replaceUnicodeDigits(surowy)
+        ).trim()
+        if (numer.isBlank()) return
+
+        Log.i(TAG_DIAL_INTENT, "Uzupełniam klawiaturę z intentu: $numer")
+        AppNavigationState.docelowaZakladka = Zakladka.Glowny
+        AppNavigationState.numerDoWybrania = numer
+    }
+
+    companion object {
+        private const val TAG_DIAL_INTENT = "DialIntent"
     }
 }
 
