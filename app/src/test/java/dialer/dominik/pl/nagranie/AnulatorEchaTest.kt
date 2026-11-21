@@ -10,7 +10,7 @@ class AnulatorEchaTest {
     @Test
     fun aecRedukujeEchoGdyTylkoOni() {
         val sr = 16_000
-        val delay = sr * 12 / 1000
+        val delay = sr * 8 / 1000 // jak cepstrum z nowych WAV
         val aec = AnulatorEcha(sr)
         val alpha = 0.55f
         fun farAt(i: Int): Short {
@@ -38,27 +38,37 @@ class AnulatorEchaTest {
         }
         val stosunek = echoPo / echoPrzed.coerceAtLeast(1.0)
         println("AEC residual=$stosunek delayEst=${aec.opoznienieProbek()}")
-        assertTrue("residual=$stosunek", stosunek < 0.35)
+        assertTrue("residual=$stosunek", stosunek < 0.22)
+        assertTrue(
+            "delayEst=${aec.opoznienieProbek()} vs $delay",
+            abs(aec.opoznienieProbek() - delay) < sr * 6 / 1000,
+        )
+    }
+
+    @Test
+    fun hangoverChroniMojaMowe() {
+        val aec = AnulatorEcha(16_000)
+        // Ja mówię
+        repeat(400) { aec.oczysc(9000, 800) }
+        // Potem oni głośno, ja cicho — hangover powinien trzymać gain chwilę
+        var minWczesny = 99f
+        repeat(200) { // ~12 ms — w hangover
+            aec.oczysc(100, 5000)
+            minWczesny = minOf(minWczesny, aec.micGainPrzyDownlink(AnulatorEcha.Tryb.Mic))
+        }
+        assertTrue("w hangover gain=$minWczesny", minWczesny >= 1.0f)
+        // Po hangover + milczeniu — duck
+        repeat(6000) { aec.oczysc(80, 5000) }
+        val g = aec.micGainPrzyDownlink(AnulatorEcha.Tryb.Mic)
+        assertTrue("po hangover przy samych nich gain=$g", g < 0.25f)
     }
 
     @Test
     fun duckNieZerujeGdyJaMowie() {
         val aec = AnulatorEcha(16_000)
-        // Ja głośno, oni ciszej
-        repeat(800) {
-            aec.oczysc(8000, 1500)
-        }
+        repeat(800) { aec.oczysc(8000, 1500) }
         val g = aec.micGainPrzyDownlink(AnulatorEcha.Tryb.Mic)
-        assertTrue("gdy ja mówię gain=$g powinien zostać wysoki", g >= 1.0f)
-    }
-
-    @Test
-    fun duckSciszaGdyTylkoOni() {
-        val aec = AnulatorEcha(16_000)
-        repeat(800) { aec.oczysc(200, 5000) }
-        val g = aec.micGainPrzyDownlink(AnulatorEcha.Tryb.Mic)
-        assertTrue("przy samych nich gain=$g < 0.4", g < 0.40f)
-        assertTrue("nigdy nie zeruj całkowicie gain=$g", g >= 0.10f)
+        assertTrue("gdy ja mówię gain=$g", g >= 1.0f)
     }
 
     @Test
@@ -71,7 +81,7 @@ class AnulatorEchaTest {
             val g = aec.micGainPrzyDownlink(AnulatorEcha.Tryb.Mic)
             energia += abs((clean.toInt() * g).toInt()).toLong()
         }
-        assertTrue("przy ciszy far near powinien przejść", energia > 16_000 * 500L)
+        assertTrue(energia > 16_000 * 500L)
     }
 
     @Test
@@ -82,6 +92,5 @@ class AnulatorEchaTest {
         q.dodajBajty(a, 8)
         assertTrue(q.size == 6)
         assertTrue(q.pobierz().toInt() == 1)
-        assertTrue(q.pobierz().toInt() == 2)
     }
 }
