@@ -20,28 +20,18 @@ object ZarzadcaDzwonka {
     private var czySciszony: Boolean = false
 
     /**
-     * Wycisza dzwonek i przełącza wibracje na delikatny, rzadki puls.
-     * Używane, gdy użytkownik kliknie „Ścisz” na przychodzące połączenie,
-     * bo nie może teraz odebrać — dzwonek cichnie, ale wibracja informuje.
+     * Wycisza dzwonek i całkowicie zatrzymuje wibracje.
+     * Używane, gdy użytkownik kliknie „Ścisz” na przychodzące połączenie —
+     * telefon milknie i przestaje wibrować, połączenie nadal czeka na odebranie/odrzucenie.
      */
     @SuppressLint("MissingPermission")
     fun scisz() {
         if (czySciszony) return
         czySciszony = true
-        // Zatrzymaj dzwonek i obecną wibrację
         ringtone?.stop()
         ringtone = null
         vibrator?.cancel()
-        // Delikatny, rzadki puls (jak przy spamie) — łatwy do zignorowania
-        if (vibrator?.hasVibrator() == true) {
-            val pattern = longArrayOf(0, 150, 4000)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator?.vibrate(VibrationEffect.createWaveform(pattern, 0))
-            } else {
-                @Suppress("DEPRECATION")
-                vibrator?.vibrate(pattern, 0)
-            }
-        }
+        vibrator = null
     }
 
     @SuppressLint("MissingPermission")
