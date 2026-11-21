@@ -1,6 +1,7 @@
 package dialer.dominik.pl.nagranie
 
 import kotlin.math.abs
+import kotlin.math.sign
 
 /**
  * AEC na nagrania (MIC/UPLINK + referencja DOWNLINK).
@@ -26,7 +27,7 @@ internal class AnulatorEcha(
     private val wNlms = FloatArray(nLms)
     private val xNlms = FloatArray(nLms)
     private var iNlms = 0
-    private val mu = 0.14f
+    private val mu = 0.12f
     private val eps = 1e-3f
     private val leakage = 0.9996f
 
@@ -41,21 +42,35 @@ internal class AnulatorEcha(
     private var envNear = 0f
     private var envErr = 0f
     private val envAlpha = 1f - 1f / (sampleRate * 0.015f).coerceAtLeast(1f)
-    /** Szybki atak (~3 ms) — XOR nie spóźnia się na ataku DN (echo w pierwszych próbkach). */
-    private val envAlphaAtak = 1f - 1f / (sampleRate * 0.003f).coerceAtLeast(1f)
+    /** Szybki atak (~5 ms) — bez per-sample |dn| (to dawało trzaski na zerach DN). */
+    private val envAlphaAtak = 1f - 1f / (sampleRate * 0.005f).coerceAtLeast(1f)
 
     private var hangover = 0
     private val hangoverMax = (sampleRate * 0.35f).toInt() // ~350 ms
 
+    /** Histereza DN — bez migotania przy przejściu przez zero. */
+    private var dnGate = false
+
+    /** Crossfade XOR (~8 ms) — twarde DN↔near = trzaski (WAV 151317: 538 skoków). */
+    private var gainDn = 1f
+    private var gainNear = 0f
+    private val fade = 1f - 1f / (sampleRate * 0.008f).coerceAtLeast(1f)
+
     fun hangoverAktywny(): Boolean = hangover > 0
 
-    /** DN żywy: envelope lub chwilowa próbka (atak bez lag). */
-    fun dnZywy(dn: Short = 0): Boolean =
-        envDn > 180f || abs(dn.toInt()) > 350
+    /**
+     * DN żywy wg envelope + histerezy (NIE per-sample |dn| —
+     * przejścia przez zero mowy = setki trzasków / s).
+     */
+    fun dnZywy(dn: Short = 0): Boolean {
+        if (envDn > 200f) dnGate = true
+        else if (envDn < 110f) dnGate = false
+        return dnGate
+    }
 
     /**
-     * Mix XOR v4 (WAV 150318: środek OK c≈0.22, start c≈0.71 z early-MIC):
-     * żywy DN → sam DN; Twoja mowa → near po AEC (bez doklejania DN).
+     * Mix XOR v5: te same reguły co v4, ale **miękki crossfade** + soft-clip.
+     * WAV 151317: twarde `return dn` / `return 0` przy migoczącym |dn|>350 = trzaski.
      */
     fun mixXor(
         nearClean: Short,
@@ -65,14 +80,34 @@ internal class AnulatorEcha(
         wzmocnij: (Short, Float) -> Short,
     ): Short {
         if (tryb == Tryb.Mic) {
-            // Żywy downlink = oni (lub echo) — NIGDY nie doklejaj MIC.
-            if (dnZywy(dn)) return dn
-            // Cisza u nich: sam near (bez cichego DN w tle).
-            if (hangover > 0 || envErr > 450f) return wzmocnij(nearClean, 1.40f)
-            return 0
+            val oni = dnZywy(dn)
+            val ja = !oni && (hangover > 0 || envErr > 450f)
+            val targetDn = if (oni) 1f else 0f
+            val targetNear = if (ja) 1f else 0f
+            gainDn = fade * gainDn + (1f - fade) * targetDn
+            gainNear = fade * gainNear + (1f - fade) * targetNear
+            val out =
+                dn.toFloat() * gainDn +
+                    nearClean.toFloat() * 1.35f * gainNear
+            return softClip(out)
         }
         val g = micGainPrzyDownlink(tryb)
         return mieszaj(wzmocnij(nearClean, g), dn)
+    }
+
+    private fun softClip(v: Float): Short {
+        val a = abs(v)
+        val clipped = if (a <= 28_000f) {
+            v
+        } else {
+            // Łagodne ograniczenie zamiast twardego ±32767 (klik przy peak).
+            val s = sign(v)
+            s * (28_000f + (a - 28_000f) / (1f + (a - 28_000f) / 10_000f))
+        }
+        return clipped
+            .toInt()
+            .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+            .toShort()
     }
 
     fun oczysc(near: Short, far: Short): Short {
@@ -154,8 +189,8 @@ internal class AnulatorEcha(
             return 0f
         }
         return when {
-            envDn > 2500f -> 0.70f
-            envDn > 1200f -> 0.85f
+            envDn > 2500f -> 0.75f
+            envDn > 1200f -> 0.88f
             else -> 1.0f
         }
     }
@@ -174,15 +209,14 @@ internal class AnulatorEcha(
 
     private fun residualSuppressor(err: Float): Float {
         if (hangover > 0) return err
-        if (envDn < 400f) return err
+        if (envDn < 500f) return err
         val eAbs = abs(err)
-        // Agresywniej tłumi residuum echa (WAV: leak ~0.55·DN).
-        if (eAbs < envDn * 0.70f) {
+        // Umiarkowany duck residuum — za ostry + twarde XOR = artefakty.
+        if (eAbs < envDn * 0.55f) {
             val atten = when {
-                envDn > 1600f -> 0.06f
-                envDn > 900f -> 0.14f
-                envDn > 500f -> 0.28f
-                else -> 0.40f
+                envDn > 1600f -> 0.12f
+                envDn > 900f -> 0.25f
+                else -> 0.42f
             }
             return err * atten
         }

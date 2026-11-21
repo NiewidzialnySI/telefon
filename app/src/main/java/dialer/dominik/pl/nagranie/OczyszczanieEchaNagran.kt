@@ -138,11 +138,9 @@ object OczyszczanieEchaNagran {
                             aec.mixXor(clean, far, AnulatorEcha.Tryb.Mic, ::mieszaj, ::wzmocnij)
                         }
                     }
-                    // Lekka bramka — cisza między kwestiami bez syczenia/echa.
-                    val gated =
-                        if (kotlin.math.abs(sample.toInt()) < 60) 0.toShort() else sample
-                    mono[o++] = (gated.toInt() and 0xff).toByte()
-                    mono[o++] = ((gated.toInt() shr 8) and 0xff).toByte()
+                    // Bez twardej bramki |x|<60→0 — dawała klik na krawędziach ciszy.
+                    mono[o++] = (sample.toInt() and 0xff).toByte()
+                    mono[o++] = ((sample.toInt() shr 8) and 0xff).toByte()
                 }
                 if (o > 0) wav.write(mono, 0, o)
             }

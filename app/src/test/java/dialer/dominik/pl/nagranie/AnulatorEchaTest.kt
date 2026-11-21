@@ -20,16 +20,17 @@ class AnulatorEchaTest {
         fun farAt(i: Int): Short =
             (sin(2.0 * Math.PI * 400.0 * i / 16_000) * 10_000).toInt().toShort()
         val delay = 16_000 * 8 / 1000
-        var sameAsDn = 0
+        var bliskoDn = 0
         for (i in 0 until 16_000 * 3) {
             val far = farAt(i)
             val delayed = if (i >= delay) farAt(i - delay).toInt() else 0
             val near = (delayed * 0.55).toInt().toShort()
             val clean = aec.oczysc(near, far)
             val mix = aec.mixXor(clean, far, AnulatorEcha.Tryb.Mic, ::mieszaj, ::wzmocnij)
-            if (i > 16_000 && mix == far) sameAsDn++
+            // Soft crossfade — po rozgrzaniu mix ≈ DN (niekoniecznie bitowo ==).
+            if (i > 16_000 && abs(mix.toInt() - far.toInt()) < 400) bliskoDn++
         }
-        assertTrue("przy echu mix=DN ($sameAsDn)", sameAsDn > 20_000)
+        assertTrue("przy echu mix≈DN ($bliskoDn)", bliskoDn > 20_000)
     }
 
     @Test
@@ -50,15 +51,36 @@ class AnulatorEchaTest {
     }
 
     @Test
-    fun mixXorAtakDnNatychmiastBezMic() {
+    fun mixXorAtakDnBezMicPoFade() {
         val aec = AnulatorEcha(16_000)
-        // Cisza, potem nagły DN — XOR v3 ma oddać DN od pierwszej głośnej próbki.
+        // Cisza, potem DN — po ~15 ms crossfade mix ≈ DN (bez MIC).
         repeat(500) { aec.oczysc(0, 20) }
-        val nearEcho = 5000.toShort()
-        val dn = 8000.toShort()
-        aec.oczysc(nearEcho, dn)
-        val mix = aec.mixXor(nearEcho, dn, AnulatorEcha.Tryb.Mic, ::mieszaj, ::wzmocnij)
-        assertEquals("natychmiastowy DN bez MIC", dn, mix)
+        var last = 0.toShort()
+        for (i in 0 until 400) {
+            val nearEcho = 5000.toShort()
+            val dn = 8000.toShort()
+            aec.oczysc(nearEcho, dn)
+            last = aec.mixXor(nearEcho, dn, AnulatorEcha.Tryb.Mic, ::mieszaj, ::wzmocnij)
+        }
+        assertTrue("po fade mix≈DN (${last.toInt()})", abs(last.toInt() - 8000) < 600)
+    }
+
+    @Test
+    fun mixXorBezTrzaskowNaZerachDn() {
+        val aec = AnulatorEcha(16_000)
+        fun farAt(i: Int): Short =
+            (sin(2.0 * Math.PI * 400.0 * i / 16_000) * 10_000).toInt().toShort()
+        var prev = 0
+        var bigJumps = 0
+        for (i in 0 until 16_000 * 2) {
+            val far = farAt(i)
+            val near = (farAt(i) * 0.55).toInt().toShort()
+            val clean = aec.oczysc(near, far)
+            val mix = aec.mixXor(clean, far, AnulatorEcha.Tryb.Mic, ::mieszaj, ::wzmocnij)
+            if (i > 2000 && abs(mix.toInt() - prev) > 12_000) bigJumps++
+            prev = mix.toInt()
+        }
+        assertTrue("trzaski jumps>12k=$bigJumps", bigJumps < 30)
     }
 
     @Test
