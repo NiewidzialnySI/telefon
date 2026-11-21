@@ -6,6 +6,7 @@ import android.database.Cursor
 import android.net.Uri
 import android.os.Bundle
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.Log
 import dialer.dominik.pl.nagranie.INagrywanieShell
 
@@ -21,9 +22,13 @@ class ShellBinderDostawca : ContentProvider() {
         if (method != METODA_PUBLISH) return null
         val ctx = context ?: return null
         val token = extras?.getString(EXTRA_TOKEN) ?: return null
-        val oczekiwany = ShellAdbBootstrap.oczekiwanyToken(ctx)
-        if (oczekiwany.isNullOrBlank() || token != oczekiwany) {
-            Log.w(TAG, "zły token")
+        if (!ShellAdbBootstrap.tokenAkceptowany(ctx, token)) {
+            // Stary daemon republishuje po rotacji — nie spamuj W co 2 s.
+            val teraz = SystemClock.elapsedRealtime()
+            if (teraz - ostatniZlyTokenMs > 8_000L) {
+                ostatniZlyTokenMs = teraz
+                Log.w(TAG, "zły token (stary daemon?)")
+            }
             return null
         }
         val binder = extras.getBinder(EXTRA_BINDER)
@@ -53,6 +58,7 @@ class ShellBinderDostawca : ContentProvider() {
         const val METODA_PUBLISH = "publish"
         const val EXTRA_TOKEN = "token"
         const val EXTRA_BINDER = "binder"
+        @Volatile private var ostatniZlyTokenMs = 0L
         fun authority(pkg: String) = "$pkg.shell_binder"
     }
 }
