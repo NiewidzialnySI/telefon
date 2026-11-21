@@ -4,10 +4,17 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -42,13 +49,17 @@ import dialer.dominik.pl.ui.theme.ZielonyNeon
 import dialer.dominik.pl.ui.theme.gradientKafelka
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Ekran NOWEJ WIADOMOŚCI (czat-look, wiele odbiorców):
  *  - nagłówek + chipsy wybranych,
  *  - pole wyszukiwania (numer/imię/nazwisko/firma/pseudonim) — na żywo filtruje kontakty,
- *  - lista kontaktów wypełnia środek; kliknięcie       dodaje odbiorcę,
- *  - pole wiadomości + przycisk wysyłki na dole, jak w czacie.
+ *  - lista kontaktów wypełnia środek; kliknięcie dodaje odbiorcę,
+ *  - pole wiadomości + przycisk wysyłki na dole, jak w czacie,
+ *  - przytrzymanie Wyślij → wspólna godzina → potwierdzenie → zaplanowana wiadomość w każdym czacie.
  */
 @Composable
 internal fun EkranNowejWiadomosci(
@@ -64,6 +75,11 @@ internal fun EkranNowejWiadomosci(
     var sugestie by remember { mutableStateOf<List<ContactSuggestion>>(emptyList()) }
     var ladowanie by remember { mutableStateOf(true) }
     val maKontakty = context.checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
+
+    // Planowanie zbiorowe: przytrzymaj Wyślij → zegar → potwierdź Wyślij → wpis w każdym czacie.
+    var pokazWyborCzasu by remember { mutableStateOf(false) }
+    var planCzasMs by remember { mutableStateOf<Long?>(null) }
+    var planPodglad by remember { mutableStateOf<String?>(null) }
 
     // Załącznik zdjęcia (MMS) — jak w zwykłym czacie.
     var zalacznikUri by remember { mutableStateOf<android.net.Uri?>(null) }
@@ -125,6 +141,21 @@ internal fun EkranNowejWiadomosci(
     fun wyslij() {
         if (wybrani.isEmpty() || tresc.isBlank()) {
             Toast.makeText(context, "Dodaj odbiorcę i wpisz treść", Toast.LENGTH_SHORT).show(); return
+        }
+        val czasPlanu = planCzasMs
+        if (czasPlanu != null) {
+            // Jedna wspólna godzina — osobny plan w każdym wybranym czacie (anulowanie per wątek).
+            wybrani.forEach { zaplanujWiadomosc(context, it, tresc, czasPlanu) }
+            Toast.makeText(
+                context,
+                "Zaplanowano do ${wybrani.size} osób na $planPodglad",
+                Toast.LENGTH_SHORT
+            ).show()
+            tresc = ""
+            planCzasMs = null
+            planPodglad = null
+            onWyslano()
+            return
         }
         val pierwszy = wybrani.first()
         val kanal = pobierzKanal(context, pierwszy)
@@ -244,7 +275,48 @@ internal fun EkranNowejWiadomosci(
             }
         }
 
-// Pasek wpisywania (jak czat) — z przyciskiem załącznika (MMS) przy lewym rogu.
+        // Pasek planowania — jak w zwykłym czacie.
+        AnimatedVisibility(
+            visible = planPodglad != null,
+            enter = expandVertically(tween(200)) + fadeIn(tween(160)),
+            exit = shrinkVertically(tween(160)) + fadeOut(tween(120))
+        ) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(dialer.dominik.pl.ui.theme.LocalMotyw.current.gradientKafelka())
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                dialer.dominik.pl.ui.components.icons.IkonaZegaraCzasu(
+                    czasMs = planCzasMs ?: 0L,
+                    modifier = Modifier.size(16.dp),
+                    kolor = ZielonyNeon
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Wiadomość zostanie wysłana: $planPodglad — kliknij wyślij, aby potwierdzić",
+                    color = paletaNowa.naTle.copy(alpha = 0.9f),
+                    fontSize = 12.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick = { planCzasMs = null; planPodglad = null },
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        IkonyAplikacji.Zamknij,
+                        contentDescription = "Anuluj plan",
+                        tint = CzerwonyPolaczenia,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+
+        // Pasek wpisywania (jak czat) — z przyciskiem załącznika (MMS) przy lewym rogu.
         Box(
             Modifier.fillMaxWidth().padding(4.dp, 6.dp, 4.dp, 12.dp).height(54.dp)
                 .clip(RoundedCornerShape(16.dp))
@@ -291,7 +363,7 @@ internal fun EkranNowejWiadomosci(
                 cursorBrush = SolidColor(ZielonyNeon), maxLines = 6,
                 modifier = Modifier.align(Alignment.CenterStart).fillMaxWidth().padding(start = 64.dp, end = 64.dp).padding(vertical = 6.dp),
                 decorationBox = { if (tresc.isEmpty()) Text("Napisz wiadomo\u015b\u0107\u2026", color = paletaNowa.naTle.copy(alpha = 0.32f), fontSize = 15.sp); it() })
-            // Przycisk wysyłki — prawy róg, pełna wysokość.
+            // Przycisk wysyłki — prawy róg; klik = wyślij/zaplanuj, przytrzymaj = wybór godziny (tylko SMS tekstowy).
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
@@ -299,22 +371,58 @@ internal fun EkranNowejWiadomosci(
                     .width(58.dp)
                     .clip(RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp))
                     .then(if (tresc.isNotBlank() || zalacznikUri != null) Modifier.background(Brush.horizontalGradient(listOf(ZielonyMorski, ZielonyNeon))) else Modifier.background(ZielonyNeon.copy(alpha = 0.18f)))
-                    .clickable {
-                        if (zalacznikUri != null) {
-                            // MMS ze zdjęciem.
-                            zalacznikUri?.let { uri -> wyslijMms(context, wybrani.firstOrNull() ?: "", uri, tresc) }
-                            zalacznikUri = null; zalacznikPodglad = null
-                            tresc = ""
-                            onWyslano()
-                        } else if (tresc.isNotBlank()) {
-                            wyslij()
+                    .combinedClickable(
+                        onClick = {
+                            if (zalacznikUri != null) {
+                                // MMS ze zdjęciem — bez planowania.
+                                zalacznikUri?.let { uri -> wyslijMms(context, wybrani.firstOrNull() ?: "", uri, tresc) }
+                                zalacznikUri = null; zalacznikPodglad = null
+                                tresc = ""
+                                planCzasMs = null
+                                planPodglad = null
+                                onWyslano()
+                            } else if (tresc.isNotBlank()) {
+                                wyslij()
+                            }
+                        },
+                        onLongClick = {
+                            if (tresc.isNotBlank() && zalacznikUri == null && planCzasMs == null && wybrani.isNotEmpty()) {
+                                pokazWyborCzasu = true
+                            }
                         }
-                    },
+                    ),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(IkonyAplikacji.Strzalka, contentDescription = "Wy\u015blij", tint = if (tresc.isNotBlank() || zalacznikUri != null) NaPrzycisku else ZielonyNeon, modifier = Modifier.size(26.dp))
+                if (planCzasMs != null) {
+                    dialer.dominik.pl.ui.components.icons.IkonaZegaraCzasu(
+                        czasMs = planCzasMs ?: 0L,
+                        modifier = Modifier.size(26.dp),
+                        kolor = NaPrzycisku
+                    )
+                } else {
+                    Icon(
+                        IkonyAplikacji.Strzalka,
+                        contentDescription = "Wyślij",
+                        tint = if (tresc.isNotBlank() || zalacznikUri != null) NaPrzycisku else ZielonyNeon,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
             }
         }
+    }
+
+    if (pokazWyborCzasu) {
+        DialogPlanowaniaSms(
+            context = context,
+            numer = wybrani.firstOrNull().orEmpty(),
+            tresc = tresc,
+            onZaplanowano = { czasMs ->
+                planCzasMs = czasMs
+                planPodglad = SimpleDateFormat("dd.MM, HH:mm", Locale.getDefault()).format(Date(czasMs))
+                pokazWyborCzasu = false
+            },
+            onAnulowano = { pokazWyborCzasu = false }
+        )
     }
 }
 
