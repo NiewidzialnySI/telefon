@@ -172,6 +172,7 @@ fun MainDialerScreen(
     var wprowadzonyNumer by remember { mutableStateOf(poczatkowyNumer) }
     var pokazKlawiaturę by remember { mutableStateOf(poczatkowyNumer.isNotBlank()) }
 
+    // Numer z ACTION_DIAL / tel: (bank, auth, inna apka) — zawsze otwórz klawiaturę.
     LaunchedEffect(poczatkowyNumer) {
         if (poczatkowyNumer.isNotBlank()) {
             wprowadzonyNumer = poczatkowyNumer
