@@ -129,6 +129,8 @@ private class ProgressOdtwarzania {
     var dlugoscMs by mutableIntStateOf(0)
     var suwak by mutableFloatStateOf(0f)
     var szuka by mutableStateOf(false)
+    /** true dopiero po OnPrepared — wcześniej getDuration/currentPosition = error -38. */
+    var gotowy by mutableStateOf(false)
 }
 
 /**
@@ -202,13 +204,19 @@ fun EkranNagran(context: Context) {
     }
 
     fun stopPlay() {
-        runCatching { player?.stop(); player?.release() }
+        val p = player
         player = null
         odtwarzany = null
+        progress.gotowy = false
         progress.pozycjaMs = 0
         progress.dlugoscMs = 0
         progress.suwak = 0f
         progress.szuka = false
+        // reset+release — stop() w stanie Preparing/Error rzuca -38.
+        if (p != null) {
+            runCatching { p.reset() }
+            runCatching { p.release() }
+        }
     }
 
     fun startPlay(plik: File) {
@@ -217,17 +225,26 @@ fun EkranNagran(context: Context) {
             val mp = MediaPlayer()
             mp.setDataSource(plik.absolutePath)
             mp.setOnCompletionListener { stopPlay() }
-            mp.setOnErrorListener { _, _, _ ->
-                Toast.makeText(context, "Nie można odtworzyć", Toast.LENGTH_SHORT).show()
-                stopPlay()
+            mp.setOnErrorListener { _, what, extra ->
+                android.util.Log.w("EkranNagran", "MediaPlayer error what=$what extra=$extra")
+                // Nie toastuj przy residualnym -38 po zwolnieniu — tylko realne błędy.
+                if (player === mp) {
+                    Toast.makeText(context, "Nie można odtworzyć", Toast.LENGTH_SHORT).show()
+                    stopPlay()
+                }
                 true
             }
             mp.setOnPreparedListener {
+                if (player !== mp) {
+                    runCatching { mp.release() }
+                    return@setOnPreparedListener
+                }
                 runCatching {
                     it.start()
                     progress.dlugoscMs = it.duration.coerceAtLeast(0)
                     progress.pozycjaMs = 0
                     progress.suwak = 0f
+                    progress.gotowy = true
                 }.onFailure {
                     Toast.makeText(context, "Nie można odtworzyć", Toast.LENGTH_SHORT).show()
                     stopPlay()
@@ -235,7 +252,7 @@ fun EkranNagran(context: Context) {
             }
             player = mp
             odtwarzany = plik
-            // prepareAsync — nie blokuj UI przy długim WAV/M4A.
+            // prepareAsync — nie blokuj UI; poll dopiero po gotowy=true.
             mp.prepareAsync()
         }.onFailure {
             Toast.makeText(context, "Nie można odtworzyć", Toast.LENGTH_SHORT).show()
@@ -271,9 +288,11 @@ fun EkranNagran(context: Context) {
         }
     }
 
-    LaunchedEffect(player, odtwarzany) {
+    // Czekaj na gotowy — getDuration w stanie Preparing (4) = error -38 i OnError zabija player.
+    LaunchedEffect(player, odtwarzany, progress.gotowy) {
         val p = player ?: return@LaunchedEffect
-        while (isActive && player === p) {
+        if (!progress.gotowy) return@LaunchedEffect
+        while (isActive && player === p && progress.gotowy) {
             if (!progress.szuka) {
                 progress.pozycjaMs = runCatching { p.currentPosition }.getOrDefault(0)
                 progress.dlugoscMs = runCatching { p.duration }.getOrDefault(0).coerceAtLeast(0)
