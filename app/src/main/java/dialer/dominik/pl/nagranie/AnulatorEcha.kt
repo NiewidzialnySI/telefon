@@ -42,14 +42,13 @@ internal class AnulatorEcha(
     private val envAlpha = 1f - 1f / (sampleRate * 0.015f).coerceAtLeast(1f)
 
     private var hangover = 0
-    private val hangoverMax = (sampleRate * 0.30f).toInt() // ~300 ms — chroni Twoje zdania
+    private val hangoverMax = (sampleRate * 0.35f).toInt()
 
     fun hangoverAktywny(): Boolean = hangover > 0
 
     /**
-     * Mix XOR (własny pomysł po analizie WAV + GH cally/BCR):
-     * Sumowanie MIC+DN **zawsze** zostawia podwójny głos przy niedoskonałym AEC.
-     * Gdy oni mówią → **sam DOWNLINK**. Gdy Ty (hangover/envErr) → near + cichszy DN.
+     * Mix XOR v2: przy żywym DN → sam DOWNLINK (hangover nie z echa).
+     * Używane live i offline (sidecar).
      */
     fun mixXor(
         nearClean: Short,
@@ -58,16 +57,10 @@ internal class AnulatorEcha(
         mieszaj: (Short, Short) -> Short,
         wzmocnij: (Short, Float) -> Short,
     ): Short {
-        val ja =
-            hangover > 0 || (envErr > 500f && envErr > envDn * 0.32f)
         if (tryb == Tryb.Mic) {
-            if (ja) {
-                return mieszaj(wzmocnij(nearClean, 1.30f), wzmocnij(dn, 0.50f))
-            }
-            // Oni / echo: zero MIC w mixie — jedyne pewne zabicie podwójnego DN.
-            if (envDn > 350f) {
-                return dn
-            }
+            if (envDn > 280f) return dn
+            if (hangover > 0 || envErr > 450f) return wzmocnij(nearClean, 1.35f)
+            return dn
         }
         val g = micGainPrzyDownlink(tryb)
         return mieszaj(wzmocnij(nearClean, g), dn)
@@ -125,8 +118,8 @@ internal class AnulatorEcha(
         val errAbs = abs(err)
         envErr = envAlpha * envErr + (1f - envAlpha) * errAbs
 
-        // Hangover gdy residuum = mowa (nie zgaszone echo).
-        if (envErr > 550f && envErr > envDn * 0.35f) {
+        // Hangover tylko gdy DN cichy — echo MIC≈0.55·DN nie udaje „mnie”.
+        if (envDn < 450f && envErr > 500f) {
             hangover = hangoverMax
         } else if (hangover > 0) {
             hangover--

@@ -196,6 +196,11 @@ object NagrywanieKontroler {
                 if (plik.exists() && plik.length() < 1024) {
                     NagrywaniePliki.usunZSidecar(plik)
                     stan = StanNagrywania.Blad("Nagranie puste")
+                } else if (plik.exists() && OczyszczanieEchaNagran.maSidecar(plik)) {
+                    // Offline: sidecar L/R → czyste mono (lepsze niż live AEC).
+                    withContext(Dispatchers.IO) {
+                        OczyszczanieEchaNagran.przetworzPoNagraniu(plik)
+                    }
                 }
             }
             aktywnyPlik = null
