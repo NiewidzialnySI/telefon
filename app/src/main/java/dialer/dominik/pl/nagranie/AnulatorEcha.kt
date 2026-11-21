@@ -3,15 +3,17 @@ package dialer.dominik.pl.nagranie
 import kotlin.math.abs
 
 /**
- * Własny AEC na nagrania rozmów (MIC/UPLINK + referencja DOWNLINK).
+ * AEC na nagrania (MIC/UPLINK + referencja DOWNLINK).
  *
- * Bez natywnych libów (WebRTC AEC3 / Speex) — czysty Kotlin:
- * 1. Estymacja opóźnienia: lag minimalizujący energię near − α·far[t−lag]
- * 2. Adaptacyjny tap na tym lag (szybka zbieżność earpiece→mic)
- * 3. NLMS na residuum z detekcją double-talk (jak aec-library / OmniVoice)
+ * Z analizy WAV (13 s, mono 16 kHz): echo = **podwójny DOWNLINK** z opóźnieniem
+ * ~8–16 ms (cepstrum ~16 ms, xcorr do 0.9) — MIC łapie słuchawkę, a mix
+ * dokłada jeszcze czysty DN. Miękki NLMS tego nie ubija.
  *
- * Użycie: `oczysc(near=MIC/UP, far=DOWNLINK)` → near bez echa akustycznego,
- * potem mix z czystym DOWNLINK.
+ * Strategia:
+ * 1. Estymacja opóźnienia (min residual)
+ * 2. Tap + NLMS
+ * 3. **Residual suppressor** gdy far głośny a near wygląda jak echo
+ * 4. **Half-duplex / twarde duck** na ścieżce MIC (envelope DN)
  */
 internal class AnulatorEcha(
     private val sampleRate: Int,
@@ -19,30 +21,32 @@ internal class AnulatorEcha(
     maxDelayMs: Int = 90,
 ) {
     private val maxDelay = (sampleRate * maxDelayMs / 1000).coerceAtLeast(64)
-    private val minDelay = (sampleRate * 6 / 1000).coerceAtLeast(1)
+    private val minDelay = (sampleRate * 5 / 1000).coerceAtLeast(1)
 
-    // Ring far do tapu + historii
     private val ring = ShortArray(maxDelay)
     private var write = 0
-    private var delayEst = (sampleRate * 20 / 1000).coerceIn(minDelay, maxDelay - 1)
-    private var wTap = 0.35f
+    private var delayEst = (sampleRate * 12 / 1000).coerceIn(minDelay, maxDelay - 1)
+    private var wTap = 0.55f
 
-    // NLMS na residuum (~32 ms)
-    private val nLms = (sampleRate * 32 / 1000).coerceIn(48, maxDelay)
+    private val nLms = (sampleRate * 40 / 1000).coerceIn(64, maxDelay)
     private val wNlms = FloatArray(nLms)
     private val xNlms = FloatArray(nLms)
     private var iNlms = 0
-    private val mu = 0.08f
+    private val mu = 0.10f
     private val eps = 1e-3f
-    private val leakage = 0.9997f // anty-wybuch wag
+    private val leakage = 0.9995f
 
-    // Bufor do estymacji opóźnienia (~200 ms)
     private val corrWin = (sampleRate / 5).coerceAtLeast(200)
     private val farHist = ShortArray(maxDelay + corrWin)
     private val nearHist = ShortArray(corrWin)
     private var histWrite = 0
     private var samplesSinceCorr = 0
     private var delayZablokowane = false
+
+    // Envelope DN (~15 ms) do half-duplex
+    private var envDn = 0f
+    private val envAlpha = 1f - 1f / (sampleRate * 0.015f).coerceAtLeast(1f)
+    private var envNear = 0f
 
     fun oczysc(near: Short, far: Short): Short {
         zapiszHistorie(near, far)
@@ -52,22 +56,23 @@ internal class AnulatorEcha(
             oszacujOpoznienie()
         }
 
+        val farAbs = abs(far.toInt()).toFloat()
+        val nearAbs = abs(near.toInt()).toFloat()
+        envDn = envAlpha * envDn + (1f - envAlpha) * farAbs
+        envNear = envAlpha * envNear + (1f - envAlpha) * nearAbs
+
         ring[write] = far
         write = (write + 1) % maxDelay
 
-        // 1) Tap na estymowanym opóźnieniu
         val idx = (write - delayEst + maxDelay) % maxDelay
         val farD = ring[idx].toFloat()
         var err = near.toFloat() - wTap * farD
-        val farAbs = abs(far.toInt())
-        if (farAbs > 300 && abs(near.toInt()) < farAbs * 2.5f) {
-            // NLMS 1-tap
+        if (farAbs > 250f && nearAbs < farAbs * 2.8f) {
             val x2 = farD * farD + eps
-            wTap = (wTap + (0.15f / x2) * err * farD).coerceIn(0.02f, 1.15f)
+            wTap = (wTap + (0.22f / x2) * err * farD).coerceIn(0.05f, 1.35f)
             err = near.toFloat() - wTap * farD
         }
 
-        // 2) NLMS residuum
         xNlms[iNlms] = far.toFloat()
         var y = 0f
         var xPow = eps
@@ -78,8 +83,7 @@ internal class AnulatorEcha(
             xPow += x * x
         }
         err -= y
-        val nearAbs = abs(near.toInt())
-        if (farAbs > 250 && nearAbs < farAbs * 2.6f) {
+        if (farAbs > 200f && nearAbs < farAbs * 2.8f) {
             val step = mu / xPow
             for (i in 0 until nLms) {
                 val j = (iNlms - i + nLms) % nLms
@@ -90,32 +94,71 @@ internal class AnulatorEcha(
         }
         iNlms = (iNlms + 1) % nLms
 
+        // Residual suppressor: gdy oni mówią i residuum nadal „brzmi” jak far.
+        err = residualSuppressor(err, farAbs)
+
         return err.toInt()
             .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
             .toShort()
     }
 
-    fun micGainPrzyDownlink(dn: Short, agresywny: Boolean): Float {
-        val dnAbs = abs(dn.toInt())
-        return if (agresywny) {
-            when {
-                dnAbs > 2000 -> 0.05f
-                dnAbs > 1000 -> 0.14f
-                dnAbs > 500 -> 0.42f
-                dnAbs > 250 -> 0.85f
-                else -> 1.50f
+    /**
+     * Gain near przed mixem.
+     * [Tryb.Mic]: half-duplex — przy głośnym DN near ≈ 0 (koniec podwójnego głosu).
+     * [Tryb.Uplink]: delikatniej (UP zwykle bez echa akustycznego).
+     */
+    fun micGainPrzyDownlink(tryb: Tryb): Float {
+        return when (tryb) {
+            Tryb.Mic -> when {
+                envDn > 1800f -> 0.00f
+                envDn > 900f -> 0.04f
+                envDn > 450f -> 0.12f
+                envDn > 220f -> 0.35f
+                envDn > 100f -> 0.70f
+                else -> 1.45f // DN cichy → podbij „mnie”
             }
-        } else {
-            when {
-                dnAbs > 2500 -> 0.35f
-                dnAbs > 1200 -> 0.55f
-                dnAbs > 600 -> 0.75f
+            Tryb.Uplink -> when {
+                envDn > 2500f -> 0.45f
+                envDn > 1200f -> 0.70f
+                envDn > 600f -> 0.85f
                 else -> 1.0f
             }
         }
     }
 
+    /** Kompatybilność ze starym API. */
+    fun micGainPrzyDownlink(dn: Short, agresywny: Boolean): Float {
+        // Odśwież env z bieżącej próbki (gdy wywołane bez oczysc w tej chwili).
+        val farAbs = abs(dn.toInt()).toFloat()
+        envDn = envAlpha * envDn + (1f - envAlpha) * farAbs
+        return micGainPrzyDownlink(if (agresywny) Tryb.Mic else Tryb.Uplink)
+    }
+
     fun opoznienieProbek(): Int = delayEst
+    fun envDownlink(): Float = envDn
+
+    enum class Tryb { Mic, Uplink }
+
+    private fun residualSuppressor(err: Float, farAbs: Float): Float {
+        if (envDn < 400f) return err
+        val eAbs = abs(err)
+        // Residuum małe względem far → to echo, nie „ja”.
+        if (eAbs < envDn * 0.85f) {
+            val atten = when {
+                envDn > 1500f -> 0.06f
+                envDn > 800f -> 0.15f
+                else -> 0.35f
+            }
+            return err * atten
+        }
+        // Double-talk: near głośniejszy niż far — nie tłumić.
+        if (envNear > envDn * 1.1f) return err
+        // Borderline: częściowe tłumenie
+        if (farAbs > 500f && eAbs < envDn * 1.3f) {
+            return err * 0.45f
+        }
+        return err
+    }
 
     private fun zapiszHistorie(near: Short, far: Short) {
         farHist[histWrite % farHist.size] = far
@@ -123,16 +166,11 @@ internal class AnulatorEcha(
         histWrite++
     }
 
-    /**
-     * Lag ∈ [minDelay, maxDelay) minimalizujący Σ|near − 0.45·far[t−lag]|.
-     * Odporniejsze na tony (korelacja ma fałszywe maksima co okres).
-     */
     private fun oszacujOpoznienie() {
         if (histWrite < maxDelay + corrWin) return
         var farEnergy = 0L
         for (i in 0 until corrWin step 2) {
-            val f = odczytFar(i).toInt()
-            farEnergy += abs(f).toLong()
+            farEnergy += abs(odczytFar(i).toInt()).toLong()
         }
         if (farEnergy < corrWin * 40L) return
 
@@ -145,7 +183,8 @@ internal class AnulatorEcha(
             while (i < corrWin) {
                 val n = odczytNear(i).toInt()
                 val f = odczytFar(i + lag).toInt()
-                errSum += abs(n - (f * 45) / 100).toLong()
+                // α≈0.5–0.7 typowe dla earpiece→mic (z WAV: g≈0.35–0.63)
+                errSum += abs(n - (f * 55) / 100).toLong()
                 i += 3
             }
             if (errSum < bestErr) {
@@ -155,9 +194,9 @@ internal class AnulatorEcha(
             lag += 2
         }
         val maxSkok = if (delayZablokowane) {
-            (sampleRate * 4 / 1000).coerceAtLeast(1)
+            (sampleRate * 3 / 1000).coerceAtLeast(1)
         } else {
-            (sampleRate * 12 / 1000).coerceAtLeast(1)
+            (sampleRate * 10 / 1000).coerceAtLeast(1)
         }
         val nowy = (delayEst + (bestLag - delayEst).coerceIn(-maxSkok, maxSkok))
             .coerceIn(minDelay, maxDelay - 1)
@@ -173,5 +212,42 @@ internal class AnulatorEcha(
     private fun odczytFar(ileWstecz: Int): Short {
         val idx = (histWrite - 1 - ileWstecz + farHist.size * 8) % farHist.size
         return farHist[idx]
+    }
+}
+
+/**
+ * Kolejka PCM shortów — wyrównuje dwa potoki (UP/DN), żeby nie gubić próbek
+ * gdy jeden read() zwróci mniej bajtów (desync = „straszne echo” nawet z AEC).
+ */
+internal class KolejkaPcm(pojemnosc: Int = 16_000) {
+    private val buf = ShortArray(pojemnosc)
+    private var r = 0
+    private var w = 0
+    private var n = 0
+    val size: Int get() = n
+    val isEmpty: Boolean get() = n == 0
+
+    fun dodajBajty(data: ByteArray, len: Int) {
+        var i = 0
+        while (i + 1 < len) {
+            if (n >= buf.size) {
+                // Overflow: wyrzuć najstarsze (lepiej niż desync).
+                r = (r + 1) % buf.size
+                n--
+            }
+            val s = ((data[i].toInt() and 0xff) or (data[i + 1].toInt() shl 8)).toShort()
+            buf[w] = s
+            w = (w + 1) % buf.size
+            n++
+            i += 2
+        }
+    }
+
+    fun pobierz(): Short {
+        check(n > 0)
+        val s = buf[r]
+        r = (r + 1) % buf.size
+        n--
+        return s
     }
 }

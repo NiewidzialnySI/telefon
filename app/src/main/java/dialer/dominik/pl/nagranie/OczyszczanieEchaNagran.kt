@@ -52,7 +52,7 @@ object OczyszczanieEchaNagran {
                         val near = ((chunk[base].toInt() and 0xff) or (chunk[base + 1].toInt() shl 8)).toShort()
                         val far = ((chunk[base + 2].toInt() and 0xff) or (chunk[base + 3].toInt() shl 8)).toShort()
                         val clean = aec.oczysc(near, far)
-                        val gain = aec.micGainPrzyDownlink(far, agresywny = true)
+                        val gain = aec.micGainPrzyDownlink(AnulatorEcha.Tryb.Mic)
                         val lu = wzmocnij(clean, gain)
                         val mix = mieszaj(lu, far)
                         mono[o++] = (mix.toInt() and 0xff).toByte()

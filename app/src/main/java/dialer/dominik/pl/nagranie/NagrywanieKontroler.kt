@@ -671,16 +671,19 @@ object NagrywanieKontroler {
 
     private fun otworzShellDual(ctx: Context, numer: String): Otwarcie {
         val svc = wymagajShell(ctx) ?: return Otwarcie.Fail(ShellKlient.krotkiOpis(ctx))
-        // Najpierw MIC+DOWNLINK (UPLINK na ColorOS/Realme bywa ciszą = „tylko oni”).
+        // Preferuj UPLINK (bez echa akustycznego). MIC+DN tylko gdy UP martwy —
+        // na MIC słuchawka = podwójny DOWNLINK (~8–16 ms, „straszne echo”).
         val proby = listOf(
-            MediaRecorder.AudioSource.MIC to "mic+dn",
-            MediaRecorder.AudioSource.VOICE_UPLINK to "up+dn",
+            MediaRecorder.AudioSource.VOICE_UPLINK to ("up+dn" to AnulatorEcha.Tryb.Uplink),
+            MediaRecorder.AudioSource.MIC to ("mic+dn" to AnulatorEcha.Tryb.Mic),
         )
         var pipeUp: Array<ParcelFileDescriptor>? = null
         var pipeDn: Array<ParcelFileDescriptor>? = null
+        var trybNear = AnulatorEcha.Tryb.Mic
         var mask = 0
         var ostatniBlad: String? = null
-        for ((upSrc, tag) in proby) {
+        for ((upSrc, meta) in proby) {
+            val (tag, tryb) = meta
             val up = ParcelFileDescriptor.createPipe()
             val dn = ParcelFileDescriptor.createPipe()
             mask = try {
@@ -692,9 +695,10 @@ object NagrywanieKontroler {
                 continue
             }
             if (mask == 0b11) {
-                Log.i(TAG, "dual OK $tag")
+                Log.i(TAG, "dual OK $tag tryb=$tryb")
                 pipeUp = up
                 pipeDn = dn
+                trybNear = tryb
                 break
             }
             ostatniBlad = svc.ostatniBlad ?: "dual mask=$mask ($tag)"
@@ -714,8 +718,9 @@ object NagrywanieKontroler {
         val (plik, wav) = nowyWav(ctx, numer, 1)
         val stereo = otworzStereoSidecar(plik)
         val miernik = MiernikRms()
+        val tryb = trybNear
         val t = Thread({
-            mieszajDoMono(upOk[0], dnOk[0], wav, stereo, miernik)
+            mieszajDoMono(upOk[0], dnOk[0], wav, stereo, miernik, tryb)
         }, "nagrywanie-mix").apply { isDaemon = true; start() }
         pumpWatki = listOf(t)
         return Otwarcie.Ok(plik, miernik, wymagaObuStron = true)
@@ -904,8 +909,7 @@ object NagrywanieKontroler {
 
     /**
      * MIC (ja) + DOWNLINK (oni) → mono.
-     * MIC łapie słuchawkę → echo rozmówcy; AEC (multi-tap + NLMS + est. opóźnienia)
-     * + twarde duck gdy oni mówią. Sidecar stereo: L=oczyszczony MIC, R=DN.
+     * Half-duplex + AEC + sync kolejek (bez gubienia próbek = desync echa).
      */
     private fun mieszajMicIPipeDoMono(
         mic: AudioRecord,
@@ -919,31 +923,37 @@ object NagrywanieKontroler {
         val bufDn = ByteArray(4096)
         val mono = ByteArray(4096)
         val stereoBuf = ByteArray(8192)
+        val qMic = KolejkaPcm(SAMPLE_RATE * 2)
+        val qDn = KolejkaPcm(SAMPLE_RATE * 2)
         val aec = AnulatorEcha(SAMPLE_RATE)
         try {
             mic.startRecording()
             while (!zatrzymajFlaga.get()) {
                 val nMic = mic.read(bufMic, 0, bufMic.size)
                 val nDn = dn.read(bufDn)
-                if (nMic <= 0 && nDn <= 0) break
-                val samples = max(nMic.coerceAtLeast(0), nDn.coerceAtLeast(0)) / 2
+                if (nMic <= 0 && nDn <= 0 && qMic.isEmpty && qDn.isEmpty) break
+                if (nMic > 0) qMic.dodajBajty(bufMic, nMic)
+                if (nDn > 0) qDn.dodajBajty(bufDn, nDn)
                 var o = 0
                 var so = 0
-                for (i in 0 until samples) {
-                    val surowy = if (i * 2 + 1 < nMic) {
-                        ((bufMic[i * 2].toInt() and 0xff) or (bufMic[i * 2 + 1].toInt() shl 8)).toShort()
-                    } else 0
-                    val rd = if (i * 2 + 1 < nDn) {
-                        ((bufDn[i * 2].toInt() and 0xff) or (bufDn[i * 2 + 1].toInt() shl 8)).toShort()
-                    } else 0
+                while (qMic.size > 0 && qDn.size > 0) {
+                    val surowy = qMic.pobierz()
+                    val rd = qDn.pobierz()
                     val bezEcha = aec.oczysc(surowy, rd)
-                    val micGain = aec.micGainPrzyDownlink(rd, agresywny = true)
+                    val micGain = aec.micGainPrzyDownlink(AnulatorEcha.Tryb.Mic)
                     val lu = wzmocnij(bezEcha, micGain)
                     val mix = mieszajSample(lu, rd)
+                    if (o + 1 >= mono.size) {
+                        piszPcm(wav, mono, 0, o)
+                        o = 0
+                    }
                     mono[o++] = (mix.toInt() and 0xff).toByte()
                     mono[o++] = ((mix.toInt() shr 8) and 0xff).toByte()
                     if (stereo != null) {
-                        // Sidecar: surowiec near (przed duck) + far — offline może powtórzyć AEC.
+                        if (so + 3 >= stereoBuf.size) {
+                            runCatching { stereo.write(stereoBuf, 0, so) }
+                            so = 0
+                        }
                         stereoBuf[so++] = (surowy.toInt() and 0xff).toByte()
                         stereoBuf[so++] = ((surowy.toInt() shr 8) and 0xff).toByte()
                         stereoBuf[so++] = (rd.toInt() and 0xff).toByte()
@@ -968,8 +978,8 @@ object NagrywanieKontroler {
     }
 
     /**
-     * UPLINK + DOWNLINK → mono z AEC (wcześniej Dual mieszał bez anulowania echa
-     * gdy UP=MIC łapał słuchawkę). Sidecar stereo pod offline czyszczenie.
+     * Near (UP lub MIC) + DOWNLINK → mono.
+     * Sync kolejek + AEC; przy [Tryb.Mic] half-duplex (koniec podwójnego DN).
      */
     private fun mieszajDoMono(
         fdUp: ParcelFileDescriptor,
@@ -977,6 +987,7 @@ object NagrywanieKontroler {
         wav: WavPisarz,
         stereo: WavPisarz?,
         miernik: MiernikRms,
+        trybNear: AnulatorEcha.Tryb,
     ) {
         val up = FileInputStream(fdUp.fileDescriptor)
         val dn = FileInputStream(fdDn.fileDescriptor)
@@ -984,29 +995,36 @@ object NagrywanieKontroler {
         val bufDn = ByteArray(4096)
         val mono = ByteArray(4096)
         val stereoBuf = ByteArray(8192)
+        val qUp = KolejkaPcm(SAMPLE_RATE * 2)
+        val qDn = KolejkaPcm(SAMPLE_RATE * 2)
         val aec = AnulatorEcha(SAMPLE_RATE)
         try {
             while (!zatrzymajFlaga.get()) {
                 val nUp = up.read(bufUp)
                 val nDn = dn.read(bufDn)
-                if (nUp <= 0 && nDn <= 0) break
-                val samples = max(nUp.coerceAtLeast(0), nDn.coerceAtLeast(0)) / 2
+                if (nUp <= 0 && nDn <= 0 && qUp.isEmpty && qDn.isEmpty) break
+                if (nUp > 0) qUp.dodajBajty(bufUp, nUp)
+                if (nDn > 0) qDn.dodajBajty(bufDn, nDn)
                 var o = 0
                 var so = 0
-                for (i in 0 until samples) {
-                    val surowy = if (i * 2 + 1 < nUp) {
-                        ((bufUp[i * 2].toInt() and 0xff) or (bufUp[i * 2 + 1].toInt() shl 8)).toShort()
-                    } else 0
-                    val rd = if (i * 2 + 1 < nDn) {
-                        ((bufDn[i * 2].toInt() and 0xff) or (bufDn[i * 2 + 1].toInt() shl 8)).toShort()
-                    } else 0
+                while (qUp.size > 0 && qDn.size > 0) {
+                    val surowy = qUp.pobierz()
+                    val rd = qDn.pobierz()
                     val bezEcha = aec.oczysc(surowy, rd)
-                    val upGain = aec.micGainPrzyDownlink(rd, agresywny = false)
+                    val upGain = aec.micGainPrzyDownlink(trybNear)
                     val lu = wzmocnij(bezEcha, upGain)
                     val mix = mieszajSample(lu, rd)
+                    if (o + 1 >= mono.size) {
+                        piszPcm(wav, mono, 0, o)
+                        o = 0
+                    }
                     mono[o++] = (mix.toInt() and 0xff).toByte()
                     mono[o++] = ((mix.toInt() shr 8) and 0xff).toByte()
                     if (stereo != null) {
+                        if (so + 3 >= stereoBuf.size) {
+                            runCatching { stereo.write(stereoBuf, 0, so) }
+                            so = 0
+                        }
                         stereoBuf[so++] = (surowy.toInt() and 0xff).toByte()
                         stereoBuf[so++] = ((surowy.toInt() shr 8) and 0xff).toByte()
                         stereoBuf[so++] = (rd.toInt() and 0xff).toByte()
