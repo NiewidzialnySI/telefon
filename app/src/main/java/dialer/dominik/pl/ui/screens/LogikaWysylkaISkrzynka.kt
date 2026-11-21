@@ -754,11 +754,13 @@ internal fun pobierzPlanowaneSms(context: Context, numer: String): List<Triple<S
     val prefs = context.getSharedPreferences("sms_planowane", Context.MODE_PRIVATE)
     val out = ArrayList<Triple<String, Long, String>>()
     val teraz = System.currentTimeMillis()
+    val normCel = normalizujAdresSms(numer)
     prefs.all.forEach { (id, v) ->
         val wpis = v as? String ?: return@forEach
         val parts = wpis.split("\t")
         if (parts.size < 3) return@forEach
-        if (parts[0] != numer) return@forEach
+        // Porównuj znormalizowane numery — plan z „nowej wiadomości” i adres wątku mogą mieć inny format.
+        if (normalizujAdresSms(parts[0]) != normCel) return@forEach
         val czas = parts[1].toLongOrNull() ?: return@forEach
         // Pokaż tylko jeszcze niewysłane (alarm w przyszłości).
         if (czas <= teraz) return@forEach
