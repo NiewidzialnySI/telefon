@@ -30,6 +30,14 @@ object NagrywaniePliki {
     fun jestSidecarStereo(f: File): Boolean =
         f.name.endsWith(STEREO_SUFFIX, ignoreCase = true)
 
+    /** Tory pomocnicze / sidecar — nie pokazuj w liście nagrań. */
+    fun jestPlikPomocniczy(f: File): Boolean {
+        if (jestSidecarStereo(f)) return true
+        val n = f.nameWithoutExtension.lowercase()
+        return n.endsWith("_ja") || n.endsWith("_oni") || n.endsWith("_czyste") ||
+            n.contains(".czyste.tmp")
+    }
+
     /** Kasuje mono + sidecar stereo (jeśli jest). */
     fun usunZSidecar(mono: File) {
         runCatching { plikStereoObok(mono).delete() }
@@ -41,7 +49,7 @@ object NagrywaniePliki {
             ?.filter {
                 it.isFile &&
                     (it.extension == "wav" || it.extension == "m4a") &&
-                    !jestSidecarStereo(it)
+                    !jestPlikPomocniczy(it)
             }
             ?.sortedByDescending { it.lastModified() }
             ?: emptyList()
