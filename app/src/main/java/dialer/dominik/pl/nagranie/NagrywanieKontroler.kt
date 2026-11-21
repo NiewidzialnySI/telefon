@@ -927,9 +927,11 @@ object NagrywanieKontroler {
         }
         runCatching { pipe[1].close() }
         val (plik, wav) = nowyWav(ctx, numer, 1)
+        val stereo = otworzStereoSidecar(plik)
         val miernik = MiernikRms()
         val t = Thread({
-            kopiujStereoDoMono(pipe[0], wav, miernik)
+            // L=UP/near, R=DN — ten sam AEC+XOR co Dual/hybryda (wcześniej surowa suma = echo).
+            kopiujStereoDoMono(pipe[0], wav, stereo, miernik)
         }, "nagrywanie-vc-stereo").apply { isDaemon = true; start() }
         pumpWatki = listOf(t)
         return Otwarcie.Ok(plik, miernik, wymagaObuStron = true)
@@ -1112,33 +1114,56 @@ object NagrywanieKontroler {
         }
     }
 
-    /** Interleaved stereo PCM → mono mix + osobne mierniki L/R. */
+    /**
+     * VOICE_CALL stereo (L=near/UP, R=DOWNLINK) → mono z AEC+XOR + sidecar.
+     * Wcześniej surowa suma L+R dawała podwójne echo bez szans na offline.
+     */
     private fun kopiujStereoDoMono(
         fd: ParcelFileDescriptor,
         wav: WavPisarz,
+        stereo: WavPisarz?,
         miernik: MiernikRms,
     ) {
         val inp = FileInputStream(fd.fileDescriptor)
         val buf = ByteArray(8192)
         val mono = ByteArray(4096)
+        val stereoBuf = ByteArray(8192)
+        val aec = AnulatorEcha(SAMPLE_RATE)
         try {
             while (!zatrzymajFlaga.get()) {
                 val n = inp.read(buf)
                 if (n <= 0) break
                 val frames = n / 4
                 var o = 0
+                var so = 0
                 for (i in 0 until frames) {
                     val base = i * 4
                     if (base + 3 >= n) break
-                    val l = ((buf[base].toInt() and 0xff) or (buf[base + 1].toInt() shl 8)).toShort()
-                    val r = ((buf[base + 2].toInt() and 0xff) or (buf[base + 3].toInt() shl 8)).toShort()
-                    val mix = mieszajSample(l, r)
+                    val near = ((buf[base].toInt() and 0xff) or (buf[base + 1].toInt() shl 8)).toShort()
+                    val dn = ((buf[base + 2].toInt() and 0xff) or (buf[base + 3].toInt() shl 8)).toShort()
+                    val bezEcha = aec.oczysc(near, dn)
+                    val mix = aec.mixXor(bezEcha, dn, AnulatorEcha.Tryb.Mic, ::mieszajSample, ::wzmocnij)
+                    if (o + 1 >= mono.size) {
+                        piszPcm(wav, mono, 0, o)
+                        o = 0
+                    }
                     mono[o++] = (mix.toInt() and 0xff).toByte()
                     mono[o++] = ((mix.toInt() shr 8) and 0xff).toByte()
-                    miernik.dodajL(l)
-                    miernik.dodajR(r)
+                    if (stereo != null) {
+                        if (so + 3 >= stereoBuf.size) {
+                            runCatching { stereo.write(stereoBuf, 0, so) }
+                            so = 0
+                        }
+                        stereoBuf[so++] = (near.toInt() and 0xff).toByte()
+                        stereoBuf[so++] = ((near.toInt() shr 8) and 0xff).toByte()
+                        stereoBuf[so++] = (dn.toInt() and 0xff).toByte()
+                        stereoBuf[so++] = ((dn.toInt() shr 8) and 0xff).toByte()
+                    }
+                    miernik.dodajL(near)
+                    miernik.dodajR(dn)
                 }
                 if (o > 0) piszPcm(wav, mono, 0, o)
+                if (stereo != null && so > 0) runCatching { stereo.write(stereoBuf, 0, so) }
             }
         } catch (t: Throwable) {
             Log.w(TAG, "stereo→mono", t)
@@ -1146,6 +1171,7 @@ object NagrywanieKontroler {
             runCatching { inp.close() }
             runCatching { fd.close() }
             runCatching { wav.close() }
+            runCatching { stereo?.close() }
         }
     }
 

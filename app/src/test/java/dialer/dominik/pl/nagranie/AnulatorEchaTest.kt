@@ -50,6 +50,18 @@ class AnulatorEchaTest {
     }
 
     @Test
+    fun mixXorAtakDnNatychmiastBezMic() {
+        val aec = AnulatorEcha(16_000)
+        // Cisza, potem nagły DN — XOR v3 ma oddać DN od pierwszej głośnej próbki.
+        repeat(500) { aec.oczysc(0, 20) }
+        val nearEcho = 5000.toShort()
+        val dn = 8000.toShort()
+        aec.oczysc(nearEcho, dn)
+        val mix = aec.mixXor(nearEcho, dn, AnulatorEcha.Tryb.Mic, ::mieszaj, ::wzmocnij)
+        assertEquals("natychmiastowy DN bez MIC", dn, mix)
+    }
+
+    @Test
     fun hangoverNieZEchaGdyDnGlosny() {
         val aec = AnulatorEcha(16_000)
         fun farAt(i: Int): Short =
