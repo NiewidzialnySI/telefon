@@ -1,6 +1,6 @@
 {
-  "versionCode": 15,
-  "versionName": "1.7.6",
-  "apkUrl": "https://github.com/NiewidzialnySI/telefon/releases/download/v1.7.6/telefon-v1.7.6.apk",
-  "changelog": "Fix MMS: fałszywy błąd code=0 (ColorOS) + FAILED nie wygląda jak przychodzący."
+  "versionCode": 16,
+  "versionName": "1.7.7",
+  "apkUrl": "https://github.com/NiewidzialnySI/telefon/releases/download/v1.7.7/telefon-v1.7.7.apk",
+  "changelog": "Szybsza apka (mniej przycięć), ACTION_DIAL z banku/auth na klawiaturę, fix kompilacji CALL_PRIVILEGED, kontakty: główny numer, bez kanałów SMS/Messenger/Signal, bez załączników w zbiorowych, optymalizacje czatu/nagrań/CallLog."
 }

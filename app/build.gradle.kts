@@ -20,8 +20,8 @@ android {
         applicationId = "dialer.dominik.pl"
         minSdk = 31
         targetSdk = 37
-        versionCode = 15
-        versionName = "1.7.6"
+        versionCode = 16
+        versionName = "1.7.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -38,6 +38,22 @@ android {
         }
     }
 
+    // Podpis release tym samym debug.keystore co poprzednie update’y (v1.7.x).
+    // ANDROID_DEBUG_KEYSTORE=/ścieżka/do/debug.keystore (hasło domyślnie „android”).
+    val keystorePath = System.getenv("ANDROID_DEBUG_KEYSTORE")
+        ?: "${System.getProperty("user.home")}/.android/debug.keystore"
+    val keystoreFile = file(keystorePath)
+    val keystorePass = System.getenv("ANDROID_DEBUG_KEYSTORE_PASSWORD") ?: "android"
+    signingConfigs {
+        create("updateDebug") {
+            if (keystoreFile.isFile) {
+                storeFile = keystoreFile
+                storePassword = keystorePass
+                keyAlias = "androiddebugkey"
+                keyPassword = keystorePass
+            }
+        }
+    }
     buildTypes {
         release {
             // Nie optymalizuj kotlin.** / kotlinx.** — R8 powodował
@@ -45,6 +61,9 @@ android {
             optimization {
                 enable = true
                 packageScope = setOf("androidx.**")
+            }
+            if (keystoreFile.isFile) {
+                signingConfig = signingConfigs.getByName("updateDebug")
             }
         }
     }
