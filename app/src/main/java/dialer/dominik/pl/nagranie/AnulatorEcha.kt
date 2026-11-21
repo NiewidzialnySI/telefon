@@ -5,19 +5,13 @@ import kotlin.math.abs
 /**
  * AEC na nagrania (MIC/UPLINK + referencja DOWNLINK).
  *
- * Z analizy WAV (13 s, mono 16 kHz): echo = **podwójny DOWNLINK** z opóźnieniem
- * ~8–16 ms (cepstrum ~16 ms, xcorr do 0.9) — MIC łapie słuchawkę, a mix
- * dokłada jeszcze czysty DN. Miękki NLMS tego nie ubija.
- *
- * Strategia:
- * 1. Estymacja opóźnienia (min residual)
- * 2. Tap + NLMS
- * 3. **Residual suppressor** gdy far głośny a near wygląda jak echo
- * 4. **Half-duplex / twarde duck** na ścieżce MIC (envelope DN)
+ * WAV użytkownika: echo = podwójny DOWNLINK ~8–16 ms (MIC + czysty DN).
+ * #15 half-duplex (near≈0 przy DN) zjadał „mnie” w całej rozmowie —
+ * teraz: AEC + **łagodny duck tylko gdy oni wyraźnie głośniejsi**,
+ * z ochroną double-talk (gdy mówię, near zostaje).
  */
 internal class AnulatorEcha(
     private val sampleRate: Int,
-    /** Max opóźnienie ścieżki earpiece→mic (ms). */
     maxDelayMs: Int = 90,
 ) {
     private val maxDelay = (sampleRate * maxDelayMs / 1000).coerceAtLeast(64)
@@ -43,10 +37,9 @@ internal class AnulatorEcha(
     private var samplesSinceCorr = 0
     private var delayZablokowane = false
 
-    // Envelope DN (~15 ms) do half-duplex
     private var envDn = 0f
-    private val envAlpha = 1f - 1f / (sampleRate * 0.015f).coerceAtLeast(1f)
     private var envNear = 0f
+    private val envAlpha = 1f - 1f / (sampleRate * 0.015f).coerceAtLeast(1f)
 
     fun oczysc(near: Short, far: Short): Short {
         zapiszHistorie(near, far)
@@ -67,7 +60,8 @@ internal class AnulatorEcha(
         val idx = (write - delayEst + maxDelay) % maxDelay
         val farD = ring[idx].toFloat()
         var err = near.toFloat() - wTap * farD
-        if (farAbs > 250f && nearAbs < farAbs * 2.8f) {
+        // Adaptuj tylko gdy oni mówią, a near nie wygląda na moją mowę.
+        if (farAbs > 250f && nearAbs < farAbs * 1.6f) {
             val x2 = farD * farD + eps
             wTap = (wTap + (0.22f / x2) * err * farD).coerceIn(0.05f, 1.35f)
             err = near.toFloat() - wTap * farD
@@ -83,7 +77,7 @@ internal class AnulatorEcha(
             xPow += x * x
         }
         err -= y
-        if (farAbs > 200f && nearAbs < farAbs * 2.8f) {
+        if (farAbs > 200f && nearAbs < farAbs * 1.6f) {
             val step = mu / xPow
             for (i in 0 until nLms) {
                 val j = (iNlms - i + nLms) % nLms
@@ -94,8 +88,7 @@ internal class AnulatorEcha(
         }
         iNlms = (iNlms + 1) % nLms
 
-        // Residual suppressor: gdy oni mówią i residuum nadal „brzmi” jak far.
-        err = residualSuppressor(err, farAbs)
+        err = residualSuppressor(err)
 
         return err.toInt()
             .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
@@ -104,31 +97,31 @@ internal class AnulatorEcha(
 
     /**
      * Gain near przed mixem.
-     * [Tryb.Mic]: half-duplex — przy głośnym DN near ≈ 0 (koniec podwójnego głosu).
-     * [Tryb.Uplink]: delikatniej (UP zwykle bez echa akustycznego).
+     * Nigdy nie zeruj „mnie” — tylko ścisz, gdy oni wyraźnie dominują.
      */
     fun micGainPrzyDownlink(tryb: Tryb): Float {
+        // Double-talk / ja mówię → pełny near (albo lekki boost).
+        if (envNear > 350f && envNear >= envDn * 0.65f) {
+            return if (tryb == Tryb.Mic) 1.35f else 1.1f
+        }
         return when (tryb) {
             Tryb.Mic -> when {
-                envDn > 1800f -> 0.00f
-                envDn > 900f -> 0.04f
-                envDn > 450f -> 0.12f
-                envDn > 220f -> 0.35f
-                envDn > 100f -> 0.70f
-                else -> 1.45f // DN cichy → podbij „mnie”
+                // Tylko oni (near cichy względem DN) — ścisz echo ze słuchawki.
+                envDn > 2200f && envNear < envDn * 0.40f -> 0.18f
+                envDn > 1200f && envNear < envDn * 0.45f -> 0.35f
+                envDn > 600f && envNear < envDn * 0.50f -> 0.55f
+                envDn > 300f && envNear < envDn * 0.55f -> 0.75f
+                else -> 1.25f
             }
             Tryb.Uplink -> when {
-                envDn > 2500f -> 0.45f
-                envDn > 1200f -> 0.70f
-                envDn > 600f -> 0.85f
+                envDn > 2500f -> 0.70f
+                envDn > 1200f -> 0.85f
                 else -> 1.0f
             }
         }
     }
 
-    /** Kompatybilność ze starym API. */
     fun micGainPrzyDownlink(dn: Short, agresywny: Boolean): Float {
-        // Odśwież env z bieżącej próbki (gdy wywołane bez oczysc w tej chwili).
         val farAbs = abs(dn.toInt()).toFloat()
         envDn = envAlpha * envDn + (1f - envAlpha) * farAbs
         return micGainPrzyDownlink(if (agresywny) Tryb.Mic else Tryb.Uplink)
@@ -136,26 +129,23 @@ internal class AnulatorEcha(
 
     fun opoznienieProbek(): Int = delayEst
     fun envDownlink(): Float = envDn
+    fun envNear(): Float = envNear
 
     enum class Tryb { Mic, Uplink }
 
-    private fun residualSuppressor(err: Float, farAbs: Float): Float {
-        if (envDn < 400f) return err
+    private fun residualSuppressor(err: Float): Float {
+        // Nie tykaj, gdy ja mówię.
+        if (envNear > 350f && envNear >= envDn * 0.65f) return err
+        if (envDn < 600f) return err
         val eAbs = abs(err)
-        // Residuum małe względem far → to echo, nie „ja”.
-        if (eAbs < envDn * 0.85f) {
+        // Residuum wyraźnie mniejsze niż far → echo, nie mowa.
+        if (eAbs < envDn * 0.55f) {
             val atten = when {
-                envDn > 1500f -> 0.06f
-                envDn > 800f -> 0.15f
-                else -> 0.35f
+                envDn > 1800f -> 0.25f
+                envDn > 900f -> 0.40f
+                else -> 0.60f
             }
             return err * atten
-        }
-        // Double-talk: near głośniejszy niż far — nie tłumić.
-        if (envNear > envDn * 1.1f) return err
-        // Borderline: częściowe tłumenie
-        if (farAbs > 500f && eAbs < envDn * 1.3f) {
-            return err * 0.45f
         }
         return err
     }
@@ -183,7 +173,6 @@ internal class AnulatorEcha(
             while (i < corrWin) {
                 val n = odczytNear(i).toInt()
                 val f = odczytFar(i + lag).toInt()
-                // α≈0.5–0.7 typowe dla earpiece→mic (z WAV: g≈0.35–0.63)
                 errSum += abs(n - (f * 55) / 100).toLong()
                 i += 3
             }
@@ -217,7 +206,7 @@ internal class AnulatorEcha(
 
 /**
  * Kolejka PCM shortów — wyrównuje dwa potoki (UP/DN), żeby nie gubić próbek
- * gdy jeden read() zwróci mniej bajtów (desync = „straszne echo” nawet z AEC).
+ * gdy jeden read() zwróci mniej bajtów.
  */
 internal class KolejkaPcm(pojemnosc: Int = 16_000) {
     private val buf = ShortArray(pojemnosc)
@@ -231,7 +220,6 @@ internal class KolejkaPcm(pojemnosc: Int = 16_000) {
         var i = 0
         while (i + 1 < len) {
             if (n >= buf.size) {
-                // Overflow: wyrzuć najstarsze (lepiej niż desync).
                 r = (r + 1) % buf.size
                 n--
             }
