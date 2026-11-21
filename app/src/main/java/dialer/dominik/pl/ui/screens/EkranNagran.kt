@@ -227,9 +227,9 @@ fun EkranNagran(context: Context) {
 
     fun startPlay(plik: File) {
         stopPlay()
-        var mp: MediaPlayer? = null
+        // `val` — lambda OnPrepared nie może widzieć null po „mp = null” (Kotlin capture var).
+        val mp = MediaPlayer()
         try {
-            mp = MediaPlayer()
             mp.setDataSource(plik.absolutePath)
             mp.setOnCompletionListener { stopPlay() }
             mp.setOnErrorListener { _, what, extra ->
@@ -261,11 +261,10 @@ fun EkranNagran(context: Context) {
             odtwarzany = plik
             // prepareAsync — nie blokuj UI; poll dopiero po gotowy=true.
             mp.prepareAsync()
-            mp = null // ownership → player
         } catch (_: Throwable) {
-            zwolnijPlayer(mp)
+            if (player !== mp) zwolnijPlayer(mp)
+            else stopPlay()
             Toast.makeText(context, "Nie można odtworzyć", Toast.LENGTH_SHORT).show()
-            stopPlay()
         }
     }
 
