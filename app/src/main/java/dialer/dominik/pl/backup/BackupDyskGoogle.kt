@@ -466,7 +466,11 @@ object BackupDyskGoogle {
         var sumaWav = 0L
         var pominieteWav = 0
         nagrDir.listFiles()
-            ?.filter { it.isFile && (it.extension == "wav" || it.extension == "m4a") }
+            ?.filter {
+                it.isFile &&
+                    (it.extension == "wav" || it.extension == "m4a") &&
+                    !dialer.dominik.pl.nagranie.NagrywaniePliki.jestSidecarStereo(it)
+            }
             ?.sortedByDescending { it.lastModified() }
             ?.forEach { f ->
                 metaNagran.put(

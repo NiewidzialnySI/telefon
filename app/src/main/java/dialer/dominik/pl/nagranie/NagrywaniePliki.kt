@@ -9,6 +9,9 @@ import java.util.Locale
 object NagrywaniePliki {
     private val FORMAT = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
 
+    /** Sidecar L=near/UP, R=DOWNLINK — do offline AEC / ponownego czyszczenia. */
+    const val STEREO_SUFFIX = ".stereo.wav"
+
     fun katalog(ctx: Context): File {
         val dir = File(ctx.getExternalFilesDir(null) ?: ctx.filesDir, "nagrania")
         if (!dir.exists()) dir.mkdirs()
@@ -21,9 +24,25 @@ object NagrywaniePliki {
         return File(katalog(ctx), nazwa)
     }
 
+    fun plikStereoObok(mono: File): File =
+        File(mono.parentFile, mono.nameWithoutExtension + STEREO_SUFFIX)
+
+    fun jestSidecarStereo(f: File): Boolean =
+        f.name.endsWith(STEREO_SUFFIX, ignoreCase = true)
+
+    /** Kasuje mono + sidecar stereo (jeśli jest). */
+    fun usunZSidecar(mono: File) {
+        runCatching { plikStereoObok(mono).delete() }
+        runCatching { mono.delete() }
+    }
+
     fun lista(ctx: Context): List<File> =
         katalog(ctx).listFiles()
-            ?.filter { it.isFile && (it.extension == "wav" || it.extension == "m4a") }
+            ?.filter {
+                it.isFile &&
+                    (it.extension == "wav" || it.extension == "m4a") &&
+                    !jestSidecarStereo(it)
+            }
             ?.sortedByDescending { it.lastModified() }
             ?: emptyList()
 }

@@ -690,7 +690,7 @@ private fun KartaNagraniaPozycji(
             val sciezka = poz.plik.absolutePath
             onUsunZListy(sciezka)
             scope.launch(Dispatchers.IO) {
-                poz.plik.delete()
+                NagrywaniePliki.usunZSidecar(poz.plik)
                 TranskrypcjaRozmow.plikTranskrypcji(poz.plik).delete()
             }
         },
