@@ -68,6 +68,8 @@ internal fun EkranNowejWiadomosci(
     val paletaNowa = dialer.dominik.pl.ui.theme.LocalMotyw.current
     val wybrani = remember { mutableStateListOf<String>() }
     val wyslane = remember { mutableStateListOf<String>() }
+    /** Nazwy chipów — PhoneLookup raz na IO, nie w composition LazyRow. */
+    var nazwyWybranych by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var szukane by remember { mutableStateOf("") }
     var tresc by remember { mutableStateOf("") }
     var sugestie by remember { mutableStateOf<List<ContactSuggestion>>(emptyList()) }
@@ -82,6 +84,15 @@ internal fun EkranNowejWiadomosci(
     // Numer początkowy od razu odbiorcą.
     LaunchedEffect(numerPoczatkowy) {
         if (numerPoczatkowy.isNotBlank() && numerPoczatkowy !in wybrani) wybrani.add(numerPoczatkowy)
+    }
+
+    LaunchedEffect(wybrani.toList()) {
+        val brak = wybrani.filter { it !in nazwyWybranych }
+        if (brak.isEmpty()) return@LaunchedEffect
+        val dopisane = withContext(Dispatchers.IO) {
+            brak.associateWith { n -> resolveContactName(context, n) ?: n }
+        }
+        nazwyWybranych = nazwyWybranych + dopisane
     }
 
     // Pobierz kontakty (cała książka na start, filtr na żywo przy wpisywaniu).
@@ -142,10 +153,10 @@ internal fun EkranNowejWiadomosci(
         // Chipsy wybranych.
         if (wybrani.isNotEmpty()) {
             LazyRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                items(wybrani) { n ->
+                items(wybrani, key = { it }) { n ->
                     Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFF14221B), border = BorderStroke(1.dp, ZielonyNeon.copy(alpha = 0.3f))) {
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 12.dp, end = 6.dp, top = 5.dp, bottom = 5.dp)) {
-                            Text(resolveContactName(context, n) ?: n, color = paletaNowa.naTle, fontSize = 13.sp, maxLines = 1)
+                            Text(nazwyWybranych[n] ?: n, color = paletaNowa.naTle, fontSize = 13.sp, maxLines = 1)
                             Spacer(Modifier.width(6.dp))
                             Text("×", color = CzerwonyPolaczenia, fontSize = 16.sp, fontWeight = FontWeight.Bold,
                                 modifier = Modifier.clip(CircleShape).clickable { wybrani.remove(n) }.padding(4.dp))

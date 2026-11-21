@@ -1174,7 +1174,9 @@ internal fun wyslijMms(
     contentUri: android.net.Uri,
     tekst: String = "",
     bitmap: Bitmap? = null,
-    lokalnyKlucz: Long = System.nanoTime()
+    lokalnyKlucz: Long = System.nanoTime(),
+    /** Gdy kompresja była na IO — pomijamy ciężką pracę na Main. */
+    gotoweBajty: ByteArray? = null
 ): WynikWysylkiMms? {
     if (numer.isBlank()) {
         Log.w(TAG_MMS, "brak numeru")
@@ -1186,7 +1188,8 @@ internal fun wyslijMms(
         val limitObrazu = (limitPdu - MMS_PDU_OVERHEAD).coerceAtLeast(80_000)
         Log.i(TAG_MMS, "start numer=$numer limitPdu=$limitPdu uri=$contentUri")
 
-        val bajty = przygotujBajtyObrazuMms(appCtx, contentUri, limitObrazu)
+        val bajty = gotoweBajty
+            ?: przygotujBajtyObrazuMms(appCtx, contentUri, limitObrazu)
             ?: bitmap?.let { bitmapDoJpegMms(it, limitObrazu) }
         if (bajty == null) {
             Log.e(TAG_MMS, "nie można odczytać zdjęcia uri=$contentUri")
@@ -1224,6 +1227,19 @@ internal fun wyslijMms(
         )
         null
     }
+}
+
+/** Kompresja JPEG na IO — wywołać przed [wyslijMms] z Main (ColorOS). */
+internal fun przygotujBajtyMmsDoWysylki(
+    context: Context,
+    contentUri: Uri,
+    bitmap: Bitmap? = null
+): ByteArray? {
+    val appCtx = context.applicationContext
+    val limitPdu = pobierzLimitMmsBajtow(appCtx)
+    val limitObrazu = (limitPdu - MMS_PDU_OVERHEAD).coerceAtLeast(80_000)
+    return przygotujBajtyObrazuMms(appCtx, contentUri, limitObrazu)
+        ?: bitmap?.let { bitmapDoJpegMms(it, limitObrazu) }
 }
 
 /** Limit PDU z konfiguracji operatora (Fossify / SO: błąd 5 przy przekroczeniu). */

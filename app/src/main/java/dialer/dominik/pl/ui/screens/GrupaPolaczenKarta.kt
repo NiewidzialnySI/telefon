@@ -72,7 +72,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -116,7 +115,7 @@ import dialer.dominik.pl.ui.components.IkonyAplikacji
 import dialer.dominik.pl.ui.theme.CzerwonyPolaczenia
 import dialer.dominik.pl.ui.theme.MglaNaPrzycisku
 import dialer.dominik.pl.ui.theme.CzcionkiWiedzmina
-import dialer.dominik.pl.ui.theme.MotywStan
+import dialer.dominik.pl.ui.theme.czyMotywWiedzmin
 import dialer.dominik.pl.ui.theme.ZielonyGleboki
 import dialer.dominik.pl.ui.theme.ZielonyMorski
 import dialer.dominik.pl.ui.theme.ZielonyNeon
@@ -148,8 +147,8 @@ internal fun GrupaPolaczenKarta(
     val formatDaty = remember { SimpleDateFormat("d MMM, HH:mm", Locale.getDefault()) }
     val context = LocalContext.current
     val paletaMotywu = dialer.dominik.pl.ui.theme.LocalMotyw.current
-    val motywStan by MotywStan.stan.collectAsState()
-    val mglaWiedzmina = motywStan.paletaId == "wiedzmin"
+    // Bez collectAsState per kafelek — LocalMotyw / helper wystarczy.
+    val mglaWiedzmina = czyMotywWiedzmin()
     val ksztaltKafla = RoundedCornerShape(paletaMotywu.promienKafla.dp)
     // Pseudonim ustawiony w tej aplikacji (po nazwie z dziennika). Jeśli jest,
             // pokazujemy go zamiast nazwy systemowej — np. „Luluś" zamiast „Emilka Kowalska".

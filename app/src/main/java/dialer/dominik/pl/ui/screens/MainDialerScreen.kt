@@ -180,16 +180,16 @@ fun MainDialerScreen(
             onNumerSkonsumowany()
         }
     }
-    // Stan ekranu głównego zachowywany między przełączaniem zakładek (SaveableStateHolder).
-    // Dzięki temu powrót na tę zakładkę NIE pokazuje ponownie spinnera ładowania.
-    var historia by rememberSaveable(stateSaver = EstadoSaverCallLog) { mutableStateOf<List<CallLogEntry>>(emptyList()) }
-    var czyLadujeHistorie by rememberSaveable { mutableStateOf(true) }
+    // Historia w remember (nie Bundle) — 500 wpisów w rememberSaveable = wolny restore / ryzyko TTLE.
+    // SaveableStateHolder i tak trzyma composition przy przełączaniu zakładek.
+    var historia by remember { mutableStateOf<List<CallLogEntry>>(emptyList()) }
+    var czyLadujeHistorie by remember { mutableStateOf(true) }
     var najnowszyIdCache by remember { mutableLongStateOf(-1L) }
     var sugestieKontakty by remember { mutableStateOf<List<ContactSuggestion>>(emptyList()) }
     var jestDomyslny by remember { mutableStateOf(true) }
-    // Ulubione kontakty — pokazywane na górze historii połączeń jako kółka.
+    // Ulubione: same nazwy w Bundle; pełna lista kontaktów w remember.
     var ulubioneNazwy by rememberSaveable { mutableStateOf<Set<String>>(emptySet()) }
-    var ulubioneKontakty by rememberSaveable(stateSaver = EstadoSaverKontakt) { mutableStateOf<List<KontaktItem>>(emptyList()) }
+    var ulubioneKontakty by remember { mutableStateOf<List<KontaktItem>>(emptyList()) }
     // Ulubiony wybrany kliknięciem → okno wychodzące bezpośrednio z klikniętego kółka.
     var ulubionyDoAkcji by remember { mutableStateOf<AkcjaUlubionego?>(null) }
     var odswiezenie by remember { mutableIntStateOf(0) }
@@ -210,12 +210,13 @@ fun MainDialerScreen(
         var limitWpisowGrupy by remember { mutableIntStateOf(10) }
 
             val prefs = remember { context.getSharedPreferences("telefon_polaczenia", Context.MODE_PRIVATE) }
-    var ukryteDo by remember {
-        mutableStateOf(
+    var ukryteDo by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+    LaunchedEffect(Unit) {
+        ukryteDo = withContext(Dispatchers.IO) {
             prefs.all.mapNotNull { (klucz, wartosc) ->
                 (wartosc as? Long)?.let { klucz to it }
             }.toMap()
-        )
+        }
     }
 
     // Gdy klawiatura numeryczna jest otwarta, przycisk/gest wstecz chowa ją

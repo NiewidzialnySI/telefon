@@ -195,7 +195,9 @@ fun SmsScreen(
     val maSms = context.checkSelfPermission(Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED ||
         context.checkSelfPermission(Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED
 
-    LaunchedEffect(odswiezenie, OdbiorcaSms.ostatniaWiadomosc, MmsPobranyIZapisanyReceiver.ostatniePobranieMs) {
+    val tickSms by OdbiorcaSms.tickSkrzynki.collectAsState()
+    val tickMms by MmsPobranyIZapisanyReceiver.tickSkrzynki.collectAsState()
+    LaunchedEffect(odswiezenie, tickSms, tickMms) {
         if (maSms) {
             watki = withContext(Dispatchers.IO) {
                 dolaczRoboczeDoWatkow(context, pobierzWątkiSms(context, odswiez = odswiezenie > 0))
@@ -722,14 +724,19 @@ fun SmsScreen(
                                                 }
                                             },
                                             trybArchiwum = archiwum,
-                                            modifier = Modifier.animateItem(
-                                                fadeInSpec = tween(260, easing = FastOutSlowInEasing),
-                                                fadeOutSpec = tween(180, easing = FastOutSlowInEasing),
-                                                placementSpec = spring(
-                                                    dampingRatio = Spring.DampingRatioNoBouncy,
-                                                    stiffness = Spring.StiffnessMediumLow
+                                            // Przy search animateItem na dużej liście = drogie placement.
+                                            modifier = if (zapytanieSzukania.trim().length >= MIN_SZUKANE_ZN) {
+                                                Modifier
+                                            } else {
+                                                Modifier.animateItem(
+                                                    fadeInSpec = tween(260, easing = FastOutSlowInEasing),
+                                                    fadeOutSpec = tween(180, easing = FastOutSlowInEasing),
+                                                    placementSpec = spring(
+                                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                                        stiffness = Spring.StiffnessMediumLow
+                                                    )
                                                 )
-                                            )
+                                            }
                                         )
                                     }
                                 }

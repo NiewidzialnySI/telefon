@@ -394,11 +394,41 @@ internal fun oznaczWatekJakoPrzeczytany(context: Context, address: String) {
 private fun oznaczMmsWatkuJakoPrzeczytane(context: Context, address: String) {
     try {
         val normCel = normalizujAdresSms(address)
+        // Preferuj THREAD_ID — bez skanu wszystkich nieprzeczytanych MMS w skrzynce.
+        var threadId: Long? = null
+        for (w in wariantyAdresuDoQuery(address)) {
+            context.contentResolver.query(
+                Telephony.Sms.CONTENT_URI,
+                arrayOf(Telephony.Sms.THREAD_ID),
+                "${Telephony.Sms.ADDRESS} = ?",
+                arrayOf(w),
+                null
+            )?.use { c ->
+                if (c.moveToFirst()) {
+                    val tid = c.getLong(0)
+                    if (tid > 0L) threadId = tid
+                }
+            }
+            if (threadId != null) break
+        }
+        if (threadId == null) {
+            threadId = threadIdDlaAdresu(context, address)
+        }
+        val selection: String
+        val selectionArgs: Array<String>?
+        val tid = threadId
+        if (tid != null && tid > 0L) {
+            selection = "${Telephony.Mms.READ} = 0 AND ${Telephony.Mms.THREAD_ID} = ?"
+            selectionArgs = arrayOf(tid.toString())
+        } else {
+            selection = "${Telephony.Mms.READ} = 0"
+            selectionArgs = null
+        }
         val cursor = context.contentResolver.query(
             Telephony.Mms.CONTENT_URI,
             arrayOf(Telephony.Mms._ID, Telephony.Mms.MESSAGE_BOX, Telephony.Mms.READ),
-            "${Telephony.Mms.READ} = 0",
-            null,
+            selection,
+            selectionArgs,
             null
         ) ?: return
         cursor.use { c ->

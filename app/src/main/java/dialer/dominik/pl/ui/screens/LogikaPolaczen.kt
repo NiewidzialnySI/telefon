@@ -40,9 +40,18 @@ data class CallLogEntry(
 internal fun pobierzOstatniePolaczenia(context: Context): List<CallLogEntry> {
     val lista = mutableListOf<CallLogEntry>()
     try {
+        // Tylko potrzebne kolumny — projection=null ciągnie zbędne dane przez binder.
+        val projekcja = arrayOf(
+            CallLog.Calls._ID,
+            CallLog.Calls.NUMBER,
+            CallLog.Calls.CACHED_NAME,
+            CallLog.Calls.DATE,
+            CallLog.Calls.TYPE,
+            CallLog.Calls.DURATION
+        )
         val cursor = context.contentResolver.query(
             CallLog.Calls.CONTENT_URI,
-            null,
+            projekcja,
             null,
             null,
             "${CallLog.Calls.DATE} DESC"

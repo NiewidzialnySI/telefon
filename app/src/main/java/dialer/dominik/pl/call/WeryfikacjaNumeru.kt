@@ -588,25 +588,62 @@ object WeryfikacjaNumeru {
         }
     }
 
-    fun pobierzZdjecieKontaktu(context: Context, numer: String): Bitmap? {
+    /**
+     * Miniaturka kontaktu (LRU + inSampleSize) — bez pełnego JPEG przy każdym wierszu listy.
+     * @param maxPx docelowy bok w px (domyślnie ~88 dp @xxhdpi).
+     */
+    fun pobierzZdjecieKontaktu(context: Context, numer: String, maxPx: Int = 176): Bitmap? {
         if (numer.isBlank()) return null
+        val klucz = "${numer.trim()}@$maxPx"
+        synchronized(cacheZdjec) {
+            cacheZdjec.get(klucz)?.let { return it }
+        }
         return try {
             val uri = Uri.withAppendedPath(
                 ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
                 Uri.encode(numer)
             )
             val projection = arrayOf(ContactsContract.PhoneLookup.PHOTO_URI)
-            context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val photoUriStr = cursor.getString(0)
-                    if (!photoUriStr.isNullOrBlank()) {
-                        val inputStream = context.contentResolver.openInputStream(Uri.parse(photoUriStr))
-                        BitmapFactory.decodeStream(inputStream)
-                    } else null
-                } else null
+            val bmp = context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+                if (!cursor.moveToFirst()) return@use null
+                val photoUriStr = cursor.getString(0) ?: return@use null
+                if (photoUriStr.isBlank()) return@use null
+                dekodujZdjecieKontaktu(context, Uri.parse(photoUriStr), maxPx)
             }
+            if (bmp != null) {
+                synchronized(cacheZdjec) { cacheZdjec.put(klucz, bmp) }
+            }
+            bmp
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun dekodujZdjecieKontaktu(context: Context, uri: Uri, maxPx: Int): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, bounds)
+        }
+        var sample = 1
+        val h = bounds.outHeight
+        val w = bounds.outWidth
+        if (h > maxPx || w > maxPx) {
+            val halfH = h / 2
+            val halfW = w / 2
+            while (halfH / sample >= maxPx && halfW / sample >= maxPx) {
+                sample *= 2
+            }
+        }
+        val decode = BitmapFactory.Options().apply { inSampleSize = sample }
+        return context.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, decode)
+        }
+    }
+
+    private val cacheZdjec = object : android.util.LruCache<String, Bitmap>(
+        (Runtime.getRuntime().maxMemory() / 1024L / 24L).toInt().coerceIn(512, 4_096)
+    ) {
+        override fun sizeOf(key: String, value: Bitmap): Int =
+            (value.byteCount / 1024).coerceAtLeast(1)
     }
 }

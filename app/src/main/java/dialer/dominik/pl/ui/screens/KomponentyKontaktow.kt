@@ -55,6 +55,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -210,8 +211,12 @@ private fun Modifier.animowanaRamkaZnaku(
     fazaStart: Float = 0f,
     durationMs: Int = 2800
 ): Modifier = composed {
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    val wznowiony by lifecycle.currentStateFlow.collectAsState()
+    val animuj = wznowiony.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+    // Poza RESUMED — statyczna ramka (oszczędność GPU przy idle / innej apce).
     val transition = rememberInfiniteTransition(label = "ramkaZnaku")
-    val kat by transition.animateFloat(
+    val katAnim by transition.animateFloat(
         initialValue = fazaStart,
         targetValue = fazaStart + 360f,
         animationSpec = infiniteRepeatable(
@@ -220,6 +225,7 @@ private fun Modifier.animowanaRamkaZnaku(
         ),
         label = "katRamki"
     )
+    val kat = if (animuj) katAnim else fazaStart
     val kolory = remember(bazowy) {
         listOf(
             bazowy.copy(alpha = 0.25f),
@@ -350,8 +356,11 @@ private fun AwatarWiedzmin(
     indeks: Int
 ) {
     val faza = indeks * 72f
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    val wznowiony by lifecycle.currentStateFlow.collectAsState()
+    val animuj = wznowiony.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
     val transition = rememberInfiniteTransition(label = "napisZnaku$indeks")
-    val puls by transition.animateFloat(
+    val pulsAnim by transition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
@@ -360,6 +369,7 @@ private fun AwatarWiedzmin(
         ),
         label = "pulsNapis"
     )
+    val puls = if (animuj) pulsAnim else 0.35f
     val kolorNapis = lerp(
         kolorZnaku.copy(alpha = 0.72f),
         Color.White.copy(alpha = 0.95f),
