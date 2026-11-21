@@ -65,6 +65,16 @@ internal fun normalizujAdresSms(adres: String): String {
     }
 }
 
+/**
+ * Czy adres SMS to prawdziwy numer telefonu (można dzwonić i odpisać).
+ * Alfa-nadawcy z bramek (np. Allegro, PayPo) i krótkie kody numeryczne → false.
+ */
+internal fun czyAdresTelefonu(adres: String?): Boolean {
+    if (adres.isNullOrBlank()) return false
+    if (adres.any { it.isLetter() }) return false
+    return adres.count { it.isDigit() } >= 7
+}
+
 @Immutable
 data class SmsWatek(
     val address: String,

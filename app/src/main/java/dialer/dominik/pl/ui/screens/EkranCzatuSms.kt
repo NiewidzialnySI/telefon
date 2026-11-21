@@ -111,6 +111,8 @@ internal fun EkranCzatuSzczegoly(
     val akcentMorski = if (wiedzmin) akcent else dialer.dominik.pl.ui.theme.ZielonyMorski
 
     val adres = watek.address
+    // Bramki / alfa-nadawcy (Allegro, PayPo…): bez odpowiedzi SMS i bez dzwonienia.
+    val moznaOdpowiedziec = czyAdresTelefonu(adres)
     val wybranaPlatforma = pobierzKanal(context, adres)
     val density = LocalDensity.current
 
@@ -400,22 +402,24 @@ internal fun EkranCzatuSzczegoly(
                         )
                     }
                 }
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.horizontalGradient(listOf(akcentMorski, akcent))
+                if (moznaOdpowiedziec) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.horizontalGradient(listOf(akcentMorski, akcent))
+                            )
+                            .clickable { zadzwonDoKontaktu(context, adres) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = IkonyAplikacji.TelefonLogo,
+                            contentDescription = "Zadzwoń",
+                            tint = Color(0xFF06231A),
+                            modifier = Modifier.size(22.dp)
                         )
-                        .clickable { zadzwonDoKontaktu(context, adres) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = IkonyAplikacji.TelefonLogo,
-                        contentDescription = "Zadzwoń",
-                        tint = Color(0xFF06231A),
-                        modifier = Modifier.size(22.dp)
-                    )
+                    }
                 }
             }
         }
@@ -801,7 +805,8 @@ internal fun EkranCzatuSzczegoly(
     }
 
     // Dół czatu (planowanie / cytat / załącznik / pole pisania) — wjeżdża od dołu.
-    Column(
+    // Bramki bez numeru: bez paska odpowiedzi (nie da się wysłać SMS-a do alfa-nadawcy).
+    if (moznaOdpowiedziec) Column(
         Modifier
             .fillMaxWidth()
             .graphicsLayer {
