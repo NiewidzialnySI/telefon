@@ -85,6 +85,27 @@ class AnulatorEchaTest {
     }
 
     @Test
+    fun mixXorGdyOniTylkoDownlink() {
+        val aec = AnulatorEcha(16_000)
+        // Samo echo (near = α·far) — po zbieżności mix = DN
+        fun farAt(i: Int): Short =
+            (sin(2.0 * Math.PI * 400.0 * i / 16_000) * 10_000).toInt().toShort()
+        val delay = 16_000 * 8 / 1000
+        var sameAsDn = 0
+        for (i in 0 until 16_000 * 3) {
+            val far = farAt(i)
+            val delayed = if (i >= delay) farAt(i - delay).toInt() else 0
+            val near = (delayed * 0.55).toInt().toShort()
+            val clean = aec.oczysc(near, far)
+            val mix = aec.mixXor(clean, far, AnulatorEcha.Tryb.Mic, { a, b ->
+                (a.toInt() + b.toInt()).coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
+            }, { s, g -> (s.toInt() * g).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort() })
+            if (i > 16_000 * 2 && mix == far) sameAsDn++
+        }
+        assertTrue("mix XOR powinien oddawać sam DN ($sameAsDn)", sameAsDn > 8_000)
+    }
+
+    @Test
     fun kolejkaPcmNieGubiPrzyNierownychReadach() {
         val q = KolejkaPcm(1024)
         val a = byteArrayOf(1, 0, 2, 0, 3, 0, 4, 0)
