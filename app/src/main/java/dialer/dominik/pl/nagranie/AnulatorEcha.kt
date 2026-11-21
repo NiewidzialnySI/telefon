@@ -42,14 +42,21 @@ internal class AnulatorEcha(
     private val envAlpha = 1f - 1f / (sampleRate * 0.015f).coerceAtLeast(1f)
 
     private var hangover = 0
-    private val hangoverMax = (sampleRate * 0.30f).toInt() // ~300 ms — chroni Twoje zdania
+    private val hangoverMax = (sampleRate * 0.35f).toInt() // ~350 ms
 
     fun hangoverAktywny(): Boolean = hangover > 0
 
     /**
-     * Mix XOR (własny pomysł po analizie WAV + GH cally/BCR):
-     * Sumowanie MIC+DN **zawsze** zostawia podwójny głos przy niedoskonałym AEC.
-     * Gdy oni mówią → **sam DOWNLINK**. Gdy Ty (hangover/envErr) → near + cichszy DN.
+     * Mix XOR v2 (WAV po #18 nadal miał echo c=0.84):
+     *
+     * Bug: hangover/„ja” odpalał się od **wycieku echa** (envErr z MIC≈0.55·DN),
+     * więc dalej sumowaliśmy MIC+DN.
+     *
+     * Reguły:
+     * 1. Hangover tylko gdy DN **cichy** (Ty mówisz w ciszę rozmówcy)
+     * 2. Przy żywym DN → **zawsze sam DOWNLINK** (nawet w hangover — najwyżej
+     *    ucięty ogon Twojego zdania, zero podwójnego głosu)
+     * 3. DN cichy → sam near (Twoja mowa)
      */
     fun mixXor(
         nearClean: Short,
@@ -58,16 +65,16 @@ internal class AnulatorEcha(
         mieszaj: (Short, Short) -> Short,
         wzmocnij: (Short, Float) -> Short,
     ): Short {
-        val ja =
-            hangover > 0 || (envErr > 500f && envErr > envDn * 0.32f)
         if (tryb == Tryb.Mic) {
-            if (ja) {
-                return mieszaj(wzmocnij(nearClean, 1.30f), wzmocnij(dn, 0.50f))
-            }
-            // Oni / echo: zero MIC w mixie — jedyne pewne zabicie podwójnego DN.
-            if (envDn > 350f) {
+            // Żywy downlink = oni (lub echo) — NIGDY nie doklejaj MIC.
+            if (envDn > 280f) {
                 return dn
             }
+            // Cisza u nich: Twoja mowa / hangover.
+            if (hangover > 0 || envErr > 450f) {
+                return wzmocnij(nearClean, 1.35f)
+            }
+            return dn
         }
         val g = micGainPrzyDownlink(tryb)
         return mieszaj(wzmocnij(nearClean, g), dn)
@@ -125,8 +132,8 @@ internal class AnulatorEcha(
         val errAbs = abs(err)
         envErr = envAlpha * envErr + (1f - envAlpha) * errAbs
 
-        // Hangover gdy residuum = mowa (nie zgaszone echo).
-        if (envErr > 550f && envErr > envDn * 0.35f) {
+        // Hangover TYLKO gdy DN cichy — inaczej echo ze słuchawki udaje „mnie”.
+        if (envDn < 450f && envErr > 500f) {
             hangover = hangoverMax
         } else if (hangover > 0) {
             hangover--
@@ -144,22 +151,15 @@ internal class AnulatorEcha(
      * Hangover chroni końcówki Twoich zdań.
      */
     fun micGainPrzyDownlink(tryb: Tryb): Float {
-        if (hangover > 0 || (envErr > 550f && envErr > envDn * 0.35f)) {
-            return if (tryb == Tryb.Mic) 1.35f else 1.10f
+        if (tryb == Tryb.Mic) {
+            if (envDn > 280f) return 0f
+            if (hangover > 0 || envErr > 450f) return 1.35f
+            return 0f
         }
-        return when (tryb) {
-            Tryb.Mic -> when {
-                envDn > 1600f && envErr < 300f -> 0.05f
-                envDn > 900f && envErr < 380f -> 0.12f
-                envDn > 500f && envErr < 450f -> 0.28f
-                envDn > 280f && envErr < envDn * 0.35f -> 0.50f
-                else -> 1.15f
-            }
-            Tryb.Uplink -> when {
-                envDn > 2500f -> 0.70f
-                envDn > 1200f -> 0.85f
-                else -> 1.0f
-            }
+        return when {
+            envDn > 2500f -> 0.70f
+            envDn > 1200f -> 0.85f
+            else -> 1.0f
         }
     }
 
